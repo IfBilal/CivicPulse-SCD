@@ -1,0 +1,41 @@
+name: ci
+
+# Phase 0 placeholder. Superseded by the full pipeline (lint-and-type, test-backend,
+# test-frontend, build, scan, manifests, integration) built in Phase 5 — see
+# docs/15-CICD.md. This exists so branch protection has a real job to require, and so
+# the repo has a green CI signal from day one (docs/03-REPO-BOOTSTRAP.md §Phase 0).
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [dev]
+
+permissions:
+  contents: read
+  pull-requests: read   # gitleaks-action needs this to diff a PR against its base
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bootstrap-check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # gitleaks needs full history to diff a PR's base..head range
+      - name: repo hygiene sanity checks
+        run: |
+          test -f .gitignore
+          test -f .env.example
+          ! grep -q '^\.env$' .gitignore || echo ".env correctly ignored"
+          grep -q '^\.env$' .gitignore
+      - name: gitleaks (secret scan)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITLEAKS_CONFIG: .gitleaks.toml
+          # required on pull_request events — the action diffs against the PR base
+          # and refuses to run without an authenticated token to do so.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

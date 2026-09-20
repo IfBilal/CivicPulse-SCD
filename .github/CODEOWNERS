@@ -1,0 +1,7 @@
+/backend/app/providers/   @T361
+/backend/alembic/         @T361
+/frontend/                @IfBilal
+/k8s/                     @IfBilal
+/.github/workflows/       @IfBilal
+/backend/app/schemas/     @T361 @IfBilal
+/docs/adr/                @T361 @IfBilal
