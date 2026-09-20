@@ -13,6 +13,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read   # gitleaks-action needs this to diff a PR against its base
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -33,3 +34,6 @@ jobs:
         uses: gitleaks/gitleaks-action@v2
         env:
           GITLEAKS_CONFIG: .gitleaks.toml
+          # required on pull_request events — the action diffs against the PR base
+          # and refuses to run without an authenticated token to do so.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
