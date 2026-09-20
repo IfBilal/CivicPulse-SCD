@@ -1,0 +1,23 @@
+title = "civicpulse"
+[extend]
+useDefault = true
+
+[[rules]]
+id = "groq-key"
+description = "Groq API key"
+regex = '''gsk_[A-Za-z0-9]{40,}'''
+tags = ["key","groq"]
+
+[[rules]]
+id = "google-ai-key"
+description = "Google AI Studio key"
+regex = '''AIza[0-9A-Za-z\-_]{35}'''
+
+[[rules]]
+id = "k8s-secret-nonplaceholder"
+description = "base64 blob in a committed k8s Secret (§5.3 −15)"
+path = '''k8s/.*secret.*\.ya?ml'''
+regex = '''(?i)(api[_-]?key|password)\s*:\s*(?!PLACEHOLDER|CHANGE_ME|""|'')[A-Za-z0-9+/=]{16,}'''
+
+[allowlist]
+paths = ['''\.env\.example$''', '''docs/.*\.md$''', '''.*\.test\.tsx?$''']

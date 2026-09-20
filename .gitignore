@@ -1,0 +1,41 @@
+# secrets — FIRST, so it is never scrolled past
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+!**/lua/*.lua
+secrets/
+kubeconfig*
+*.kubeconfig
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# node
+node_modules/
+dist/
+.vite/
+coverage/
+*.tsbuildinfo
+
+# docker / k8s scratch
+*.tar
+sbom-*.json
+trivy-*.json
+
+# os / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json

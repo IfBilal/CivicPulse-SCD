@@ -1,0 +1,34 @@
+name: Bug
+description: Something is broken or behaves against the spec
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Symptom, and what you expected instead per 00-SPEC.md
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: Exact commands or steps
+    validations:
+      required: true
+  - type: input
+    id: spec-clause
+    attributes:
+      label: Spec clause violated (if applicable)
+      placeholder: "§x.y"
+  - type: dropdown
+    id: owner
+    attributes:
+      label: Owner
+      options:
+        - DEV-A
+        - DEV-B
+        - both
+    validations:
+      required: true

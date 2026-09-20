@@ -1,0 +1,59 @@
+name: Task
+description: A unit of build work tied to a phase, an owner, and a rubric line
+title: "[Phase] "
+labels: ["task"]
+body:
+  - type: dropdown
+    id: phase
+    attributes:
+      label: Phase
+      description: Which phase from 02-CRITICAL-PATH.md does this belong to?
+      options:
+        - P0 Bootstrap
+        - P1 Contract Freeze
+        - P2 Data / FE Scaffold
+        - P3 Backend API / Compose
+        - P4 AI Triage / FE Views
+        - P5 Cache+RateLimit / CI
+        - P6 Kubernetes
+        - P7 Load + Autoscaling
+        - P8 CD, Rollback, Docs, Video
+    validations:
+      required: true
+  - type: dropdown
+    id: owner
+    attributes:
+      label: Owner
+      options:
+        - DEV-A
+        - DEV-B
+        - both
+    validations:
+      required: true
+  - type: input
+    id: spec-clause
+    attributes:
+      label: Spec clause
+      description: Cite the exact 00-SPEC.md section, e.g. "§2.5 item 3"
+      placeholder: "§x.y"
+    validations:
+      required: true
+  - type: input
+    id: rubric-line
+    attributes:
+      label: Rubric line
+      description: Cite the exact rubric line from 00-SPEC.md §4, e.g. "Rubric F line 3 (6 marks)"
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance-test
+    attributes:
+      label: Acceptance test
+      description: What must be true, and how it is checked. Name the test or command.
+    validations:
+      required: true
+  - type: input
+    id: evidence-artefact
+    attributes:
+      label: Evidence artefact
+      description: Path under docs/evidence/ this task will produce, if any
