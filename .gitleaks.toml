@@ -17,7 +17,14 @@ regex = '''AIza[0-9A-Za-z\-_]{35}'''
 id = "k8s-secret-nonplaceholder"
 description = "base64 blob in a committed k8s Secret (§5.3 −15)"
 path = '''k8s/.*secret.*\.ya?ml'''
-regex = '''(?i)(api[_-]?key|password)\s*:\s*(?!PLACEHOLDER|CHANGE_ME|""|'')[A-Za-z0-9+/=]{16,}'''
+# NOTE: gitleaks compiles rules with RE2 (via wasilibs/go-re2), which does not
+# support lookahead. A (?!...) negative-lookahead here (as in the original
+# doc example) crashes gitleaks outright rather than just failing to match.
+# Match broadly instead, and suppress known-placeholder values via allowlist.
+regex = '''(?i)(api[_-]?key|password)\s*:\s*['"]?[A-Za-z0-9+/=]{16,}'''
+
+  [rules.allowlist]
+  regexes = ['''(?i)(PLACEHOLDER|CHANGE_ME)''']
 
 [allowlist]
 paths = ['''\.env\.example$''', '''docs/.*\.md$''', '''.*\.test\.tsx?$''']
