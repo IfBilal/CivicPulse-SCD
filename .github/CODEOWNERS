@@ -1,0 +1,7 @@
+/backend/app/providers/   @dev-a
+/backend/alembic/         @dev-a
+/frontend/                @dev-b
+/k8s/                     @dev-b
+/.github/workflows/       @dev-b
+/backend/app/schemas/     @dev-a @dev-b
+/docs/adr/                @dev-a @dev-b
