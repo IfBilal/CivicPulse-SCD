@@ -58,3 +58,50 @@ Every Claude Code skill invocation on this project, logged at the moment it happ
      `conftest.py` fixtures are already wired.
 - **I changed:** N/A — this is the finding-generation step itself, not a review of another
   tool's output.
+
+## 2026-09-23 · chore/scripts-check-submission
+
+- **Tool:** Claude Code + `ponytail`
+- **Shaped:** the SKIP/PASS/FAIL/WARN state-machine and exit-code contract for
+  `scripts/check_submission.py` when a check's prerequisite files don't exist yet (Phase 0,
+  before frontend/k8s/compose/tests/ADRs land).
+- **Wrote:** none (decision only)
+- **I changed:** accepted the recommendation as-is (SKIP doesn't block exit 0, only FAIL does;
+  no `--strict` flag added speculatively). Rejected alternatives it named: (1) SKIP counts as
+  FAIL until the prerequisite lands — rejected, makes the script useless as a signal until
+  Phase 8; (2) three-tier exit codes (0/1/2 for clean/warn/fail) — rejected, nothing downstream
+  branches on exit-code granularity beyond zero-vs-nonzero.
+- **Note:** `caveman` was not invoked for this task's initial decomposition — this entry
+  reflects that honestly rather than reconstruct one after the fact, per `CLAUDE.md §6` rule 3
+  ("logged at the moment it happens, not reconstructed later").
+
+## 2026-09-23 · chore/scripts-check-submission
+
+- **Tool:** Claude Code (manual hardening pass — the `grilled meat` skill is referenced by
+  `CLAUDE.md §6` and `01-WORKFLOW.md §4` but is not present in this session's installed skill
+  set, same gap noted in the prior PR's log entry; ran the equivalent review manually)
+- **Shaped:** review of `scripts/check_submission.py` before opening the PR.
+- **Findings:**
+  1. `net_localhost()` relied on `grep`'s exit code 2 to mean "some target path missing," but
+     with a mixed existing/missing path list `grep` also returns 2 even when a real match
+     exists among the paths that *do* exist — silently masking a genuine `NET-LOCALHOST`
+     violation in `backend/app` once it has real content but `compose.yaml`/`k8s/` still don't
+     exist. **Fixed**: now checks only existing target paths explicitly and reports which ones
+     were skipped, rather than trusting grep's combined exit code.
+  2. `run()` only caught `FileNotFoundError`; a hung external tool (`gitleaks`, `kubectl`) with
+     no timeout would crash the whole 18-check run over one flaky call. **Fixed**: added a 30s
+     timeout and a `TimeoutExpired` handler that degrades that one check to a non-fatal state
+     instead of killing the script.
+  3. `rubric_seed()` always returns SKIP unconditionally, regardless of `seed.py`'s existence —
+     structurally incapable of ever reporting PASS or FAIL. **WONTFIX**: the real check (`run
+     seed twice against a throwaway DB, assert equal counts ≥ 30`) needs a live DB connection
+     this static script deliberately doesn't stand up; correctly deferred to `make seed` +
+     manual verification at Gate 2, not silently dropped — noted here so it isn't mistaken for
+     an oversight.
+  4. Found and documented separately (`docs/ENGINEERING-NOTES.md`): `03-REPO-BOOTSTRAP.md §5`'s
+     Makefile line `submission-check: ; python scripts/check_submission.py` fails on this
+     machine (`python: command not found`, only `python3` is on `PATH`). Not fixed in this PR's
+     diff since it means touching the frozen bootstrap Makefile content again — flagged per
+     `CLAUDE.md §0`'s rule that an implementation-doc bug should be said out loud, not quietly
+     reconciled, and left for a joint decision.
+- **I changed:** N/A — finding-generation step, not a review of another tool's output.
