@@ -203,3 +203,27 @@ Every Claude Code skill invocation on this project, logged at the moment it happ
      `TRANSITIONS` turns `test_transition_matrix_cell[open-resolved]` red. Confirms the matrix
      test is independent of the table rather than tautological.
 - **I changed:** N/A — finding-generation step.
+
+## 2026-09-23 · feat/fe-scaffold
+
+- **Tool:** Claude Code + `caveman` (start of Phase 2, DEV-B half, before any code)
+- **Shaped / Wrote:** stripped task list from `02-CRITICAL-PATH.md §4` PHASE 2 (B) +
+  `11-FRONTEND.md` + `12-DOCKER-COMPOSE.md §1–2` + `docs/handover/HANDOVER-phase2-deva-to-devb.md`:
+  1. Pin Vite 6 + React 18 + TS + router + GSAP + three + MSW + vitest in `frontend/package.json`.
+  2. Write `api/config.ts` (`API_BASE = "/api"`) + `/config.js` runtime flags.
+  3. Write `api/client.ts` — typed over `schema.d.ts`, `ApiError`, last `X-Request-ID`.
+  4. Derive validation bounds from the generated OpenAPI document, not hand-typed numbers.
+  5. Write MSW handlers + deterministic Urdu-influenced mock data, typed off `schema.d.ts`.
+  6. Build the design system — tokens, glass surfaces, reduced-motion-aware GSAP helpers.
+  7. Build the three.js "pulse field" background, lazy-loaded, WebGL-guarded.
+  8. Build router + shell + Submit / Dashboard / Stats + 404.
+  9. Write the error boundary with copyable last request id.
+  10. Write the seven component tests from `11-FRONTEND.md §6`.
+  11. Write `frontend/Dockerfile` + `nginx.conf` + `10-config.sh` (non-root, 4 gotchas).
+  12. Write `backend/Dockerfile` + `requirements.lock`.
+  13. Write both per-Dockerfile ignore files; measure context sizes into `docs/evidence/`.
+  14. Wire Makefile + CI frontend jobs; run `grilled meat`; open PR into `dev`.
+- **I changed:** the handover scoped Phase 2 to *placeholder* pages (views = Phase 4). DEV-B
+  asked for the full designed frontend now, so items 8/10 build the real views against MSW.
+  Phase 4 then shrinks to "switch MSW off, point at the live API, fix what the real backend
+  disagrees with". No business rule enters `frontend/src` either way (HARD rule 9).

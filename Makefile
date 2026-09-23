@@ -51,7 +51,7 @@ openapi: ## dump OpenAPI WITHOUT running a server
 	cd backend && python3 -m app.cli.openapi_dump > ../openapi.json.tmp
 	mv openapi.json.tmp openapi.json
 gen-client: openapi ## regenerate the typed client; must be a no-op diff in CI
-	cd frontend && npm ci --silent && npx --no-install openapi-typescript ../openapi.json -o src/api/schema.d.ts
+	cd frontend && npm ci --silent && npx --no-install openapi-typescript ../openapi.json --empty-objects-unknown -o src/api/schema.d.ts && cp ../openapi.json src/api/openapi.json
 
 ## ── data ──────────────────────────────────────────────────────────────────
 migrate:   ; $(COMPOSE) exec -T backend alembic upgrade head
