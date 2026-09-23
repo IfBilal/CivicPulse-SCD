@@ -19,6 +19,6 @@ repos:
         pass_filenames: false
       - id: conventional-commit
         name: conventional commit subject
-        entry: bash -c 'grep -qE "^(feat|fix|docs|test|refactor|perf|build|ci|chore|revert)(\(.+\))?!?: .{1,72}$" "$1"' --
+        entry: 'bash -c ''grep -qE "^(feat|fix|docs|test|refactor|perf|build|ci|chore|revert)(\(.+\))?!?: .{1,72}$" "$1"'' --'
         language: system
         stages: [commit-msg]
