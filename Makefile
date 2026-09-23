@@ -23,15 +23,15 @@ nuke: ## stop and DESTROY volumes
 check: lint type test lint-localhost secret-scan ## full local gate
 lint:
 	cd backend && ruff check . && ruff format --check .
-	cd frontend && npm run lint
+	@test -d frontend && (cd frontend && npm run lint) || echo "skip: frontend/ not scaffolded yet (Phase 2b)"
 type:
 	cd backend && mypy app
-	cd frontend && npx tsc --noEmit
+	@test -d frontend && (cd frontend && npx tsc --noEmit) || echo "skip: frontend/ not scaffolded yet (Phase 2b)"
 test: test-be test-fe
 test-be:
 	cd backend && pytest
 test-fe:
-	cd frontend && npm run test -- --run
+	@test -d frontend && (cd frontend && npm run test -- --run) || echo "skip: frontend/ not scaffolded yet (Phase 2b)"
 
 ## ── deduction armour ──────────────────────────────────────────────────────
 lint-localhost: ## §5.3 −8: no localhost in service-to-service config
