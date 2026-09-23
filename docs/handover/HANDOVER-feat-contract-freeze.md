@@ -35,9 +35,9 @@ Caveman task list for this phase: `docs/AI-USAGE.md` → `2026-09-23 · feat/con
 | 10 | `frontend/package.json` + `schema.d.ts` | **done** |
 | 11 | Unit tests (transitions, enums) | **done** |
 | 12 | Contract tests | **done** |
-| 13 | CI job (contract tests + drift gate) | **done** (not yet seen green on GitHub — check the PR run) |
+| 13 | CI job (contract tests + drift gate) | **done** — green on PR #23 |
 | 14 | `grilled meat` | **done** (findings in `docs/AI-USAGE.md`) |
-| 15 | PR into `dev`, both approve | todo |
+| 15 | PR into `dev`, both approve | **PR #23 open** (Closes #22) — waiting on both approvals |
 
 ## 2. Decisions taken (ponytail records live in `docs/ENGINEERING-NOTES.md`)
 
@@ -53,6 +53,30 @@ Also: non-UUID path id → **404** (handled in the validation handler, not the r
 
 ## 3. What you (DEV-A) need to do
 
-- Review everything above marked done — Phase 1 needs **both** sign-offs; you are co-owner,
-  not a rubber stamp. Push back on any decision in §2 you disagree with *before* freeze.
-- Finish anything still `todo`, in order.
+All build work is done and CI is green; what's left is **your review and sign-off**. This is
+the last cheap moment to change the contract (after merge it's a `chore/contract-*` PR).
+
+1. Pull the branch (§0), run `cd backend && pytest` (59 pass) and `make gen-client && git diff
+   --exit-code` (must be clean).
+2. Review PR #23 **with a real comment** (Rubric A: no "LGTM"). Especially check:
+   - `backend/app/routes/*.py`: these are *your* Phase 3 files. Signatures, `operation_id`s and
+     `responses=` are the frozen contract; bodies are yours to fill.
+   - The 6 decisions in the PR body / §2 above. If you disagree, change it **on this branch
+     before approving**, re-run `make gen-client`, commit both `openapi.json` and `schema.d.ts`.
+   - grilled-meat finding #5 (`docs/AI-USAGE.md`): `fields[].constraint` only has the bound
+     Pydantic reports, not both min+max as in the `04-CONTRACTS.md §5.1` example. Accept or fix.
+3. Both of us approve → merge into `dev`.
+
+## 4. Notes for Phase 2/3
+
+- **Phase 3 (you):** delete `_on_not_implemented` in `app/errors.py` and
+  `test_stub_routes_are_501_until_phase_3` once every handler is real. The request-id
+  middleware should set `request.state.request_id`; `request_id_of()` already reads it.
+- `limits.py` constants are meant to be imported by your Alembic migration's CHECK constraints
+  (`04-CONTRACTS.md §2`), so app and DB can't drift.
+- `make check`'s `test-be` step is **green now** (93% coverage), so the "expected red" note in
+  ENGINEERING-NOTES no longer applies.
+- **Phase 2b (me):** the Vite scaffold grows the existing `frontend/package.json`; the Makefile's
+  frontend targets switch on once `frontend/vite.config.ts` exists.
+- Activate `backend/.venv` before committing, or the pre-commit hook fails with
+  `pre-commit not found` (install it into the venv: `pip install pre-commit`).
