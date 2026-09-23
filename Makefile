@@ -23,15 +23,15 @@ nuke: ## stop and DESTROY volumes
 check: lint type test lint-localhost secret-scan ## full local gate
 lint:
 	cd backend && ruff check . && ruff format --check .
-	@test -d frontend && (cd frontend && npm run lint) || echo "skip: frontend/ not scaffolded yet (Phase 2b)"
+	@if [ -f frontend/vite.config.ts ]; then cd frontend && npm run lint; else echo "skip: frontend/ not scaffolded yet (Phase 2b)"; fi
 type:
 	cd backend && mypy app
-	@test -d frontend && (cd frontend && npx tsc --noEmit) || echo "skip: frontend/ not scaffolded yet (Phase 2b)"
+	@if [ -f frontend/vite.config.ts ]; then cd frontend && npx tsc --noEmit; else echo "skip: frontend/ not scaffolded yet (Phase 2b)"; fi
 test: test-be test-fe
 test-be:
 	cd backend && pytest
 test-fe:
-	@test -d frontend && (cd frontend && npm run test -- --run) || echo "skip: frontend/ not scaffolded yet (Phase 2b)"
+	@if [ -f frontend/vite.config.ts ]; then cd frontend && npm run test -- --run; else echo "skip: frontend/ not scaffolded yet (Phase 2b)"; fi
 
 ## ── deduction armour ──────────────────────────────────────────────────────
 lint-localhost: ## §5.3 −8: no localhost in service-to-service config
@@ -44,13 +44,13 @@ secret-scan: ## §5.3 −20: no secrets in the working tree or history
 history-scan:
 	@gitleaks detect --no-banner --redact --log-opts="--all" -c .gitleaks.toml
 submission-check:
-	python scripts/check_submission.py
+	python3 scripts/check_submission.py
 
 ## ── contract ──────────────────────────────────────────────────────────────
 openapi: ## dump OpenAPI WITHOUT running a server
-	cd backend && python -m app.cli.openapi_dump > ../openapi.json
+	cd backend && python3 -m app.cli.openapi_dump > ../openapi.json
 gen-client: openapi ## regenerate the typed client; must be a no-op diff in CI
-	cd frontend && npx openapi-typescript ../openapi.json -o src/api/schema.d.ts
+	cd frontend && npm ci --silent && npx --no-install openapi-typescript ../openapi.json -o src/api/schema.d.ts
 
 ## ── data ──────────────────────────────────────────────────────────────────
 migrate:   ; $(COMPOSE) exec -T backend alembic upgrade head
