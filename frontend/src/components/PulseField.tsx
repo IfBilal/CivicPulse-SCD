@@ -148,6 +148,7 @@ export default function PulseField() {
       camera.aspect = window.innerWidth / window.innerHeight;
       camera.updateProjectionMatrix();
       renderer.setSize(window.innerWidth, window.innerHeight);
+      if (reduced) renderer.render(scene, camera); // setSize clears the static frame
     };
     window.addEventListener("resize", onResize);
 

@@ -125,7 +125,10 @@ export default function Stats() {
 
   useEffect(() => {
     const first = window.setTimeout(() => void refresh(), 0);
-    const id = window.setInterval(() => void refresh(), cfg.statsPollMs);
+    // Skip polls while the tab is hidden — no wasted requests, no fake cache MISSes.
+    const id = window.setInterval(() => {
+      if (!document.hidden) void refresh();
+    }, cfg.statsPollMs);
     return () => {
       clearTimeout(first);
       clearInterval(id);

@@ -22,15 +22,23 @@ const SORTS = [
 
 type Banner = { kind: "conflict" | "error" | "success"; text: string } | null;
 
+/** A positive integer from the URL, or the fallback for junk (missing, NaN, ≤ 0). */
+function positiveInt(raw: string | null, fallback: number): number {
+  const n = Math.floor(Number(raw));
+  return Number.isFinite(n) && n >= 1 ? n : fallback;
+}
+
 function readQuery(sp: URLSearchParams): ListQuery {
+  // The URL is user-editable: clamp/allow-list everything so a hand-typed link can't produce a 400.
+  const sort = SORTS.find((s) => s.value === sp.get("sort"))?.value ?? "-created_at";
   const q: ListQuery = {
-    page: Math.max(1, Number(sp.get("page")) || 1),
-    page_size: Math.min(LIMITS.pageSizeMax, Number(sp.get("page_size")) || 20),
-    sort: (sp.get("sort") as ListQuery["sort"]) ?? "-created_at",
+    page: positiveInt(sp.get("page"), 1),
+    page_size: Math.min(LIMITS.pageSizeMax, positiveInt(sp.get("page_size"), 20)),
+    sort,
   };
-  const cat = sp.getAll("category") as Category[];
-  const pri = sp.getAll("priority") as Priority[];
-  const st = sp.getAll("status") as Status[];
+  const cat = sp.getAll("category").filter((v): v is Category => (CATEGORIES as string[]).includes(v));
+  const pri = sp.getAll("priority").filter((v): v is Priority => (PRIORITIES as string[]).includes(v));
+  const st = sp.getAll("status").filter((v): v is Status => (STATUSES as string[]).includes(v));
   if (cat.length) q.category = cat;
   if (pri.length) q.priority = pri;
   if (st.length) q.status = st;

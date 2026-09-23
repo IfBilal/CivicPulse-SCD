@@ -1,0 +1,4 @@
+# build-context sizes · 2026-09-23T18:17:39Z · 854d7c3
+# method: ESTIMATE via tar (docker daemon unavailable on this machine) — re-run `make evidence-context` where Docker works
+backend  without ignore:   475.1MB    with:   120.0KB    (−100.0%)
+frontend without ignore:   475.1MB    with:   440.0KB    (−99.9%)

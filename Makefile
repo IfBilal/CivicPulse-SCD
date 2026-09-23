@@ -24,6 +24,8 @@ check: lint type test lint-localhost secret-scan ## full local gate
 lint:
 	cd backend && ruff check . && ruff format --check .
 	@if [ -f frontend/vite.config.ts ]; then cd frontend && npm run lint; else echo "skip: frontend/ not scaffolded yet (Phase 2b)"; fi
+	@! grep -rnE "in_progress.*resolved|TRANSITIONS|allowedNext" frontend/src --include=*.ts --include=*.tsx --exclude=schema.d.ts \
+	  || (echo "FAIL: business rule leaked into the frontend (CLAUDE.md HARD rule 9)"; exit 1)
 type:
 	cd backend && mypy app
 	@if [ -f frontend/vite.config.ts ]; then cd frontend && npx tsc --noEmit; else echo "skip: frontend/ not scaffolded yet (Phase 2b)"; fi
@@ -52,6 +54,9 @@ openapi: ## dump OpenAPI WITHOUT running a server
 	mv openapi.json.tmp openapi.json
 gen-client: openapi ## regenerate the typed client; must be a no-op diff in CI
 	cd frontend && npm ci --silent && npx --no-install openapi-typescript ../openapi.json --empty-objects-unknown -o src/api/schema.d.ts && cp ../openapi.json src/api/openapi.json
+
+lock: ## re-pin backend/requirements.lock (hashed) from pyproject.toml — commit the result
+	cd backend && uv pip compile pyproject.toml --generate-hashes --universal --python-version 3.12 -q -o requirements.lock
 
 ## ── data ──────────────────────────────────────────────────────────────────
 migrate:   ; $(COMPOSE) exec -T backend alembic upgrade head

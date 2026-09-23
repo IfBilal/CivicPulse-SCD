@@ -78,11 +78,12 @@ export default function Submit() {
       setValues({ text: "", location: "", reporter_contact: "" });
       setTouched({});
     } catch (err) {
-      if (err instanceof ApiError && err.body.error.fields?.length) {
-        const mapped: Partial<Record<Field, string>> = {};
-        for (const f of err.body.error.fields) mapped[f.field as Field] = f.message;
-        setServerErrors(mapped);
+      const fields = err instanceof ApiError ? (err.body.error.fields ?? []) : [];
+      const known = fields.filter((f): f is typeof f & { field: Field } => ["text", "location", "reporter_contact"].includes(f.field));
+      if (known.length && known.length === fields.length) {
+        setServerErrors(Object.fromEntries(known.map((f) => [f.field, f.message])));
       } else {
+        // An error we can't pin to an input (e.g. `body`) must still be shown, never swallowed.
         setFormError(err instanceof ApiError ? err.body.error.message : "Something went wrong. Please try again.");
       }
     } finally {

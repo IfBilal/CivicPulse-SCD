@@ -227,3 +227,44 @@ Every Claude Code skill invocation on this project, logged at the moment it happ
   asked for the full designed frontend now, so items 8/10 build the real views against MSW.
   Phase 4 then shrinks to "switch MSW off, point at the live API, fix what the real backend
   disagrees with". No business rule enters `frontend/src` either way (HARD rule 9).
+
+## 2026-09-23 · feat/fe-scaffold
+
+- **Tool:** Claude Code + `ponytail` (×6, at each fork as it appeared) + `dataviz` skill
+- **Shaped / Wrote:** decision records in `docs/ENGINEERING-NOTES.md` under "DEV-B · Phase 2":
+  views-now-vs-placeholders; fake server outside `src/`; bounds from a copy of `openapi.json`;
+  `--empty-objects-unknown`; nginx per-request upstream resolution; per-Dockerfile ignore files.
+  The `dataviz` skill's validator was run on the category palette (dark surface) instead of eyeballing it.
+- **I changed:** the first palette FAILED the validator (lightness band, chroma floor, normal-vision
+  floor) — replaced with OKLCH-generated hues inside the dark band; now all checks pass.
+
+## 2026-09-23 · feat/fe-scaffold
+
+- **Tool:** Claude Code + `grilled meat` (full Phase 2 DEV-B diff, before the PR)
+- **Findings:**
+  1. `frontend/src/pages/Dashboard.tsx:36` — `sort`, `page_size`, `page` and enum filters were read
+     from the user-editable URL unchecked; `?page_size=-5` or `?sort=bogus` went straight to the
+     server as a 400. **Fixed**: allow-list sort/enums, `positiveInt()` with fallback, clamp to the
+     generated max. Test `Dashboard.url.test.tsx` — confirmed red on the old code, green after.
+  2. `frontend/src/pages/Submit.tsx:82` — a 400 whose `fields[].field` isn't an input (e.g. `body`
+     for malformed JSON) was mapped to nothing and **silently swallowed**. **Fixed**: only map when
+     every field is a known input, else show the envelope message. Test `Submit.errors.test.tsx` —
+     confirmed red on the old code, green after.
+  3. `frontend/src/pages/Stats.tsx:130` — polling continued in a hidden tab: wasted requests and
+     fake cache MISSes that skew the measured hit rate. **Fixed**: skip ticks while `document.hidden`.
+  4. `frontend/nginx.conf:63` — an `add_header` inside a `location` drops every server-level
+     `add_header`, so `/config.js` and `/assets/` lost `X-Frame-Options`/`Referrer-Policy`.
+     **Fixed**: repeat all security headers in those locations.
+  5. `frontend/src/components/PulseField.tsx:151` — under reduced motion, a window resize cleared
+     the single static frame and left the background blank. **Fixed**: re-render on resize.
+  6. `backend/Dockerfile:7` (+ `frontend/Dockerfile`) — trailing `# comment` on a `COPY` line is not
+     a comment in a Dockerfile; the build would copy files named `#`, `deps`, … and fail. The same
+     bug is in `12-DOCKER-COMPOSE.md §1` / `11-FRONTEND.md §5`. **Fixed** here; doc bug flagged.
+  7. `11-FRONTEND.md §2.2` secret grep over `frontend/dist` — always false-positives on React's own
+     bundle (`__SECRET_INTERNALS…`, the `password` input type). **WONTFIX as written**: CI runs the
+     grep on `src/` and `public/` (which are clean); `dist/` is covered by gitleaks + this reasoning.
+  8. Docker daemon is broken on this dev machine (snap: "cannot create temporary directory for the
+     root file system"), so neither image was *built* here and the context-size evidence is a
+     labelled tar **estimate**. **Open, not fixed**: `make evidence-context` + `docker build` both
+     images on a machine with working Docker before Gate 2 is ticked.
+- **I changed:** N/A — finding-generation step.
