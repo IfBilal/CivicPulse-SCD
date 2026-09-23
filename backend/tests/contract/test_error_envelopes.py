@@ -109,3 +109,24 @@ def test_stub_routes_are_501_until_phase_3(client: TestClient) -> None:
     r = client.post("/api/complaints", json=VALID)
     assert r.status_code == 501
     assert r.json()["error"]["code"] == "not_implemented"
+
+
+def test_non_v4_request_id_is_replaced_not_rewritten(client: TestClient) -> None:
+    sent = str(uuid.uuid1())
+    r = client.post("/api/complaints", json={}, headers={"X-Request-ID": sent})
+    got = r.headers["X-Request-ID"]
+    assert uuid.UUID(got).version == 4
+    # a version-bit rewrite would keep the first 12 hex digits of the client's id
+    assert sent.replace("-", "")[:12] not in got.replace("-", "")
+
+
+def test_empty_contact_normalises_to_null() -> None:
+    from app.schemas.complaint import ComplaintCreate
+
+    assert ComplaintCreate(**VALID, reporter_contact="  ").reporter_contact is None
+
+
+@pytest.mark.parametrize("contact", ["+923001234567", "ali@example.pk", "0300 1234567"])
+def test_valid_contacts_accepted(client: TestClient, contact: str) -> None:
+    r = client.post("/api/complaints", json={**VALID, "reporter_contact": contact})
+    assert r.status_code == 501  # passed validation, reached the Phase 1 stub

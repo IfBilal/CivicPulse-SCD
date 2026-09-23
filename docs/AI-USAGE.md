@@ -167,3 +167,39 @@ Every Claude Code skill invocation on this project, logged at the moment it happ
   15. Write handover for DEV-A; open the PR into `dev`, both approve.
 - **I changed:** accepted as-is. Session driven by DEV-B (IfBilal) with Claude Code building
   the joint branch end-to-end; DEV-A (T361) reviews and co-signs per `04-CONTRACTS.md` header.
+
+## 2026-09-23 · feat/contract-freeze
+
+- **Tool:** Claude Code + `ponytail` (×5, at each fork as it appeared)
+- **Shaped / Wrote:** decision records in `docs/ENGINEERING-NOTES.md` under "Phase 1 (joint)":
+  501 route stubs; single `ErrorEnvelope`; `dict[Enum,int]` stats buckets; empty contact → null;
+  locked `frontend/package.json` for `gen-client` (+ `python3` Makefile resolution).
+- **I changed:** accepted as-is; each is flagged in the handover for DEV-A to challenge before freeze.
+
+## 2026-09-23 · feat/contract-freeze
+
+- **Tool:** Claude Code + `grilled meat` (full Phase 1 diff, before the PR)
+- **Findings:**
+  1. `backend/app/errors.py:35` — `uuid.UUID(rid, version=4)` **overwrites** the version bits
+     instead of validating them, so a client's UUIDv1/v7 `X-Request-ID` was echoed back as a
+     forged v4 and log correlation silently broke. **Fixed**: parse, then check `.version == 4`.
+     Test `test_non_v4_request_id_is_replaced_not_rewritten` — confirmed red against the old
+     code (stash + run), green after.
+  2. `Makefile:51` — `openapi_dump > ../openapi.json` truncates the committed contract to
+     0 bytes if the import fails, leaving a corrupted working tree. **Fixed**: write to
+     `openapi.json.tmp`, `mv` on success (tmp is gitignored).
+  3. `Makefile:26,29,34` — the pre-existing `test -d frontend && (…) || echo skip` guard exits 0
+     when the frontend command *fails*, masking real lint/type/test failures once `frontend/`
+     exists. **Fixed**: `if [ -f frontend/vite.config.ts ]; then …; else skip; fi`.
+  4. `backend/app/schemas/complaint.py:39-41` — contact normalisation / acceptance branches had
+     no test (coverage report). **Fixed**: `test_empty_contact_normalises_to_null`,
+     `test_valid_contacts_accepted` (3 formats).
+  5. `backend/app/errors.py:59` — `fields[].constraint` only carries the bound Pydantic reports
+     (`{"min": 10}` for too_short), whereas `04-CONTRACTS.md §5.1`'s example shows both
+     `{"min":10,"max":2000}`. **WONTFIX (flagged for DEV-A)**: the frontend reads bounds from
+     OpenAPI, not from error bodies; the doc example is illustrative. Needs both devs' OK before
+     freeze since it's the contract surface.
+  6. `backend/tests/unit/test_transitions.py` — mutation check: adding `open → resolved` to
+     `TRANSITIONS` turns `test_transition_matrix_cell[open-resolved]` red. Confirms the matrix
+     test is independent of the table rather than tautological.
+- **I changed:** N/A — finding-generation step.

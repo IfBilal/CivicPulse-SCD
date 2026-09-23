@@ -48,7 +48,8 @@ submission-check:
 
 ## ── contract ──────────────────────────────────────────────────────────────
 openapi: ## dump OpenAPI WITHOUT running a server
-	cd backend && python3 -m app.cli.openapi_dump > ../openapi.json
+	cd backend && python3 -m app.cli.openapi_dump > ../openapi.json.tmp
+	mv openapi.json.tmp openapi.json
 gen-client: openapi ## regenerate the typed client; must be a no-op diff in CI
 	cd frontend && npm ci --silent && npx --no-install openapi-typescript ../openapi.json -o src/api/schema.d.ts
 

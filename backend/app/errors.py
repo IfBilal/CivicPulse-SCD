@@ -31,10 +31,13 @@ _LOC_PREFIXES = {"body", "query", "path", "header"}
 def request_id_of(request: Request) -> str:
     """Set by the request-id middleware (Phase 3); falls back to the header or a new UUIDv4."""
     rid = getattr(request.state, "request_id", None) or request.headers.get("x-request-id")
+    # NB: uuid.UUID(rid, version=4) would *overwrite* the version bits of a v1/v7 id and echo
+    # back a forged value — parse, then check the version explicitly.
     try:
-        return str(uuid.UUID(rid, version=4)) if rid else str(uuid.uuid4())
+        parsed = uuid.UUID(rid) if rid else None
     except ValueError:
-        return str(uuid.uuid4())
+        parsed = None
+    return str(parsed) if parsed and parsed.version == 4 else str(uuid.uuid4())
 
 
 def error_response(

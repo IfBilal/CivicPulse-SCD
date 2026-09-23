@@ -31,12 +31,12 @@ Caveman task list for this phase: `docs/AI-USAGE.md` → `2026-09-23 · feat/con
 | 6 | Validation handler (422→400, bad UUID→404) | **done** |
 | 7 | OpenAPI post-processing (no 422, relative servers) | **done** |
 | 8 | `app/cli/openapi_dump.py` | **done** |
-| 9 | Makefile `python` → `python3` | todo |
-| 10 | `frontend/package.json` + `schema.d.ts` | todo |
+| 9 | Makefile `python` → `python3` | **done** |
+| 10 | `frontend/package.json` + `schema.d.ts` | **done** |
 | 11 | Unit tests (transitions, enums) | **done** |
 | 12 | Contract tests | **done** |
-| 13 | CI job (contract tests + drift gate) | todo |
-| 14 | `grilled meat` | todo |
+| 13 | CI job (contract tests + drift gate) | **done** (not yet seen green on GitHub — check the PR run) |
+| 14 | `grilled meat` | **done** (findings in `docs/AI-USAGE.md`) |
 | 15 | PR into `dev`, both approve | todo |
 
 ## 2. Decisions taken (ponytail records live in `docs/ENGINEERING-NOTES.md`)
