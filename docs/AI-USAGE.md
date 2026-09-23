@@ -144,3 +144,26 @@ Every Claude Code skill invocation on this project, logged at the moment it happ
 - **I changed:** the Makefile-guard approach per the user's explicit choice (see finding 2)
   — this is disclosed as a user decision, not an autonomous one, per `CLAUDE.md §6` rule 4
   (ponytail-equivalent fork surfaced immediately, not rationalized after the fact).
+
+## 2026-09-23 · feat/contract-freeze
+
+- **Tool:** Claude Code + `caveman` (start of Phase 1, before any code)
+- **Shaped / Wrote:** stripped task list for Phase 1 from `02-CRITICAL-PATH.md §4` PHASE 1 +
+  `04-CONTRACTS.md` + `00-SPEC.md §2.2/§2.3/§2.5/App. A`:
+  1. Write `backend/app/domain/enums.py` — four `StrEnum`s, A4 superset on `TriagedBy`.
+  2. Write `backend/app/domain/limits.py` — every field bound as a named constant.
+  3. Write `backend/app/domain/transitions.py` — `TRANSITIONS` dict, `TERMINAL`, `is_allowed`.
+  4. Write `backend/app/schemas/` — complaint, page, stats, meta, health, error envelope, triage.
+  5. Write the app factory + route signatures for all endpoints, stable `operation_id`s, every status code declared.
+  6. Register the validation handler — 422 → 400 field-level envelope; bad path UUID → 404.
+  7. Strip 422 from the generated OpenAPI; set `servers: [{"url": "/"}]`.
+  8. Write `app/cli/openapi_dump.py` — dump sorted JSON, no server.
+  9. Fix Makefile `python` → `python3` (`submission-check`, `openapi`).
+  10. Pin `openapi-typescript` in a minimal `frontend/package.json` + lockfile; generate `schema.d.ts`.
+  11. Write unit tests — 16-cell transition matrix, enum values vs spec.
+  12. Write contract tests — operation ids golden list, relative servers, no 422, declared codes, 400/404 envelopes.
+  13. Add CI job — contract tests + `make gen-client` + `git diff --exit-code`.
+  14. Run `grilled meat` on the diff; fix or WONTFIX each finding.
+  15. Write handover for DEV-A; open the PR into `dev`, both approve.
+- **I changed:** accepted as-is. Session driven by DEV-B (IfBilal) with Claude Code building
+  the joint branch end-to-end; DEV-A (T361) reviews and co-signs per `04-CONTRACTS.md` header.
