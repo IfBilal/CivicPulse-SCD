@@ -105,3 +105,42 @@ Every Claude Code skill invocation on this project, logged at the moment it happ
      `CLAUDE.md §0`'s rule that an implementation-doc bug should be said out loud, not quietly
      reconciled, and left for a joint decision.
 - **I changed:** N/A — finding-generation step, not a review of another tool's output.
+
+## 2026-09-23 · fix/gate0-make-check
+
+- **Tool:** Claude Code (manual verification pass, no skill invoked for the investigation
+  itself — this was re-checking a Gate 0 checklist item against the live repo, not a new
+  phase or a design fork)
+- **Shaped:** ran the actual Gate 0 checklist (`02-CRITICAL-PATH.md` Phase 0 gate) against
+  the repo instead of trusting the prior session's log entries. Created a real venv and ran
+  `pip install -e ".[dev]"` to verify "`make check` exits 0 on a clean clone" for real.
+- **Findings:**
+  1. `backend/pyproject.toml` had no `[build-system]` table and no `version` key under
+     `[project]`. `pip install -e ".[dev]"` failed immediately with a PEP 621 validation
+     error (`project must contain ['version']`) — nobody could actually run `make check`
+     from a clean clone, contradicting the Gate 0 checkbox. **Fixed**: added
+     `[build-system]` (setuptools>=68) and `version = "0.1.0"`. Verified: install now
+     succeeds; `ruff check .`, `ruff format --check .`, and `mypy app` all pass clean.
+  2. `Makefile`'s `lint`/`type`/`test-fe` targets unconditionally `cd frontend`, but
+     `frontend/` doesn't exist yet (correctly — it's Phase 2b scope, not Phase 0). This
+     made `make check` fail even after fix #1, on a directory that legitimately isn't
+     built yet. Asked the user via AskUserQuestion whether to guard the Makefile now or
+     leave Gate 0 formally blocked-pending-Phase-2b; user chose to guard now. **Fixed**:
+     `lint`, `type`, `test-fe` now `test -d frontend` first and print a skip message
+     instead of failing when it's absent.
+  3. `pytest` still fails `make check`'s `test-be` step via `--cov-fail-under=65` in
+     `backend/pyproject.toml`, because `backend/app/` is intentionally empty at Phase 0
+     (app code is Phase 2/3 scope) and zero tests exist yet. **WONTFIX for this branch**:
+     this is the coverage floor correctly doing its job on an empty app, not a bootstrap
+     defect — touching the floor now would mask a real signal later. Will clear itself
+     once Phase 2/3 land real code and tests.
+  4. `gitleaks` (the `secret-scan` target) isn't installed in this sandbox, so it can't be
+     verified here. Not a repo defect — `docs/evidence/precommit-secret-block.txt` already
+     documents a real blocked run in a proper dev environment. Noted so this isn't
+     mistaken for a fourth code bug.
+  5. Found and cleaned up: `pip install -e` generated `backend/civicpulse_backend.egg-info/`,
+     which wasn't gitignored. Added `*.egg-info/` to root `.gitignore` and deleted the
+     stray directory before staging anything, so it never entered history.
+- **I changed:** the Makefile-guard approach per the user's explicit choice (see finding 2)
+  — this is disclosed as a user decision, not an autonomous one, per `CLAUDE.md §6` rule 4
+  (ponytail-equivalent fork surfaced immediately, not rationalized after the fact).
