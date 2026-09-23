@@ -191,16 +191,30 @@ def k8s_db_deployment() -> Result:
 
 
 def vcs_direct_main() -> Result:
-    result = run(["git", "log", "--first-parent", "main", "--no-merges", "--format=%H %s"])
+    # GitHub squash-merge and merge-commit strategies both land on `main` as a single
+    # commit with a single parent — `git log --no-merges` alone can't tell a squashed PR
+    # apart from an actual direct push. A commit is treated as "came through a PR" if it's
+    # either a real 2-parent merge, or its subject ends in GitHub's squash-merge suffix
+    # `(#123)`. Only what's left after both allowances is a real direct-commit offender.
+    result = run(["git", "log", "--first-parent", "main", "--format=%H %P||%s"])
     if result.returncode != 0:
         return Result("VCS-DIRECT-MAIN", "WARN", "could not read main history")
-    offenders = [
-        line for line in result.stdout.splitlines()
-        if not re.match(r"^\S+ (all agents|all specs|assignment doc)", line)
-    ]
+    offenders = []
+    for line in result.stdout.splitlines():
+        head, _, subject = line.partition("||")
+        parts = head.split(" ", 1)
+        commit_hash = parts[0]
+        parents = parts[1].split() if len(parts) > 1 else []
+        if len(parents) >= 2:
+            continue  # real merge commit
+        if re.search(r"\(#\d+\)\s*$", subject):
+            continue  # GitHub squash-merge commit, came through a PR
+        if re.match(r"^(all agents|all specs|assignment doc)", subject):
+            continue  # initial scaffold commits, predate branch protection
+        offenders.append(f"{commit_hash} {subject}")
     if offenders:
         return Result("VCS-DIRECT-MAIN", "FAIL", f"{len(offenders)} non-merge commit(s) on main after scaffold")
-    return Result("VCS-DIRECT-MAIN", "PASS", "main has only the initial scaffold commits, rest are merges")
+    return Result("VCS-DIRECT-MAIN", "PASS", "main has only the initial scaffold commits, rest are PR merges")
 
 
 def doc_quickstart() -> Result:
