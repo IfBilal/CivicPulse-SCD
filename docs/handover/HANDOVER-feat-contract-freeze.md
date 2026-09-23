@@ -23,25 +23,33 @@ Caveman task list for this phase: `docs/AI-USAGE.md` → `2026-09-23 · feat/con
 
 | # | Task | Status |
 |---|---|---|
-| 1 | `domain/enums.py` | todo |
-| 2 | `domain/limits.py` | todo |
-| 3 | `domain/transitions.py` | todo |
-| 4 | `schemas/` (complaint, page, stats, meta, health, errors, triage) | todo |
-| 5 | App factory + route signatures (stubs) | todo |
-| 6 | Validation handler (422→400, bad UUID→404) | todo |
-| 7 | OpenAPI post-processing (no 422, relative servers) | todo |
-| 8 | `app/cli/openapi_dump.py` | todo |
+| 1 | `domain/enums.py` | **done** |
+| 2 | `domain/limits.py` | **done** |
+| 3 | `domain/transitions.py` | **done** |
+| 4 | `schemas/` (complaint, page, stats, meta, health, errors, triage) | **done** |
+| 5 | App factory + route signatures (stubs) | **done** |
+| 6 | Validation handler (422→400, bad UUID→404) | **done** |
+| 7 | OpenAPI post-processing (no 422, relative servers) | **done** |
+| 8 | `app/cli/openapi_dump.py` | **done** |
 | 9 | Makefile `python` → `python3` | todo |
 | 10 | `frontend/package.json` + `schema.d.ts` | todo |
-| 11 | Unit tests (transitions, enums) | todo |
-| 12 | Contract tests | todo |
+| 11 | Unit tests (transitions, enums) | **done** |
+| 12 | Contract tests | **done** |
 | 13 | CI job (contract tests + drift gate) | todo |
 | 14 | `grilled meat` | todo |
 | 15 | PR into `dev`, both approve | todo |
 
 ## 2. Decisions taken (ponytail records live in `docs/ENGINEERING-NOTES.md`)
 
-_(filled in as they happen)_
+Four ponytail records in `docs/ENGINEERING-NOTES.md` (search "Phase 1 (joint)"):
+1. Route bodies are stubs → `501 not_implemented` (handler in `app/errors.py`). **Phase 3: delete
+   `_on_not_implemented` + `test_stub_routes_are_501_until_phase_3` once every handler is real.**
+2. One `ErrorEnvelope` with untyped `details`; per-code shapes pinned by contract tests.
+3. Stats buckets are `dict[Enum, int]`; zero-fill is the stats service's job (Phase 4).
+4. Empty `reporter_contact` → `null`.
+
+Also: non-UUID path id → **404** (handled in the validation handler, not the route);
+`/metrics` is `include_in_schema=False` so the typed client has exactly 8 operations.
 
 ## 3. What you (DEV-A) need to do
 
