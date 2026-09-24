@@ -1,15 +1,14 @@
-"""D1, D2 — `05-DATA-LAYER.md §8`. Runs against its own container, separate from `db_session`,
-because these tests need to upgrade/downgrade/upgrade the schema itself.
+"""D1, D2 — `05-DATA-LAYER.md §8`. Each test runs against its own dedicated container (not the
+shared `postgres_url` from `conftest.py`) because both tests do destructive schema operations
+(`downgrade base`, a diff against a fresh `upgrade head`) that would corrupt `db_session`'s
+migrated-once assumption if run against the shared container.
 
 `alembic/env.py` reads its connection URL from `app.settings.settings.database_url` by design
-(`05-DATA-LAYER.md §3.1`: "never `alembic.ini`, so the same migration runs against compose, CI
-and Kubernetes with no file edits"). That means the container URL has to reach Alembic via the
-`DATABASE_URL` env var, not via `Config.set_main_option` — the latter is what `alembic.ini`
-itself uses, and `env.py` intentionally overwrites it every time. Set `DATABASE_URL` before the
-first `command.upgrade`/`command.downgrade` call in each test.
+(`05-DATA-LAYER.md §3.1`). `settings` is a module-level singleton, instantiated once at
+whichever import happens first in the pytest process — setting the `DATABASE_URL` env var here
+is too late, since pytest already imported every collected test module (including ones that
+transitively import `app.settings`) during collection. Mutate the singleton directly instead.
 """
-
-import os
 
 import pytest
 from sqlalchemy import create_engine
@@ -21,6 +20,7 @@ from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from app.db.base import Base
 from app.db.models import Complaint  # noqa: F401 - registers the table on Base.metadata
+from app.settings import settings
 
 pytestmark = pytest.mark.integration
 
@@ -28,7 +28,7 @@ _BACKEND_ROOT = __file__.rsplit("/backend/", 1)[0] + "/backend"
 
 
 def _alembic_config(url: str) -> Config:
-    os.environ["DATABASE_URL"] = url
+    settings.database_url = url
     cfg = Config(f"{_BACKEND_ROOT}/alembic.ini")
     cfg.set_main_option("script_location", f"{_BACKEND_ROOT}/alembic")
     return cfg

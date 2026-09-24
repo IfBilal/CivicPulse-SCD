@@ -9,7 +9,6 @@ obviously correct than a savepoint-rollback scheme, and it still isolates tests 
 the next test even starts.
 """
 
-import os
 from collections.abc import AsyncGenerator, Iterator
 
 import pytest
@@ -20,6 +19,7 @@ from testcontainers.postgres import PostgresContainer
 
 from alembic import command
 from alembic.config import Config
+from app.settings import settings
 
 pytestmark = pytest.mark.integration
 
@@ -39,11 +39,15 @@ def migrated_db(postgres_url: str) -> Iterator[str]:
     """`alembic upgrade head` against the live container, once per test session.
 
     `alembic/env.py` reads its URL from `app.settings.settings.database_url` by design, not
-    from this Config object — `set_main_option("sqlalchemy.url", ...)` here only affects what
-    `alembic.ini` would have supplied, which `env.py` overwrites unconditionally. The container
-    URL has to reach it via `DATABASE_URL`.
+    from this Config object. Setting the `DATABASE_URL` env var alone is not enough: `settings`
+    is a module-level singleton (`app/settings.py`), instantiated once at whichever import
+    happens first — and pytest imports every collected test module (including ones that
+    transitively import `app.settings`, e.g. via `app.cli.seed`) during collection, before any
+    fixture runs. By the time this fixture executes, the singleton may already be frozen with
+    the fallback default. Mutate the already-instantiated object directly instead of relying on
+    env var timing.
     """
-    os.environ["DATABASE_URL"] = postgres_url
+    settings.database_url = postgres_url
     cfg = Config(f"{_BACKEND_ROOT}/alembic.ini")
     cfg.set_main_option("script_location", f"{_BACKEND_ROOT}/alembic")
     command.upgrade(cfg, "head")
