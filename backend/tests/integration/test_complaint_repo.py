@@ -92,7 +92,16 @@ async def test_enum_rejects_unknown_category(db_session: AsyncSession) -> None:
 
 async def test_updated_at_trigger_fires(db_session: AsyncSession) -> None:
     """D6: a raw UPDATE (bypassing the ORM's `onupdate`, which doesn't exist here on purpose)
-    still bumps `updated_at`, because the trigger is DB-enforced, not app-enforced."""
+    still bumps `updated_at`, because the trigger is DB-enforced, not app-enforced.
+
+    Uses `clock_timestamp()`, not `now()`, to force a distinguishable timestamp between the two
+    inserts: `now()` is frozen to transaction-start time for the whole transaction it runs in,
+    so two `now()` calls close together (as `commit()` on the same AsyncSession can produce) can
+    resolve to the identical instant regardless of real wall-clock delay between them — which is
+    exactly what made this test flake in CI. Forcing an explicit earlier timestamp via a raw
+    UPDATE, then asserting the trigger overwrites it with something later, sidesteps the ambient
+    transaction-timing question entirely.
+    """
     repo = ComplaintRepository(db_session)
     row = await repo.create(
         text="Streetlight has been out for a week near the school gate area.",
@@ -106,9 +115,16 @@ async def test_updated_at_trigger_fires(db_session: AsyncSession) -> None:
         triage_confidence=None,
     )
     await db_session.commit()
-    before = row.updated_at
 
-    await asyncio.sleep(0.05)
+    # Force updated_at into the past so the trigger's bump is unambiguously later, regardless
+    # of how Postgres resolves now() inside the surrounding transaction.
+    await db_session.execute(
+        text("UPDATE complaints SET updated_at = now() - interval '1 hour' WHERE id = :id"),
+        {"id": row.id},
+    )
+    await db_session.commit()
+    before = (await repo.get(row.id)).updated_at  # type: ignore[union-attr]
+
     await db_session.execute(
         text("UPDATE complaints SET status = 'in_progress' WHERE id = :id"), {"id": row.id}
     )

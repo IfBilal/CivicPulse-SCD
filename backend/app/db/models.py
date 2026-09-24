@@ -27,10 +27,10 @@ from app.domain.limits import (
 # insert — that is startup DDL in spirit, which `00-SPEC.md §2.3` forbids.
 #
 # values_callable is required: without it, PGEnum serialises a Python Enum member by its
-# `.name` ("STREETLIGHTS"), not its `.value` ("streetlights") — but migration 0001's
-# `CREATE TYPE` statements only define the lowercase wire-format values. Every INSERT/UPDATE
-# would raise `InvalidTextRepresentation` without this. Caught by CI's data-layer job
-# (D6/D9 integration tests), not by any static check — nothing type-level flags it.
+# `.name` ("STREETLIGHTS"), not its `.value` ("streetlights") — but the migration's type
+# definitions only cover the lowercase wire-format values. Every INSERT/UPDATE would raise
+# `InvalidTextRepresentation` without this. Caught by CI's data-layer job (D6/D9 integration
+# tests), not by any static check — nothing type-level flags it.
 def _enum_values(enum_cls: type[Category | Priority | Status | TriagedBy]) -> list[str]:
     return [member.value for member in enum_cls]
 
