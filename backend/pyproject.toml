@@ -2,6 +2,12 @@
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools.packages.find]
+# `alembic/` sits alongside `app/` for the CLI's `script_location`, but it's not an
+# importable package the app ships — without this, setuptools' flat-layout autodiscovery
+# sees two top-level packages and refuses to build (`pip install -e` fails outright).
+include = ["app*"]
+
 [project]
 name = "civicpulse-backend"
 version = "0.1.0"
