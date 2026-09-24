@@ -203,3 +203,51 @@ Every Claude Code skill invocation on this project, logged at the moment it happ
      `TRANSITIONS` turns `test_transition_matrix_cell[open-resolved]` red. Confirms the matrix
      test is independent of the table rather than tautological.
 - **I changed:** N/A — finding-generation step.
+
+---
+
+## 2026-09-24 · feat/data-layer
+
+- **Tool:** Claude Code + `caveman`
+- **Shaped:** decomposition of Phase 2's DATA slice (`02-CRITICAL-PATH.md §4` PHASE 2 +
+  `05-DATA-LAYER.md`) into a 12-item stripped task list: Alembic env init, naming-convention
+  `Base`, `Complaint` ORM model, hand-written migration 0001 + downgrade, autogenerate-empty
+  verification, round-trip verification, `ComplaintRepository`, `lint-layers` Makefile target,
+  seed data + script, D1–D11 test matrix, named-query notes + EXPLAIN evidence, Makefile data
+  targets (found already present from Phase 0).
+- **Wrote:** `backend/app/settings.py`, `backend/app/db/{base,session,models,seed_data}.py`,
+  `backend/alembic/` (init + hand-written `versions/0001_initial.py`), `backend/app/repositories/complaint_repo.py`,
+  `backend/app/cli/seed.py`, `Makefile` (`lint-layers` target), `backend/tests/integration/`
+  (`conftest.py`, `test_migrations.py`, `test_complaint_repo.py`, `test_seed.py`),
+  `backend/tests/unit/test_no_ddl_in_app.py`.
+- **I changed:** accepted the task list as-is; no edits.
+
+- **Tool:** Claude Code, self-review pass (the `CLAUDE.md §6` "grilled meat" review point — no
+  matching skill is installed in this environment under that name, so the review itself was
+  performed directly against its stated bar: ≥3 findings, each with `file:line`, before the diff
+  moves to PR)
+- **Shaped:** review of the full `feat/data-layer` diff (21 files) before opening the PR.
+- **Wrote (fixes applied from the review):**
+  1. `backend/app/db/session.py:27` — `get_session()` had no rollback-on-exception before the
+     `async with` closed the session on an error path. **Fixed**: added `try/except` that rolls
+     back and re-raises.
+  2. `backend/app/cli/seed.py:47` — a CHECK-constraint violation during `make seed` propagated a
+     raw SQLAlchemy traceback with no operator-facing context. **Fixed**: rollback + one-line
+     stderr diagnostic before re-raising.
+  3. `backend/app/repositories/complaint_repo.py:81` — `list_page` trusts `page`/`page_size` are
+     pre-validated; `page=0` produces a negative `OFFSET` and a raw DB error. **WONTFIX for this
+     branch**: bounds validation is Phase 3 (routes) scope against `domain/limits.py`; a
+     repository-layer guard now would duplicate that check in two places.
+  4. `backend/tests/integration/conftest.py:44` — `db_session`'s engine has no explicit
+     `poolclass`; fine under serial pytest, a connection-exhaustion trap under future
+     `pytest-xdist` against the single shared testcontainers instance. **WONTFIX for this
+     branch**: nothing in this repo runs tests in parallel yet.
+- **I changed:** applied findings 1 and 2 as fixes; findings 3 and 4 logged as WONTFIX with
+  reasons in `docs/ENGINEERING-NOTES.md` rather than silently dropped, per `CLAUDE.md §6` rule 2.
+
+**Disclosed limitation, not a skill finding:** this session has no Docker/container runtime
+available, so the full integration suite (D1, D2, D4–D10, seed D11 — all written, all collect
+cleanly) and the `EXPLAIN (ANALYZE, BUFFERS)` evidence capture could not be run live here. Static
+checks (ruff, mypy strict, `lint-layers`, the 60-test unit/contract fast loop) are all green.
+Documented as the first action item for whoever next has Docker, in
+`docs/ENGINEERING-NOTES.md`'s "DEV-A · Phase 2 named queries" section.
