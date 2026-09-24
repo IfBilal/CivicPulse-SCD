@@ -138,7 +138,32 @@ export function Journey() {
       tl.to({}, { duration: 0.05 }, 0.97);
     }, el);
 
+    // ScrollTrigger measures the journey while fonts, the intro overlay, and the lazy city scene
+    // are still settling. DevTools opening changes the viewport and implicitly refreshes that
+    // measurement, which can make a stale initial range appear to fix itself. Refresh after
+    // layout/viewport changes as well as after the initial class change.
+    let refreshRaf = 0;
+    const refresh = () => {
+      if (refreshRaf) cancelAnimationFrame(refreshRaf);
+      refreshRaf = requestAnimationFrame(() => {
+        refreshRaf = 0;
+        ScrollTrigger.refresh();
+      });
+    };
+    const resizeObserver = typeof ResizeObserver !== "undefined" ? new ResizeObserver(refresh) : null;
+    resizeObserver?.observe(el);
+    window.addEventListener("resize", refresh, { passive: true });
+    window.visualViewport?.addEventListener("resize", refresh, { passive: true });
+    window.addEventListener("load", refresh, { once: true });
+    void document.fonts?.ready.then(refresh);
+    refresh();
+
     return () => {
+      if (refreshRaf) cancelAnimationFrame(refreshRaf);
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", refresh);
+      window.visualViewport?.removeEventListener("resize", refresh);
+      window.removeEventListener("load", refresh);
       ctx.revert();
       el.classList.remove("live");
       journey.set(null);
