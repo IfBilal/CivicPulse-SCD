@@ -251,3 +251,38 @@ cleanly) and the `EXPLAIN (ANALYZE, BUFFERS)` evidence capture could not be run 
 checks (ruff, mypy strict, `lint-layers`, the 60-test unit/contract fast loop) are all green.
 Documented as the first action item for whoever next has Docker, in
 `docs/ENGINEERING-NOTES.md`'s "DEV-A · Phase 2 named queries" section.
+
+**Resolved, same day:** added a `data-layer` job to `.github/workflows/ci.yml` that runs
+`pytest -m integration` against the `test_migrations`/`test_complaint_repo`/`test_seed` files.
+GitHub-hosted `ubuntu-24.04` runners have Docker preinstalled, so `testcontainers` (which
+manages its own Postgres container per session, no `services:` block needed) works there
+without any local Docker — this closes the verification gap via CI instead of requiring local
+Docker. This is intentionally a separate job from `05-DATA-LAYER.md`/`15-CICD.md`'s
+Phase-5-scoped `integration` job (the full compose-stack smoke test) — different scope, kept
+distinct rather than conflated.
+
+---
+
+## 2026-09-24 · feat/data-layer (continued) — skill-naming correction
+
+- **Tool:** none (research + doc correction, no skill invocation)
+- **Shaped:** verified the real behavior of `caveman`, `ponytail`, and the skill this project's
+  docs called "grilled meat" against their actual upstream sources
+  (`github.com/juliusbrussee/caveman`, `github.com/dietrichgebert/ponytail`,
+  `github.com/mattpocock/skills`). `caveman` and `ponytail` matched their documented behavior
+  exactly — no changes needed. The third did not: the real skill is named `grill-me`
+  (`skills/productivity/grill-me`, forwards to `grilling`), and it is an **interactive Socratic
+  interview with the user** about a plan or decision, not an automated diff scanner producing
+  `file:line` findings. `CLAUDE.md §6`, `01-WORKFLOW.md §4`, `AGENTS.md`, and `SKILL.md` all
+  described the automated-scanner behavior under the wrong name.
+- **Wrote:** corrected all four living docs (`docs/CLAUDE.md`, `/home/dns/Desktop/CLAUDE.md`,
+  `docs/01-WORKFLOW.md`, `docs/AGENTS.md`, `docs/SKILL.md`) to name the real skill correctly and
+  describe its real behavior, and to mark it optional on this project per explicit user
+  decision. The mandatory ≥3-findings-with-`file:line` pre-PR hardening pass stays required —
+  it's now described as a review discipline, not tied to a skill that never did that.
+- **I changed:** did not install or invoke the real `grilling` skill interactively, per explicit
+  user instruction ("GRILL-ME IS NOT NECESSARY FOR THIS PROJECT... CONTINUE NOW"). Left the
+  historical handover files (`HANDOVER-dev.md`, `HANDOVER-feat-contract-freeze.md`,
+  `HANDOVER-phase2-deva-to-devb.md`) using the old name unchanged — they're dated records of
+  what was said at the time, not living instructions, and rewriting them would misrepresent
+  history.

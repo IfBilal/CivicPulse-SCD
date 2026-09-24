@@ -77,10 +77,13 @@ run this with one command and nothing else.
 
 ## Mandatory skill cadence
 
-Three named Claude Code skills fire at fixed points every session and are not optional:
+Two named Claude Code skills fire at fixed points every session and are not optional:
 `caveman` (phase start → stripped task list), `ponytail` (every design fork → decision
-stub with rejected alternatives), `grilled meat` (before every PR → ≥3 hardening
-findings with file:line). Full trigger conditions and acceptance tests are in
+stub with rejected alternatives). A pre-PR hardening review (before every PR → ≥3
+findings with file:line) is also required, but is a review discipline, not a named
+skill — the skill that shares its old nickname, `grill-me` (real behavior: an
+interactive interview with the user about a plan/decision, not a diff scanner), is
+optional on this project. Full trigger conditions and acceptance tests are in
 `CLAUDE.md §6` — that's the authority, this is just the reminder that it applies to
 every session, not just the first one. Every invocation gets logged in
 `docs/AI-USAGE.md` at the time it happens, including what you overrode and why.
@@ -93,8 +96,8 @@ Not "the code runs." A phase is done when:
 3. The relevant row(s) in `20-RUBRIC-TRACEABILITY.md` can be flipped to `PROVEN` because
    both the test and the evidence artefact exist — not one without the other.
 4. A handover file exists if the branch isn't merging immediately.
-5. `caveman`, `ponytail` (if a fork occurred), and `grilled meat` fired at their
-   required points and are logged in `docs/AI-USAGE.md` — see `CLAUDE.md §6`.
+5. `caveman`, `ponytail` (if a fork occurred), and the pre-PR hardening review fired
+   at their required points and are logged in `docs/AI-USAGE.md` — see `CLAUDE.md §6`.
 
 ## Where to look when stuck
 

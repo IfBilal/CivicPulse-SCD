@@ -256,8 +256,15 @@ each skill in your own Claude Code setup; the *slots* are what matter here.
 |---|---|---|---|---|
 | **caveman** | Start of every phase, before any code | The phase section of `02-CRITICAL-PATH.md` + the relevant `0X-*.md` | A stripped-to-bone task list: nouns and verbs only, no hedging, every item independently completable in ≤ 90 min | Every line starts with a verb; no line contains "consider", "maybe", "as needed"; item count ≥ 5 |
 | **ponytail** | Mid-phase, when a design decision has ≥ 2 defensible answers | The decision + constraints from `00-SPEC.md` | A decision record stub → becomes an ADR or an `ENGINEERING-NOTES.md` paragraph | Names ≥ 2 rejected alternatives **and** the rejection reason for each |
-| **grilled meat** | End of phase, before opening the PR | The full diff | A hardening pass: error paths, timeouts, resource cleanup, log lines, edge cases the happy path skipped | Produces ≥ 3 concrete findings with file:line; each becomes a commit or a documented `WONTFIX` |
+| **pre-PR review** *(not a named skill — see correction below)* | End of phase, before opening the PR | The full diff | A hardening pass: error paths, timeouts, resource cleanup, log lines, edge cases the happy path skipped | Produces ≥ 3 concrete findings with file:line; each becomes a commit or a documented `WONTFIX` |
 | **PR review** | On every PR, run by the **partner**, never the author | PR diff + `04-CONTRACTS.md` | ≥ 2 substantive review comments with file:line (Rubric A requirement) | Comments reference a spec clause or a failure mode, not style |
+
+> **Correction, 2026-09-24:** this table previously called the hardening-pass row "grilled
+> meat" and implied it was a named Claude Code skill. The real skill at that name is
+> `grill-me` (`github.com/mattpocock/skills`, `skills/productivity/grill-me`, which forwards
+> to `grilling`) — an interactive Socratic interview *with the user* about a plan or
+> decision, not an automated diff scanner. It's optional on this project. The hardening pass
+> above is a required review discipline regardless, just not tied to that skill.
 
 **The rule that makes this legitimate under §5.5:** everything these skills produce goes into
 `docs/AI-USAGE.md` **at the moment it is produced**, not reconstructed at the end. Format:
@@ -271,7 +278,7 @@ each skill in your own Claude Code setup; the *slots* are what matter here.
   the same `except` ladder and splitting them produced an artificial seam.
 
 ## 2026-09-22 · same branch
-- **Tool:** Claude Code + `grilled meat`
+- **Tool:** Claude Code, pre-PR review pass
 - **Wrote:** `backend/app/providers/triage/llm.py:88-131` (the retry/jitter ladder)
 - **I changed:** it proposed retrying on `ValidationError`. Rejected — §2.5 item 3 restricts
   retries to timeout/429/5xx, and a schema failure is deterministic under retry. See

@@ -172,3 +172,25 @@ review per `CLAUDE.md §6` rule 5):**
    explicit `poolclass`, fine under serial pytest but a connection-exhaustion trap if the suite
    later runs under `pytest-xdist` against the single shared testcontainers instance. Not fixed
    now since nothing in this repo runs tests in parallel yet; revisit if that changes.
+
+---
+
+## DEV-A · `scripts/check_submission.py`'s `RUBRIC-TESTS` check always reports 0
+
+Found while verifying the Phase 2 data-layer PR didn't regress `check_submission.py`.
+`rubric_tests()` runs `python3 -m pytest --collect-only -q` and counts `"::"` occurrences in
+stdout to estimate the test count. This project's `backend/pyproject.toml` enables
+`pytest-cov` by default via `addopts`, and `pytest-cov` rewrites `--collect-only -q`'s output
+format from the usual per-test `path::test_name` lines into per-**file** summary lines
+(`tests/unit/test_enums.py: 5`) with no `::` anywhere in the output. The count is therefore
+always 0, regardless of how many tests actually exist — confirmed: 65 real tests exist in
+`backend/tests/` as of this branch, and the check still reports `0 backend tests collected,
+floor is 14`.
+
+Not silently patched — this is DEV-B's/joint territory (`scripts/check_submission.py` was
+authored in `chore/scripts-check-submission`, PR #14) and the fix touches a shared detector,
+not app code. **Recommendation:** either add `-p no:cacheprovider --no-cov` to the collect
+invocation (bypasses the coverage plugin's output rewrite) or switch to `pytest --collect-only
+-q --no-header` and count lines matching a test-id regex instead of a bare `"::"` substring
+search. **Status:** flagged, not fixed — decide together before this becomes a real
+`RUBRIC-TESTS` false negative at a gate review.

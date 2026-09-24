@@ -107,8 +107,8 @@ green after the fix and call that sufficient.
 
 ## Step 9 — Skill invocation audit (always, independent of bucket)
 
-The three named skills are mandatory, not optional, per `CLAUDE.md §6`. Before reporting
-completion, confirm — don't assume:
+Two named skills plus one review discipline are mandatory, not optional, per
+`CLAUDE.md §6`. Before reporting completion, confirm — don't assume:
 
 - **`caveman`** ran at the start of this phase and produced a stripped task list (verbs
   only, ≤90-min items, ≥5 items). If this is mid-phase and it already ran earlier in the
@@ -118,15 +118,18 @@ completion, confirm — don't assume:
   defensible answers. Scan the diff for exactly that pattern (a choice between two
   approaches, a config knob, a "we could also have done X instead") — if you find one
   with no corresponding decision-record stub, that's a blocker.
-- **`grilled meat`** ran on the full diff before this PR, with ≥3 findings at `file:line`
-  each resolved into a commit or an explicit `WONTFIX`. A diff you believe is clean still
-  needs this pass — "I didn't find anything" is only credible after the pass ran, not
-  instead of it.
+- **the pre-PR hardening review** ran on the full diff before this PR, with ≥3 findings
+  at `file:line` each resolved into a commit or an explicit `WONTFIX`. A diff you believe
+  is clean still needs this pass — "I didn't find anything" is only credible after the
+  pass ran, not instead of it. This is a review discipline, not a named skill — the skill
+  that used to share its nickname here, `grill-me` (real behavior: an interactive
+  interview with the user about a plan/decision), is optional on this project; don't
+  invoke it expecting an automated diff scan.
 - **`docs/AI-USAGE.md`** has an entry for each invocation above, written at the time,
   including an explicit "I changed" line (even if it's "accepted as-is").
 
-If any of the three didn't fire where required, stop and run it now before reporting the
-task done — don't note it as a gap and proceed anyway.
+If `caveman`, `ponytail`, or the pre-PR review didn't fire where required, stop and run
+it now before reporting the task done — don't note it as a gap and proceed anyway.
 
 ## Step 10 — Report
 
