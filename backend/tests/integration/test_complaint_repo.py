@@ -33,6 +33,36 @@ def _row(**overrides: object) -> dict[str, object]:
     return base
 
 
+async def test_orm_enum_columns_round_trip_by_value(db_session: AsyncSession) -> None:
+    """Regression: `PGEnum` without `values_callable` serialises a member by `.name`
+    ("STREETLIGHTS"), which the DB's native enum type (lowercase-only, per migration 0001)
+    rejects outright. Insert through the ORM/repo, then read the same row back with a raw
+    query to confirm the DB actually stored the lowercase wire value, not just that the ORM
+    round-trips it internally."""
+    repo = ComplaintRepository(db_session)
+    row = await repo.create(
+        text="Streetlights on Main Road have been out for a week near the market gate.",
+        location="Test Street 9",
+        reporter_contact=None,
+        category=Category.STREETLIGHTS,
+        priority=Priority.NORMAL,
+        ai_summary=None,
+        triaged_by=TriagedBy.RULES,
+        triage_latency_ms=1,
+        triage_confidence=None,
+    )
+    await db_session.commit()
+
+    raw = await db_session.execute(
+        text("SELECT category::text, priority::text, status::text FROM complaints WHERE id = :id"),
+        {"id": row.id},
+    )
+    category, priority, status = raw.one()
+    assert category == "streetlights"
+    assert priority == "normal"
+    assert status == "open"
+
+
 async def test_text_check_enforced_in_db(db_session: AsyncSession) -> None:
     """D4: raw INSERT with a 9-char text raises IntegrityError — proves the DB, not just
     Pydantic, enforces the bound."""
