@@ -77,7 +77,7 @@ export default function PulseField() {
     if (!el || !webglAvailable()) return;
     const reduced = prefersReducedMotion();
 
-    const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, powerPreference: "low-power" });
+    const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, powerPreference: "low-power", preserveDrawingBuffer: false });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     renderer.setSize(window.innerWidth, window.innerHeight);
     el.appendChild(renderer.domElement);
@@ -124,7 +124,7 @@ export default function PulseField() {
     const points = new THREE.Points(geometry, material);
     scene.add(points);
 
-    const clock = new THREE.Clock();
+    const t0 = performance.now();
     let nextRing = 0;
     const addRing = (color: string, strength = 1, x?: number, z?: number) => {
       const r = rings[nextRing % MAX_RINGS]!;
@@ -156,7 +156,7 @@ export default function PulseField() {
     let raf = 0;
     let lastAmbient = 0;
     const loop = () => {
-      const t = clock.getElapsedTime();
+      const t = (performance.now() - t0) / 1000;
       uniforms.uTime.value = t;
       if (t - lastAmbient > 2.8) {
         // ambient "complaints" rippling across the city

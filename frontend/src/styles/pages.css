@@ -519,3 +519,333 @@
     grid-column: 1 / -1;
   }
 }
+
+/* ── motion layer ───────────────────────────────────────────────────── */
+.cursor-glow {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 1;
+  width: 520px;
+  height: 520px;
+  border-radius: 50%;
+  pointer-events: none;
+  background: radial-gradient(circle, rgba(34, 228, 255, 0.13) 0%, rgba(162, 107, 255, 0.07) 35%, transparent 65%);
+  mix-blend-mode: screen;
+}
+
+.aurora {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+  filter: blur(80px);
+  opacity: 0.55;
+}
+.aurora span {
+  position: absolute;
+  width: 46vw;
+  height: 46vw;
+  border-radius: 50%;
+  mix-blend-mode: screen;
+}
+.aurora span:nth-child(1) {
+  background: rgba(34, 228, 255, 0.22);
+  top: -18vw;
+  left: -10vw;
+  animation: drift-a 26s ease-in-out infinite alternate;
+}
+.aurora span:nth-child(2) {
+  background: rgba(162, 107, 255, 0.24);
+  top: 10vh;
+  right: -16vw;
+  animation: drift-b 32s ease-in-out infinite alternate;
+}
+.aurora span:nth-child(3) {
+  background: rgba(13, 162, 107, 0.16);
+  bottom: -24vw;
+  left: 30vw;
+  animation: drift-c 38s ease-in-out infinite alternate;
+}
+@keyframes drift-a {
+  to {
+    transform: translate(22vw, 16vh) scale(1.2);
+  }
+}
+@keyframes drift-b {
+  to {
+    transform: translate(-26vw, 22vh) scale(0.85);
+  }
+}
+@keyframes drift-c {
+  to {
+    transform: translate(-18vw, -26vh) scale(1.15);
+  }
+}
+
+.route-wipe {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  z-index: 50;
+  background: var(--grad);
+  box-shadow: 0 0 20px var(--pulse);
+  transform: scaleX(0);
+  pointer-events: none;
+}
+
+.tilt {
+  transform-style: preserve-3d;
+  will-change: transform;
+}
+
+/* rotating conic border — the "hot" card */
+.glow-border {
+  isolation: isolate;
+}
+.glow-border::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  z-index: -1;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: conic-gradient(from var(--angle, 0deg), transparent 0 60%, #22e4ff 75%, #a26bff 85%, transparent 100%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: rotate-angle 4s linear infinite;
+}
+@property --angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+@keyframes rotate-angle {
+  to {
+    --angle: 360deg;
+  }
+}
+
+.burst-layer {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 60;
+}
+.burst-dot {
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  margin: -3.5px 0 0 -3.5px;
+  border-radius: 50%;
+  box-shadow: 0 0 10px currentColor;
+}
+
+/* live ticker */
+.ticker {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: -6px 0 22px;
+  padding: 8px 8px 8px 14px;
+  border-radius: 999px;
+  background: rgba(10, 14, 28, 0.6);
+  border: 1px solid var(--line);
+  backdrop-filter: blur(12px);
+  overflow: hidden;
+}
+.ticker-live {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  color: var(--danger);
+}
+.live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--danger);
+  box-shadow: 0 0 10px var(--danger);
+  animation: beat 1.1s var(--ease) infinite;
+}
+.ticker-viewport {
+  flex: 1;
+  overflow: hidden;
+  -webkit-mask: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent);
+  mask: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent);
+}
+.ticker-track {
+  display: flex;
+  width: max-content;
+  animation: marquee 70s linear infinite;
+}
+.ticker-dup {
+  display: contents;
+}
+.ticker:hover .ticker-track,
+.ticker:focus-within .ticker-track {
+  animation-play-state: paused;
+}
+.tick {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 28px 0 0;
+  font-size: 13px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.tick .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--c);
+  box-shadow: 0 0 10px var(--c);
+}
+.tick b {
+  color: var(--text);
+  font-weight: 600;
+}
+.tick em {
+  font-style: normal;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+@keyframes marquee {
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+/* primary button arrow nudge + busy shimmer */
+.btn-primary .arrow {
+  display: inline-block;
+  transition: transform 0.3s var(--ease);
+}
+.btn-primary:hover .arrow {
+  transform: translateX(4px);
+}
+.btn-primary.is-busy {
+  animation: busy-pan 1.2s linear infinite;
+}
+@keyframes busy-pan {
+  to {
+    background-position: 200% 0;
+  }
+}
+
+/* status change flash */
+.chip.flash {
+  animation: pill-flash 0.9s var(--ease);
+}
+@keyframes pill-flash {
+  0% {
+    box-shadow: 0 0 0 0 var(--c);
+    transform: scale(1.15);
+  }
+  100% {
+    box-shadow: 0 0 0 12px transparent;
+    transform: scale(1);
+  }
+}
+
+/* gradient title shimmer + hover glitch */
+.page-title .grad {
+  background-size: 200% 100%;
+  animation: grad-pan 6s ease-in-out infinite alternate;
+}
+@keyframes grad-pan {
+  to {
+    background-position: 100% 0;
+  }
+}
+.page-title:hover .grad {
+  animation:
+    grad-pan 6s ease-in-out infinite alternate,
+    glitch 0.4s steps(2) 2;
+}
+@keyframes glitch {
+  0% {
+    text-shadow: 2px 0 rgba(255, 61, 170, 0.7), -2px 0 rgba(34, 228, 255, 0.7);
+    transform: translateX(1px);
+  }
+  50% {
+    text-shadow: -2px 0 rgba(255, 61, 170, 0.7), 2px 0 rgba(34, 228, 255, 0.7);
+    transform: translateX(-1px);
+  }
+  100% {
+    text-shadow: none;
+    transform: none;
+  }
+}
+
+/* nav hover light */
+.nav a:not(.active)::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  right: 50%;
+  bottom: 3px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--pulse);
+  box-shadow: 0 0 8px var(--pulse);
+  transition:
+    left 0.3s var(--ease),
+    right 0.3s var(--ease);
+}
+.nav a:not(.active):hover::after {
+  left: 16px;
+  right: 16px;
+}
+
+/* dashboard row enter glow on the category rail */
+.complaint:hover .cat-rail {
+  width: 6px;
+  transition: width 0.25s var(--ease);
+}
+
+/* gauge */
+.kpi-gauge {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.gauge {
+  width: 58px;
+  height: 58px;
+  transform: rotate(-90deg);
+}
+.gauge-track,
+.gauge-fill {
+  fill: none;
+  stroke-width: 9;
+}
+.gauge-track {
+  stroke: rgba(255, 255, 255, 0.08);
+}
+.gauge-fill {
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 6px currentColor);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aurora,
+  .cursor-glow,
+  .route-wipe {
+    display: none;
+  }
+  .ticker-track {
+    animation: none;
+  }
+}
+.magnetic { display: inline-flex; }

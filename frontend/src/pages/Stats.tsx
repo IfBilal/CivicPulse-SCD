@@ -8,6 +8,7 @@ import type { CacheState, Providers, Stats as StatsT } from "../api/types";
 import { CacheBadge, ProviderBadge } from "../components/Badges";
 import { CountUp } from "../components/CountUp";
 import { DecodeText } from "../components/DecodeText";
+import { Gauge } from "../components/fx/Gauge";
 import { Glass } from "../components/Glass";
 import { prefersReducedMotion, useReveal } from "../hooks/motion";
 import { CATEGORY_META, PRIORITY_META, relativeTime, shortId, STATUS_META } from "../lib/format";
@@ -187,31 +188,34 @@ export default function Stats() {
       ) : (
         <>
           <div className="kpis">
-            <Glass className="kpi hero">
+            <Glass className="kpi hero" tilt>
               <span className="kpi-label">Total reports</span>
               <span className="kpi-value">
                 <CountUp value={total} />
               </span>
               <span className="kpi-foot">generated {relativeTime(stats.generated_at)}</span>
             </Glass>
-            <Glass className="kpi">
+            <Glass className="kpi" tilt>
               <span className="kpi-label">Open now</span>
               <span className="kpi-value" style={{ color: "var(--info)" }}>
                 <CountUp value={open} />
               </span>
               <span className="kpi-foot">awaiting action</span>
             </Glass>
-            <Glass className="kpi">
+            <Glass className="kpi" tilt>
               <span className="kpi-label">High priority</span>
               <span className="kpi-value" style={{ color: "var(--danger)" }}>
                 <CountUp value={high} />
               </span>
               <span className="kpi-foot">{total ? Math.round((high / total) * 100) : 0}% of all reports</span>
             </Glass>
-            <Glass className="kpi">
+            <Glass className="kpi" tilt>
               <span className="kpi-label">Resolution rate</span>
-              <span className="kpi-value" style={{ color: "var(--ok)" }}>
-                <CountUp value={total ? (resolved / total) * 100 : 0} decimals={0} suffix="%" />
+              <span className="kpi-gauge">
+                <Gauge value={total ? (resolved / total) * 100 : 0} label={`Resolution rate ${total ? Math.round((resolved / total) * 100) : 0}%`} />
+                <span className="kpi-value" style={{ color: "var(--ok)" }}>
+                  <CountUp value={total ? (resolved / total) * 100 : 0} decimals={0} suffix="%" />
+                </span>
               </span>
               <span className="kpi-foot">{resolved} resolved</span>
             </Glass>

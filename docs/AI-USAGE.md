@@ -268,3 +268,28 @@ Every Claude Code skill invocation on this project, logged at the moment it happ
      labelled tar **estimate**. **Open, not fixed**: `make evidence-context` + `docker build` both
      images on a machine with working Docker before Gate 2 is ticked.
 - **I changed:** N/A — finding-generation step.
+
+## 2026-09-24 · feat/fe-scaffold
+
+- **Tool:** Claude Code + `grilled meat` (second pass — a real-browser E2E run, `frontend/e2e/e2e.mjs`,
+  16 flows in headless Chrome via playwright-core, prompted by DEV-B reporting a blank page)
+- **Findings:**
+  1. `frontend/src/main.tsx` — the app only mounted *after* MSW started; a failed dynamic import of
+     the worker (Vite re-optimising `msw/browser` on first load) left a **blank page**. **Fixed**:
+     `optimizeDeps.include: ["msw/browser"]` + mount in `.finally()` and log the MSW error.
+  2. `frontend/src/pages/Dashboard.tsx` (load) — **race**: filter change then a fast "Next" fired two
+     list requests; the older, slower response overwrote the newer page ("Showing 1–20" on page 2).
+     **Fixed**: request sequence guard, only the latest response writes state. Test
+     `Dashboard.race.test.tsx` — confirmed red on the old code, green after.
+  3. `frontend/src/styles/global.css` (`.btn-primary:hover`) — `.btn:hover:not(:disabled)` out-ranked
+     `.btn-primary`, so hovering the primary CTA **flattened its gradient to grey**. **Fixed** with a
+     higher-specificity rule; E2E asserts the hover background is still a gradient.
+  4. `frontend/vite.config.ts` — in mock mode the dev proxy still forwarded any request MSW missed to
+     a non-existent backend, surfacing as a misleading 500. **Fixed**: no proxy in mock mode.
+  5. PDF §2.1 requires the runtime-config choice to be *stated in an ADR* — it wasn't yet.
+     **Fixed**: `docs/adr/0002-frontend-runtime-configuration.md` (with rejected alternatives).
+  6. Console hygiene: React Router v7 future-flag warnings and deprecated `THREE.Clock`. **Fixed**
+     (future flags opted in; `performance.now()` clock).
+- **I changed:** N/A — finding-generation step. Also checked every PDF §2.1 / Rubric B frontend line
+  against the build (per DEV-B: the PDF is the source of truth, visual extras are optional); the only
+  open PDF item is the image-size report, which needs a working Docker daemon.

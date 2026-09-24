@@ -4,6 +4,8 @@ import { NavLink, Outlet, useLocation } from "react-router-dom";
 
 import { runtimeConfig } from "../api/config";
 import { prefersReducedMotion } from "../hooks/motion";
+import { CursorGlow } from "./fx/CursorGlow";
+import { Magnetic } from "./fx/Magnetic";
 
 const PulseField = lazy(() => import("./PulseField"));
 
@@ -33,6 +35,7 @@ export function Layout() {
   const nav = useRef<HTMLElement>(null);
   const indicator = useRef<HTMLSpanElement>(null);
   const page = useRef<HTMLDivElement>(null);
+  const wipe = useRef<HTMLDivElement>(null);
   const cfg = runtimeConfig();
 
   // Slide the gradient pill under the active link.
@@ -52,10 +55,16 @@ export function Layout() {
   // Page transition on route change.
   useLayoutEffect(() => {
     if (!page.current || prefersReducedMotion()) return;
-    const tween = gsap.fromTo(page.current, { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out", clearProps: "transform" });
+    const tl = gsap.timeline();
+    if (wipe.current) {
+      tl.fromTo(wipe.current, { scaleX: 0, transformOrigin: "left center" }, { scaleX: 1, duration: 0.28, ease: "power3.in" })
+        .set(wipe.current, { transformOrigin: "right center" })
+        .to(wipe.current, { scaleX: 0, duration: 0.42, ease: "power3.out" });
+    }
+    tl.fromTo(page.current, { opacity: 0, y: 18, filter: "blur(6px)" }, { opacity: 1, y: 0, filter: "blur(0px)", duration: 0.6, ease: "power3.out", clearProps: "transform,filter" }, 0.2);
     window.scrollTo?.({ top: 0 });
     return () => {
-      tween.kill();
+      tl.kill();
     };
   }, [location.pathname]);
 
@@ -64,16 +73,25 @@ export function Layout() {
       <Suspense fallback={null}>
         <PulseField />
       </Suspense>
+      <div className="aurora" aria-hidden>
+        <span />
+        <span />
+        <span />
+      </div>
       <div className="bg-grain" aria-hidden />
+      <CursorGlow />
+      <div className="route-wipe" ref={wipe} aria-hidden />
       <div className="shell">
         <header className="topbar">
           <div className="topbar-inner">
-            <NavLink to="/" className="brand" aria-label="CivicPulse home">
-              <BrandMark />
-              <span className="brand-name">
-                Civic<span>Pulse</span>
-              </span>
-            </NavLink>
+            <Magnetic strength={0.25}>
+              <NavLink to="/" className="brand" aria-label="CivicPulse home">
+                <BrandMark />
+                <span className="brand-name">
+                  Civic<span>Pulse</span>
+                </span>
+              </NavLink>
+            </Magnetic>
             <nav className="nav" ref={nav} aria-label="Primary">
               <span className="nav-indicator" ref={indicator} aria-hidden />
               {LINKS.map((l) => (

@@ -1,5 +1,5 @@
 // 11-FRONTEND §3.1: render category, priority, summary AND provider — the fallback is user-visible.
-import { screen } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 
@@ -23,9 +23,10 @@ it("shows the outlined fallback badge with its explanation when triage degraded 
   await user.type(screen.getByLabelText(/where/i), row.location);
   await user.click(screen.getByRole("button", { name: /submit report/i }));
 
-  const badge = (await screen.findByTestId("result")).querySelector('[data-provider="rules:fallback"]');
+  const card = await screen.findByTestId("result");
+  const badge = card.querySelector('[data-provider="rules:fallback"]');
   expect(badge).toHaveClass("outline");
   expect(badge).toHaveAttribute("title", "AI provider unavailable; classified by keyword rules");
-  expect(screen.getByText("Electricity")).toBeVisible();
-  expect(screen.getByText("High")).toBeVisible();
+  expect(within(card).getByText("Electricity")).toBeVisible();
+  expect(within(card).getByText("High")).toBeVisible();
 });

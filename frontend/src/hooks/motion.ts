@@ -1,4 +1,5 @@
 import gsap from "gsap";
+import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { useLayoutEffect, useRef, useState, useEffect, type RefObject } from "react";
 
 export function prefersReducedMotion(): boolean {
@@ -19,13 +20,21 @@ export function useReducedMotion(): boolean {
   return reduced;
 }
 
-/** Staggered entrance for every `[data-reveal]` inside the scope. Cleaned up via gsap.context. */
+/** Staggered entrance for every `[data-reveal]` inside the scope: whatever is on screen animates
+ *  in immediately, the rest as it scrolls into view. Cleaned up via gsap.context. */
 export function useReveal<T extends HTMLElement>(deps: unknown[] = []): RefObject<T> {
   const ref = useRef<T>(null);
   useLayoutEffect(() => {
     if (!ref.current || prefersReducedMotion()) return;
+    gsap.registerPlugin(ScrollTrigger); // lazily: it touches matchMedia, absent in jsdom
     const ctx = gsap.context(() => {
-      gsap.from("[data-reveal]", { y: 24, opacity: 0, filter: "blur(6px)", duration: 0.7, ease: "expo.out", stagger: 0.06, clearProps: "filter" });
+      gsap.set("[data-reveal]", { y: 28, opacity: 0, filter: "blur(8px)" });
+      ScrollTrigger.batch("[data-reveal]", {
+        start: "top 92%",
+        once: true,
+        onEnter: (els) =>
+          gsap.to(els, { y: 0, opacity: 1, filter: "blur(0px)", duration: 0.8, ease: "expo.out", stagger: 0.08, clearProps: "filter,transform" }),
+      });
     }, ref);
     return () => ctx.revert();
     // eslint-disable-next-line react-hooks/exhaustive-deps

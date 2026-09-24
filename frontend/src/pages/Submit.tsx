@@ -7,11 +7,22 @@ import { LIMITS } from "../api/schemaMeta";
 import type { Complaint, ComplaintCreate } from "../api/types";
 import { CategoryChip, PriorityTag, ProviderBadge } from "../components/Badges";
 import { DecodeText } from "../components/DecodeText";
+import { burst } from "../components/fx/burst";
+import { Magnetic } from "../components/fx/Magnetic";
+import { Ticker } from "../components/fx/Ticker";
+import { useTypewriter } from "../components/fx/Typewriter";
 import { Glass } from "../components/Glass";
 import { prefersReducedMotion, useReveal } from "../hooks/motion";
 import { CATEGORY_HEX, shortId } from "../lib/format";
 import { emitPulse } from "../lib/pulse";
 import { CLASSIFYING_AFTER_MS, SLOW_AFTER_MS, STAGE_COPY, validate, type Field, type Stage } from "./submitForm";
+
+const EXAMPLES = [
+  "Pani ka pipe burst ho gaya hai near the masjid, water on the road since fajr…",
+  "Street light band hai for one week, gali mein andhera, ladies feel unsafe…",
+  "Kachra teen din se nahi uthaya gaya, smell is unbearable in the gali…",
+  "Sarak mein bara gadha hai, two bikes already slipped yesterday raat ko…",
+];
 
 const PIPELINE = [
   { key: "validate", label: "Validate", sub: "bounds from the live contract" },
@@ -35,6 +46,8 @@ export default function Submit() {
   const timers = useRef<number[]>([]);
   const resultRef = useRef<HTMLDivElement>(null);
   const scope = useReveal<HTMLDivElement>();
+  const [textFocused, setTextFocused] = useState(false);
+  const placeholder = useTypewriter(EXAMPLES, values.text === "" && !textFocused);
 
   const clientErrors = validate(values);
   const busy = stage !== "idle";
@@ -46,7 +59,9 @@ export default function Submit() {
     if (!result || !resultRef.current || prefersReducedMotion()) return;
     const ctx = gsap.context(() => {
       const tl = gsap.timeline();
-      tl.from(resultRef.current, { opacity: 0, y: 30, scale: 0.97, duration: 0.6, ease: "expo.out" })
+      const r = resultRef.current!.getBoundingClientRect();
+      burst(r.left + r.width / 2, r.top + 60, [CATEGORY_HEX[result.category], "#22e4ff", "#a26bff", "#3df5a6"]);
+      tl.from(resultRef.current, { opacity: 0, y: 30, scale: 0.94, rotateX: -12, transformPerspective: 900, duration: 0.8, ease: "expo.out" })
         .from(".scanline", { yPercent: -100, duration: 0.9, ease: "power2.inOut" }, 0)
         .from("[data-result-item]", { opacity: 0, x: -12, stagger: 0.08, duration: 0.45, ease: "power3.out" }, 0.2);
     }, resultRef);
@@ -108,6 +123,8 @@ export default function Submit() {
         </p>
       </header>
 
+      <Ticker />
+
       <div className="grid-2">
         <Glass>
           <form onSubmit={onSubmit} noValidate aria-busy={busy}>
@@ -128,10 +145,14 @@ export default function Submit() {
               <textarea
                 id="text"
                 className="textarea"
-                placeholder="e.g. Pani ka pipe burst ho gaya hai near the masjid, water on the road since fajr…"
+                placeholder={placeholder}
                 value={values.text}
                 onChange={set("text")}
-                onBlur={() => setTouched((t) => ({ ...t, text: true }))}
+                onFocus={() => setTextFocused(true)}
+                onBlur={() => {
+                  setTextFocused(false);
+                  setTouched((t) => ({ ...t, text: true }));
+                }}
                 aria-invalid={!!errorFor("text")}
                 aria-describedby="text-error"
                 disabled={busy}
@@ -179,10 +200,12 @@ export default function Submit() {
             </div>
 
             <div className="row">
-              <button type="submit" className="btn btn-primary" disabled={busy}>
-                {busy ? <span className="spinner" aria-hidden /> : <span aria-hidden>⟶</span>}
-                {busy ? "Working…" : "Submit report"}
-              </button>
+              <Magnetic>
+                <button type="submit" className={`btn btn-primary ${busy ? "is-busy" : ""}`} disabled={busy}>
+                  {busy ? <span className="spinner" aria-hidden /> : <span aria-hidden className="arrow">⟶</span>}
+                  {busy ? "Working…" : "Submit report"}
+                </button>
+              </Magnetic>
               {busy && (
                 <p role="status" className="stage-copy" data-stage={stage}>
                   {STAGE_COPY[stage as Exclude<Stage, "idle">]}
@@ -194,7 +217,7 @@ export default function Submit() {
 
         <div className="stack">
           {result ? (
-            <div ref={resultRef} className="glass result-card" aria-live="polite" data-testid="result">
+            <div ref={resultRef} className="glass result-card glow-border" aria-live="polite" data-testid="result">
               <div className="scanline" aria-hidden />
               <p className="eyebrow" style={{ color: "var(--ok)" }}>
                 Filed · #{shortId(result.id)}
@@ -235,7 +258,7 @@ export default function Submit() {
               </div>
             </div>
           ) : (
-            <Glass as="aside" aria-label="How triage works">
+            <Glass as="aside" tilt aria-label="How triage works">
               <h2 className="card-title">What happens when you press submit</h2>
               <p className="card-sub">Live pipeline — watch each stage light up.</p>
               <ol className="pipeline">

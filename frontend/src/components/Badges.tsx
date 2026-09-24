@@ -21,10 +21,10 @@ export function PriorityTag({ priority }: { priority: Priority }) {
   );
 }
 
-export function StatusPill({ status }: { status: Status }) {
+export function StatusPill({ status, flash = false }: { status: Status; flash?: boolean }) {
   const m = STATUS_META[status];
   return (
-    <span className="chip" style={{ ["--c" as string]: m.color, borderColor: m.color }}>
+    <span className={`chip ${flash ? "flash" : ""}`} style={{ ["--c" as string]: m.color, borderColor: m.color }}>
       <span aria-hidden style={{ color: m.color }}>{m.icon}</span>
       {m.label}
     </span>

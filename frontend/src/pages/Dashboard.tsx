@@ -9,6 +9,7 @@ import { CategoryChip, PriorityTag, ProviderBadge, StatusPill } from "../compone
 import { CountUp } from "../components/CountUp";
 import { DecodeText } from "../components/DecodeText";
 import { Glass } from "../components/Glass";
+import { Expand } from "../components/fx/Expand";
 import { prefersReducedMotion, useReveal } from "../hooks/motion";
 import { CATEGORY_META, PRIORITY_META, relativeTime, shortId, STATUS_META } from "../lib/format";
 
@@ -60,20 +61,30 @@ export default function Dashboard() {
   const listRef = useRef<HTMLUListElement>(null);
   const scope = useReveal<HTMLDivElement>();
 
+  // Only the latest request may write state: a slow response for an old filter/page must never
+  // overwrite a newer one (found by the browser E2E run: filter change + fast "Next").
+  const seq = useRef(0);
   const load = useCallback(async () => {
+    const mine = ++seq.current;
+    const latest = () => mine === seq.current;
     setLoading(true);
     setLoadError(null);
     try {
-      setPage(await api.listComplaints(readQuery(new URLSearchParams(key))));
+      const data = await api.listComplaints(readQuery(new URLSearchParams(key)));
+      if (latest()) setPage(data);
     } catch (e) {
-      setLoadError(e instanceof ApiError ? e.body.error.message : "Could not load complaints.");
+      if (latest()) setLoadError(e instanceof ApiError ? e.body.error.message : "Could not load complaints.");
     } finally {
-      setLoading(false);
+      if (latest()) setLoading(false);
     }
   }, [key]);
 
   useEffect(() => {
-    void load();
+    const t = window.setTimeout(() => void load(), 0);
+    return () => {
+      clearTimeout(t);
+      seq.current += 1; // unmount / key change: in-flight responses become stale
+    };
   }, [load]);
 
   useLayoutEffect(() => {
@@ -255,14 +266,14 @@ export default function Dashboard() {
                     <span className="complaint-tags">
                       <CategoryChip category={c.category} />
                       <PriorityTag priority={c.priority} />
-                      <StatusPill status={c.status} />
+                      <StatusPill key={c.status} status={c.status} flash />
                     </span>
                     <span className="chev" aria-hidden>
                       ⌄
                     </span>
                   </button>
                   {open && (
-                    <div className="complaint-body" id={`c-${c.id}`}>
+                    <Expand className="complaint-body" id={`c-${c.id}`}>
                       <blockquote>{c.text}</blockquote>
                       <div className="row" style={{ marginBottom: 14 }}>
                         <ProviderBadge provider={c.triaged_by} />
@@ -285,7 +296,7 @@ export default function Dashboard() {
                           </button>
                         ))}
                       </div>
-                    </div>
+                    </Expand>
                   )}
                 </li>
               );

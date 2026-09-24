@@ -18,12 +18,17 @@ async function enableMocks(): Promise<void> {
   await worker.start({ onUnhandledRequest: "bypass", quiet: true });
 }
 
-void enableMocks().then(() => {
+function mount(): void {
   createRoot(document.getElementById("root")!).render(
     <StrictMode>
-      <BrowserRouter>
+      <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <App />
       </BrowserRouter>
     </StrictMode>,
   );
-});
+}
+
+// Never let the mock layer block the app: if MSW fails to start, render anyway and say why.
+enableMocks()
+  .catch((e: unknown) => console.error("[civicpulse] MSW failed to start — API calls will hit the network", e))
+  .finally(mount);

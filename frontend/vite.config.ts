@@ -7,9 +7,14 @@ import { defineConfig } from "vite";
 // setting only and never reaches the bundle (API_BASE is always the relative "/api", ADR-0002).
 const liveTarget = process.env.CIVICPULSE_API_PROXY ?? "http://127.0.0.1:8000";
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [react()],
-  server: { proxy: { "/api": { target: liveTarget, changeOrigin: false } } },
+  // Pre-bundle the lazily imported MSW worker; otherwise Vite discovers it on first load,
+  // re-optimizes deps mid-request and the dynamic import fails (blank page).
+  optimizeDeps: { include: ["msw/browser"] },
+  // No proxy in mock mode: MSW answers /api, and a stray request should fail loudly (404), not
+  // masquerade as a backend 500 from a proxy with nothing behind it.
+  server: mode === "mock" ? {} : { proxy: { "/api": { target: liveTarget, changeOrigin: false } } },
   build: {
     sourcemap: false,
     // three.js (~130 kB gz) is only reached through the lazy PulseField chunk, never the entry.
@@ -26,4 +31,4 @@ export default defineConfig({
     css: false,
     coverage: { provider: "v8", include: ["src/**"], reporter: ["text", "lcov"] },
   },
-});
+}));
