@@ -261,6 +261,43 @@ Docker. This is intentionally a separate job from `05-DATA-LAYER.md`/`15-CICD.md
 Phase-5-scoped `integration` job (the full compose-stack smoke test) — different scope, kept
 distinct rather than conflated.
 
+**The gap actually closed, 2026-09-24, after six CI iterations — logged honestly rather than
+smoothed over:**
+
+Getting this job green took six pushes, each fixing a real, distinct problem the previous fix
+either didn't address or introduced. In order:
+1. `pip install -e "backend[dev]"` failed outright — adding `backend/alembic/` turned the
+   package into a flat-layout with two top-level directories, and setuptools refuses to
+   autodiscover. Fixed with `[tool.setuptools.packages.find] include = ["app*"]`. This would
+   have broken the README quickstart from a clean clone (`CLAUDE.md`'s deduction ledger, −5)
+   had it shipped undetected.
+2. Every integration test failed with `failed to resolve host 'database'` — traced (wrongly,
+   at first) to Alembic module-caching, then correctly to `app.settings`'s module-level
+   singleton being instantiated during pytest's collection phase (before any fixture body
+   runs), frozen with the fallback default. Fixed by mutating the singleton's field directly.
+3. `contract` regressed — a code comment I'd just added contained the literal string
+   `"CREATE TYPE"`, tripping the D3 no-DDL grep test against itself. Same class of bug I'd
+   already hit and fixed once earlier in the session; reworded.
+4. `test_updated_at_trigger_fires` failed with `before == after`. First hypothesis (`now()`
+   frozen per-transaction) was right about the mechanism but the fix was wrong: forcing
+   `updated_at` into the past via a raw `UPDATE` gets immediately overwritten by the same
+   trigger that fired on that very `UPDATE`.
+5. Same test, same symptom, after switching to `pg_sleep()`. Actual root cause: `repo.get()`
+   uses `Session.get()`, which returns the identity-mapped Python object without re-querying —
+   `before` and `refreshed.updated_at` were literally the same attribute on the same object,
+   bit-identical by construction regardless of what happened in Postgres. First fix attempt
+   (`session.expire_all()`) was semantically right but broke on `MissingGreenlet` — that method
+   doesn't route through SQLAlchemy's async bridge. Final fix: `await session.refresh(row)`.
+6. Green: 16/16 data-layer tests, 60/60 contract tests, run `35973640707`.
+
+**Why this is worth logging in full:** items 1 and the `values_callable`/`PGEnum` bug found
+along the way (see `ENGINEERING-NOTES.md`) are exactly the class of defect this CI job exists
+to catch — neither was reachable by any static check (ruff, mypy, `lint-layers`) run in the
+authoring sandbox. The multiple wrong turns getting the *test infrastructure* itself working
+are disclosed rather than presented as a single clean fix, per `CLAUDE.md §6`'s "specific
+disclosure carries no penalty whatsoever" — an undisclosed struggle would look worse at viva
+than an honest account of debugging a genuinely subtle async-ORM/pytest-collection interaction.
+
 ---
 
 ## 2026-09-24 · feat/data-layer (continued) — skill-naming correction

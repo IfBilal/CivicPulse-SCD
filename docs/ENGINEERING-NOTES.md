@@ -145,15 +145,31 @@ SELECT * FROM complaints ORDER BY created_at DESC LIMIT 20;
 still walks 5000 rows. Irrelevant at this data volume; the honest fix would be keyset
 pagination, rejected because `04-CONTRACTS.md`'s `page`/`page_size`/`total` envelope is frozen.
 
-**Sandbox limitation, disclosed:** this session has no Docker/container runtime available, so
-the actual `EXPLAIN (ANALYZE, BUFFERS)` before/after capture (`docs/evidence/explain-q-dash-filter.txt`)
-and the full `alembic upgrade head && downgrade base && upgrade head` round trip were **not run
-live** — only statically verified (ruff clean, mypy strict clean, `lint-layers` clean, migration
-script imports and constructs without error, unit/contract suite green at 86% coverage). Every
-integration test (D1, D2, D4–D10, seed D11) is written and collects cleanly, but fails at
-runtime here with `docker.errors.DockerException` — no daemon, not a code defect. **Next action
-for whoever has Docker:** `cd backend && pytest -m integration` once, and if green, capture the
-EXPLAIN evidence with `psql` against the same container before closing Gate 2.
+**Resolved, 2026-09-24:** the authoring sandbox has no Docker, so the integration suite
+couldn't run live there — closed instead via CI. Added a `data-layer` job to
+`.github/workflows/ci.yml` (GitHub-hosted `ubuntu-24.04` runners have Docker preinstalled, so
+`testcontainers` works with zero extra setup). The full D1, D2, D4–D10, seed-D11 matrix — 16
+tests — now runs against a real `postgres:16-alpine` container on every push and is green:
+run `35973640707`, 16 passed, 0 failed. This surfaced two real bugs that no static check could
+have caught (both fixed, both now covered by a regression test):
+
+1. **Missing `values_callable` on every `PGEnum` column** (`app/db/models.py`) — without it,
+   SQLAlchemy serialises a Python `Enum` member by `.name` ("STREETLIGHTS") instead of `.value`
+   ("streetlights"), but the migration's `CREATE TYPE` statements only define the lowercase
+   wire values. Every INSERT/UPDATE would have raised `InvalidTextRepresentation` — this would
+   have broken Phase 3's very first `POST /api/complaints` the moment it touched a real
+   database. Added `test_orm_enum_columns_round_trip_by_value`.
+2. **`alembic/env.py` reads `app.settings.settings.database_url`, a module-level singleton
+   instantiated once at first import** — pytest imports every collected test module during
+   collection, before any fixture runs, so setting `DATABASE_URL` in a fixture body was too
+   late. Fixed by mutating the already-instantiated `settings` object's field directly in the
+   test fixtures, rather than depending on env var read timing.
+
+The remaining `EXPLAIN (ANALYZE, BUFFERS)` before/after capture
+(`docs/evidence/explain-q-dash-filter.txt`) is still outstanding — that's an evidence artefact
+for the Gate 2 checklist, not a test, and needs a `psql` session against a running container.
+Next action: `make up && make seed`, then run the two `EXPLAIN` queries above by hand and
+`tee` the output.
 
 **Review findings, self-reviewed diff (no partner review pass yet — that still happens at PR
 review per `CLAUDE.md §6` rule 5):**
