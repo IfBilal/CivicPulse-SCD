@@ -66,6 +66,8 @@ jobs:
         env:
           TRIAGE_PROVIDER: simulated
         run: pytest -m "unit or contract"
+      - name: layer-boundary check (CLAUDE.md HARD rule 3)
+        run: make lint-layers
       - name: typed-client drift gate
         run: |
           make gen-client
@@ -93,3 +95,24 @@ jobs:
         run: |
           ! grep -rnE "in_progress.*resolved|TRANSITIONS|allowedNext" src --include=*.ts --include=*.tsx --exclude=schema.d.ts
           ! grep -rniE "gsk_|AIza|password|secret|token" src public --exclude=mockServiceWorker.js
+
+  data-layer:
+    # Phase 2 (02-CRITICAL-PATH.md section 4 PHASE 2): the D1-D11 matrix from
+    # 05-DATA-LAYER.md section 8. Uses testcontainers, not a services block - the suite
+    # manages its own Postgres container per test session, which ubuntu-24.04 runners
+    # support natively (Docker daemon preinstalled). This is Phase 2's own
+    # migration/repository/seed verification, distinct from Phase 5's integration job
+    # (the full compose-stack smoke test).
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+      - name: install backend
+        run: pip install -e "backend[dev]"
+      - name: data-layer integration tests (real Postgres via testcontainers)
+        working-directory: backend
+        run: pytest -m integration -k "test_migrations or test_complaint_repo or test_seed" -v

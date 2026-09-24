@@ -20,7 +20,11 @@ nuke: ## stop and DESTROY volumes
 	$(COMPOSE) down -v
 
 ## ── quality gate (run before every commit) ────────────────────────────────
-check: lint type test lint-localhost secret-scan ## full local gate
+check: lint type test lint-localhost lint-layers secret-scan ## full local gate
+lint-layers: ## CLAUDE.md HARD rule 3 — SQL only in repositories/, no HTTP concerns below routes
+	@! grep -rnE "select\(|session|execute\(|text\(" backend/app/routes/ || (echo "FAIL: SQL in routes"; exit 1)
+	@! grep -rnE "HTTPException|status_code|Response" backend/app/repositories/ || (echo "FAIL: HTTP concerns in repositories"; exit 1)
+	@! grep -rn "from app.routes" backend/app/services backend/app/repositories backend/app/providers 2>/dev/null || (echo "FAIL: upward import — arrows point one way"; exit 1)
 lint:
 	cd backend && ruff check . && ruff format --check .
 	@if [ -f frontend/vite.config.ts ]; then cd frontend && npm run lint; else echo "skip: frontend/ not scaffolded yet (Phase 2b)"; fi

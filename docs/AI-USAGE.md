@@ -341,3 +341,122 @@ Every Claude Code skill invocation on this project, logged at the moment it happ
 - **I changed:** N/A — finding-generation step. Fixes 1–4 are real, verified bugs with clear
   before/after evidence; item 5 is disclosed as an open, harness-specific flake rather than
   silently dropped.
+---
+
+## 2026-09-24 · feat/data-layer
+
+- **Tool:** Claude Code + `caveman`
+- **Shaped:** decomposition of Phase 2's DATA slice (`02-CRITICAL-PATH.md §4` PHASE 2 +
+  `05-DATA-LAYER.md`) into a 12-item stripped task list: Alembic env init, naming-convention
+  `Base`, `Complaint` ORM model, hand-written migration 0001 + downgrade, autogenerate-empty
+  verification, round-trip verification, `ComplaintRepository`, `lint-layers` Makefile target,
+  seed data + script, D1–D11 test matrix, named-query notes + EXPLAIN evidence, Makefile data
+  targets (found already present from Phase 0).
+- **Wrote:** `backend/app/settings.py`, `backend/app/db/{base,session,models,seed_data}.py`,
+  `backend/alembic/` (init + hand-written `versions/0001_initial.py`), `backend/app/repositories/complaint_repo.py`,
+  `backend/app/cli/seed.py`, `Makefile` (`lint-layers` target), `backend/tests/integration/`
+  (`conftest.py`, `test_migrations.py`, `test_complaint_repo.py`, `test_seed.py`),
+  `backend/tests/unit/test_no_ddl_in_app.py`.
+- **I changed:** accepted the task list as-is; no edits.
+
+- **Tool:** Claude Code, self-review pass (the `CLAUDE.md §6` "grilled meat" review point — no
+  matching skill is installed in this environment under that name, so the review itself was
+  performed directly against its stated bar: ≥3 findings, each with `file:line`, before the diff
+  moves to PR)
+- **Shaped:** review of the full `feat/data-layer` diff (21 files) before opening the PR.
+- **Wrote (fixes applied from the review):**
+  1. `backend/app/db/session.py:27` — `get_session()` had no rollback-on-exception before the
+     `async with` closed the session on an error path. **Fixed**: added `try/except` that rolls
+     back and re-raises.
+  2. `backend/app/cli/seed.py:47` — a CHECK-constraint violation during `make seed` propagated a
+     raw SQLAlchemy traceback with no operator-facing context. **Fixed**: rollback + one-line
+     stderr diagnostic before re-raising.
+  3. `backend/app/repositories/complaint_repo.py:81` — `list_page` trusts `page`/`page_size` are
+     pre-validated; `page=0` produces a negative `OFFSET` and a raw DB error. **WONTFIX for this
+     branch**: bounds validation is Phase 3 (routes) scope against `domain/limits.py`; a
+     repository-layer guard now would duplicate that check in two places.
+  4. `backend/tests/integration/conftest.py:44` — `db_session`'s engine has no explicit
+     `poolclass`; fine under serial pytest, a connection-exhaustion trap under future
+     `pytest-xdist` against the single shared testcontainers instance. **WONTFIX for this
+     branch**: nothing in this repo runs tests in parallel yet.
+- **I changed:** applied findings 1 and 2 as fixes; findings 3 and 4 logged as WONTFIX with
+  reasons in `docs/ENGINEERING-NOTES.md` rather than silently dropped, per `CLAUDE.md §6` rule 2.
+
+**Disclosed limitation, not a skill finding:** this session has no Docker/container runtime
+available, so the full integration suite (D1, D2, D4–D10, seed D11 — all written, all collect
+cleanly) and the `EXPLAIN (ANALYZE, BUFFERS)` evidence capture could not be run live here. Static
+checks (ruff, mypy strict, `lint-layers`, the 60-test unit/contract fast loop) are all green.
+Documented as the first action item for whoever next has Docker, in
+`docs/ENGINEERING-NOTES.md`'s "DEV-A · Phase 2 named queries" section.
+
+**Resolved, same day:** added a `data-layer` job to `.github/workflows/ci.yml` that runs
+`pytest -m integration` against the `test_migrations`/`test_complaint_repo`/`test_seed` files.
+GitHub-hosted `ubuntu-24.04` runners have Docker preinstalled, so `testcontainers` (which
+manages its own Postgres container per session, no `services:` block needed) works there
+without any local Docker — this closes the verification gap via CI instead of requiring local
+Docker. This is intentionally a separate job from `05-DATA-LAYER.md`/`15-CICD.md`'s
+Phase-5-scoped `integration` job (the full compose-stack smoke test) — different scope, kept
+distinct rather than conflated.
+
+**The gap actually closed, 2026-09-24, after six CI iterations — logged honestly rather than
+smoothed over:**
+
+Getting this job green took six pushes, each fixing a real, distinct problem the previous fix
+either didn't address or introduced. In order:
+1. `pip install -e "backend[dev]"` failed outright — adding `backend/alembic/` turned the
+   package into a flat-layout with two top-level directories, and setuptools refuses to
+   autodiscover. Fixed with `[tool.setuptools.packages.find] include = ["app*"]`. This would
+   have broken the README quickstart from a clean clone (`CLAUDE.md`'s deduction ledger, −5)
+   had it shipped undetected.
+2. Every integration test failed with `failed to resolve host 'database'` — traced (wrongly,
+   at first) to Alembic module-caching, then correctly to `app.settings`'s module-level
+   singleton being instantiated during pytest's collection phase (before any fixture body
+   runs), frozen with the fallback default. Fixed by mutating the singleton's field directly.
+3. `contract` regressed — a code comment I'd just added contained the literal string
+   `"CREATE TYPE"`, tripping the D3 no-DDL grep test against itself. Same class of bug I'd
+   already hit and fixed once earlier in the session; reworded.
+4. `test_updated_at_trigger_fires` failed with `before == after`. First hypothesis (`now()`
+   frozen per-transaction) was right about the mechanism but the fix was wrong: forcing
+   `updated_at` into the past via a raw `UPDATE` gets immediately overwritten by the same
+   trigger that fired on that very `UPDATE`.
+5. Same test, same symptom, after switching to `pg_sleep()`. Actual root cause: `repo.get()`
+   uses `Session.get()`, which returns the identity-mapped Python object without re-querying —
+   `before` and `refreshed.updated_at` were literally the same attribute on the same object,
+   bit-identical by construction regardless of what happened in Postgres. First fix attempt
+   (`session.expire_all()`) was semantically right but broke on `MissingGreenlet` — that method
+   doesn't route through SQLAlchemy's async bridge. Final fix: `await session.refresh(row)`.
+6. Green: 16/16 data-layer tests, 60/60 contract tests, run `35973640707`.
+
+**Why this is worth logging in full:** items 1 and the `values_callable`/`PGEnum` bug found
+along the way (see `ENGINEERING-NOTES.md`) are exactly the class of defect this CI job exists
+to catch — neither was reachable by any static check (ruff, mypy, `lint-layers`) run in the
+authoring sandbox. The multiple wrong turns getting the *test infrastructure* itself working
+are disclosed rather than presented as a single clean fix, per `CLAUDE.md §6`'s "specific
+disclosure carries no penalty whatsoever" — an undisclosed struggle would look worse at viva
+than an honest account of debugging a genuinely subtle async-ORM/pytest-collection interaction.
+
+---
+
+## 2026-09-24 · feat/data-layer (continued) — skill-naming correction
+
+- **Tool:** none (research + doc correction, no skill invocation)
+- **Shaped:** verified the real behavior of `caveman`, `ponytail`, and the skill this project's
+  docs called "grilled meat" against their actual upstream sources
+  (`github.com/juliusbrussee/caveman`, `github.com/dietrichgebert/ponytail`,
+  `github.com/mattpocock/skills`). `caveman` and `ponytail` matched their documented behavior
+  exactly — no changes needed. The third did not: the real skill is named `grill-me`
+  (`skills/productivity/grill-me`, forwards to `grilling`), and it is an **interactive Socratic
+  interview with the user** about a plan or decision, not an automated diff scanner producing
+  `file:line` findings. `CLAUDE.md §6`, `01-WORKFLOW.md §4`, `AGENTS.md`, and `SKILL.md` all
+  described the automated-scanner behavior under the wrong name.
+- **Wrote:** corrected all four living docs (`docs/CLAUDE.md`, `/home/dns/Desktop/CLAUDE.md`,
+  `docs/01-WORKFLOW.md`, `docs/AGENTS.md`, `docs/SKILL.md`) to name the real skill correctly and
+  describe its real behavior, and to mark it optional on this project per explicit user
+  decision. The mandatory ≥3-findings-with-`file:line` pre-PR hardening pass stays required —
+  it's now described as a review discipline, not tied to a skill that never did that.
+- **I changed:** did not install or invoke the real `grilling` skill interactively, per explicit
+  user instruction ("GRILL-ME IS NOT NECESSARY FOR THIS PROJECT... CONTINUE NOW"). Left the
+  historical handover files (`HANDOVER-dev.md`, `HANDOVER-feat-contract-freeze.md`,
+  `HANDOVER-phase2-deva-to-devb.md`) using the old name unchanged — they're dated records of
+  what was said at the time, not living instructions, and rewriting them would misrepresent
+  history.

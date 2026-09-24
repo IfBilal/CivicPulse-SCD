@@ -145,16 +145,27 @@ invoke the skill — you do not simulate it in your head and move on.
 |---|---|---|---|---|
 | **caveman** | Start of every phase, before writing any code | The phase's section of `02-CRITICAL-PATH.md` + the relevant `0X-*.md` | A stripped task list — nouns and verbs only, every item independently completable in ≤90 min | Any line contains "consider", "maybe", "as needed"; fewer than 5 items; a line doesn't start with a verb |
 | **ponytail** | The moment a design decision has ≥2 defensible answers — mid-phase, whenever it happens | The decision + the constraints in `00-SPEC.md` | A decision-record stub (feeds an ADR or an `ENGINEERING-NOTES.md` paragraph) | Fewer than 2 rejected alternatives named, or a rejection with no reason given |
-| **grilled meat** | End of phase, before opening the PR — always, even for a small diff | The full diff | ≥3 concrete findings with `file:line` — error paths, timeouts, resource cleanup, edge cases the happy path skipped | Fewer than 3 findings, or a finding with no file:line, or findings that get silently dropped instead of turned into a commit or a documented `WONTFIX` |
+| **grill-me** *(optional on this project — see note below)* | End of phase, before opening the PR, if invoked | A plan/decision/diff you want stress-tested | An interactive round-by-round interview (real upstream behavior: `mattpocock/skills` → `productivity/grill-me`, which forwards to `grilling` — it interviews **the user**, question by question with a recommended answer, until the design tree is settled; it does **not** output automated `file:line` findings on its own) | N/A — not required for this project |
+
+> **Correction, 2026-09-24:** this row previously read "grilled meat" and described an
+> automated diff review producing ≥3 `file:line` findings. That was never what the real
+> `grill-me`/`grilling` skill does — verified against its actual source
+> (`github.com/mattpocock/skills`, `skills/productivity/grill-me` and `grilling`). The real
+> skill is an interactive Socratic interview *with the user* about a plan or decision, not a
+> diff scanner. Per project decision, `grill-me` is **not mandatory** for this assignment —
+> use it only if you explicitly want to stress-test a design decision with the user present.
+> The mandatory ≥3-findings-with-`file:line` pre-PR review described below stays required,
+> but is a plain self/partner review step, not a named skill invocation.
 
 **Rules that make this non-negotiable:**
 
 1. **Do not skip `caveman` because you already know what the tasks are.** The artefact —
    the stripped task list — is what gets checked, not your mental model of it.
-2. **Do not skip `grilled meat` because the diff is small or "obviously fine."** A diff
+2. **Do not skip the pre-PR review because the diff is small or "obviously fine."** A diff
    that's actually fine still produces findings (timeouts to add, cleanup to verify) or,
    at minimum, an explicit statement that none were found and why that's credible for
-   *this specific diff* — not a rubber stamp.
+   *this specific diff* — not a rubber stamp. This step is a review discipline, not a named
+   skill invocation — see the correction above.
 3. **Every skill invocation gets logged in `docs/AI-USAGE.md` at the moment it happens**,
    not reconstructed later from memory. Format:
    ```markdown
@@ -168,7 +179,7 @@ invoke the skill — you do not simulate it in your head and move on.
    penalty; an undisclosed skill invocation is the thing that costs marks at viva.
 4. **`ponytail` fires the moment the fork appears, not at end-of-phase cleanup.** If you
    notice mid-implementation that you're choosing between two designs, stop and invoke
-   it there — do not keep coding and rationalize the choice afterward in `grilled meat`.
+   it there — do not keep coding and rationalize the choice afterward in the pre-PR review.
 5. **PR review is run by the partner, never by you on your own PR.** Don't invoke it on
    your own diff and count that as satisfying Rubric A's review requirement — it doesn't.
 
@@ -185,7 +196,8 @@ Run through this, out loud, not just in your head:
 - [ ] Would this trip any row in the deduction ledger (§2)?
 - [ ] Am I about to commit directly to `main`?
 - [ ] Did `caveman` run at the start of this phase, `ponytail` at every design fork, and
-      `grilled meat` before this PR — and is each one logged in `docs/AI-USAGE.md`?
+      a pre-PR review (≥3 `file:line` findings or a credible "none found") before this PR —
+      and is each one logged in `docs/AI-USAGE.md`?
 
 If any answer is "yes" where it shouldn't be, fix it before reporting completion —
 don't report it as done and mention the caveat afterward.

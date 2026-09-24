@@ -182,3 +182,96 @@ Category hues are OKLCH-generated inside the dark-mode lightness band (L 0.60–
 run through a CVD/contrast validator: all checks pass; the one adjacent pair in the 6–8 ΔE CVD
 floor (sanitation/electricity, protan) is legal because every bar and chip also carries its text
 label and icon — colour is never the only channel.
+## DEV-A · Phase 2 named queries for `ix_complaints_status_priority` and `ix_complaints_created_at`
+
+Per `05-DATA-LAYER.md §4` — *"an unexplained index is cargo cult"*.
+
+**`ix_complaints_status_priority` serves `Q-DASH-FILTER`** — the Dashboard's default operator
+view (`GET /api/complaints?status=open&priority=high`):
+```sql
+SELECT c.*, COUNT(*) OVER () AS total_count
+FROM complaints c
+WHERE c.status = 'open' AND c.priority = 'high'
+ORDER BY c.created_at DESC
+LIMIT 20 OFFSET 0;
+```
+`status` leads because it's the highest-selectivity predicate an operator actually filters on
+first (they live in `status='open'`); `priority` second lets `WHERE status=? AND priority=?`
+stay a single index range scan while `WHERE status=?` alone still uses the leading column.
+
+**`ix_complaints_created_at (DESC)` serves `Q-LIST-RECENT`** — the unfiltered dashboard page 1
+and the stats time window:
+```sql
+SELECT * FROM complaints ORDER BY created_at DESC LIMIT 20;
+```
+`DESC` in the index lets the planner walk forward and stop at 20 with no sort node.
+
+**Known gap, disclosed rather than hidden:** neither index helps deep `OFFSET` — `OFFSET 5000`
+still walks 5000 rows. Irrelevant at this data volume; the honest fix would be keyset
+pagination, rejected because `04-CONTRACTS.md`'s `page`/`page_size`/`total` envelope is frozen.
+
+**Resolved, 2026-09-24:** the authoring sandbox has no Docker, so the integration suite
+couldn't run live there — closed instead via CI. Added a `data-layer` job to
+`.github/workflows/ci.yml` (GitHub-hosted `ubuntu-24.04` runners have Docker preinstalled, so
+`testcontainers` works with zero extra setup). The full D1, D2, D4–D10, seed-D11 matrix — 16
+tests — now runs against a real `postgres:16-alpine` container on every push and is green:
+run `35973640707`, 16 passed, 0 failed. This surfaced two real bugs that no static check could
+have caught (both fixed, both now covered by a regression test):
+
+1. **Missing `values_callable` on every `PGEnum` column** (`app/db/models.py`) — without it,
+   SQLAlchemy serialises a Python `Enum` member by `.name` ("STREETLIGHTS") instead of `.value`
+   ("streetlights"), but the migration's `CREATE TYPE` statements only define the lowercase
+   wire values. Every INSERT/UPDATE would have raised `InvalidTextRepresentation` — this would
+   have broken Phase 3's very first `POST /api/complaints` the moment it touched a real
+   database. Added `test_orm_enum_columns_round_trip_by_value`.
+2. **`alembic/env.py` reads `app.settings.settings.database_url`, a module-level singleton
+   instantiated once at first import** — pytest imports every collected test module during
+   collection, before any fixture runs, so setting `DATABASE_URL` in a fixture body was too
+   late. Fixed by mutating the already-instantiated `settings` object's field directly in the
+   test fixtures, rather than depending on env var read timing.
+
+The remaining `EXPLAIN (ANALYZE, BUFFERS)` before/after capture
+(`docs/evidence/explain-q-dash-filter.txt`) is still outstanding — that's an evidence artefact
+for the Gate 2 checklist, not a test, and needs a `psql` session against a running container.
+Next action: `make up && make seed`, then run the two `EXPLAIN` queries above by hand and
+`tee` the output.
+
+**Review findings, self-reviewed diff (no partner review pass yet — that still happens at PR
+review per `CLAUDE.md §6` rule 5):**
+1. `app/db/session.py` — `get_session()` had no rollback-on-exception; fixed, now rolls back and
+   re-raises before the `async with` closes the session.
+2. `app/cli/seed.py::main` — a CHECK-constraint violation during `make seed` raised a raw
+   SQLAlchemy traceback with no operator-facing context; fixed, now rolls back and logs a
+   one-line stderr note before re-raising.
+3. **WONTFIX for this branch:** `app/repositories/complaint_repo.py::list_page` trusts
+   `page`/`page_size` are already validated — a `page=0` or negative value produces a negative
+   `OFFSET` and a raw DB error instead of a clean 400. Not fixed here because bounds validation
+   belongs at the Pydantic/route layer (`domain/limits.py`'s `PAGE_MIN`/`PAGE_SIZE_MAX`), which
+   is Phase 3 (routes) scope — adding a repository-layer guard now would duplicate that
+   validation in two places. Flagging so Phase 3 explicitly clamps before calling `list_page`.
+4. **WONTFIX for this branch:** `tests/integration/conftest.py::db_session`'s engine has no
+   explicit `poolclass`, fine under serial pytest but a connection-exhaustion trap if the suite
+   later runs under `pytest-xdist` against the single shared testcontainers instance. Not fixed
+   now since nothing in this repo runs tests in parallel yet; revisit if that changes.
+
+---
+
+## DEV-A · `scripts/check_submission.py`'s `RUBRIC-TESTS` check always reports 0
+
+Found while verifying the Phase 2 data-layer PR didn't regress `check_submission.py`.
+`rubric_tests()` runs `python3 -m pytest --collect-only -q` and counts `"::"` occurrences in
+stdout to estimate the test count. This project's `backend/pyproject.toml` enables
+`pytest-cov` by default via `addopts`, and `pytest-cov` rewrites `--collect-only -q`'s output
+format from the usual per-test `path::test_name` lines into per-**file** summary lines
+(`tests/unit/test_enums.py: 5`) with no `::` anywhere in the output. The count is therefore
+always 0, regardless of how many tests actually exist — confirmed: 65 real tests exist in
+`backend/tests/` as of this branch, and the check still reports `0 backend tests collected,
+floor is 14`.
+
+Not silently patched — this is DEV-B's/joint territory (`scripts/check_submission.py` was
+authored in `chore/scripts-check-submission`, PR #14) and the fix touches a shared detector,
+not app code. **Recommendation:** either add `-p no:cacheprovider --no-cov` to the collect
+invocation (bypasses the coverage plugin's output rewrite) or switch to `pytest --collect-only
+-q --no-header` and count lines matching a test-id regex instead of a bare `"::"` substring
+search. **Status:** flagged, not fixed — decide together before this becomes a real
+`RUBRIC-TESTS` false negative at a gate review.
