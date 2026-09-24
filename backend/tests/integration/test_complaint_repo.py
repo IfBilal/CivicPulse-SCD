@@ -94,14 +94,19 @@ async def test_updated_at_trigger_fires(db_session: AsyncSession) -> None:
     """D6: a raw UPDATE (bypassing the ORM's `onupdate`, which doesn't exist here on purpose)
     still bumps `updated_at`, because the trigger is DB-enforced, not app-enforced.
 
-    `set_updated_at()` stamps `NEW.updated_at = now()` unconditionally on every UPDATE — so a
-    prior attempt to force `updated_at` into the past via a raw UPDATE was itself overwritten by
-    the same trigger, and `now()` is frozen to transaction-start time for the whole transaction,
-    so two commits close together (as this test's two `commit()` calls can be) can resolve to
-    the identical instant regardless of wall-clock delay measured from Python. `pg_sleep()`
-    forces a real interval to elapse as Postgres's own clock sees it, which neither `now()`
-    semantics nor CI execution speed can collapse away — the correct fix, not `time.sleep()`
-    from Python (CLAUDE.md HARD rule 15: never fake this with a process-side sleep).
+    Two bugs, found in sequence via CI, fixed here:
+    1. `set_updated_at()` stamps `NEW.updated_at = now()` unconditionally on every UPDATE, so an
+       earlier attempt to force `updated_at` into the past via a raw UPDATE was itself
+       overwritten by the same trigger.
+    2. `repo.get()` calls `Session.get()`, which checks the session's identity map before
+       querying — since `row` and the later "refreshed" object are looked up in the *same*
+       `db_session`, `Session.get()` returned the identical in-memory Python object both times,
+       so `before` and `refreshed.updated_at` were literally the same attribute, bit-identical
+       by construction regardless of what the trigger actually did server-side. `session.expire()`
+       forces the next attribute access to re-query the database instead of trusting the
+       identity-mapped object.
+    `pg_sleep()`, not `asyncio.sleep()`, guarantees the interval elapses on Postgres's own clock
+    (CLAUDE.md HARD rule 15: never fake a real-time gap with a process-side sleep).
     """
     repo = ComplaintRepository(db_session)
     row = await repo.create(
@@ -123,6 +128,7 @@ async def test_updated_at_trigger_fires(db_session: AsyncSession) -> None:
         text("UPDATE complaints SET status = 'in_progress' WHERE id = :id"), {"id": row.id}
     )
     await db_session.commit()
+    db_session.expire_all()
 
     refreshed = await repo.get(row.id)
     assert refreshed is not None
