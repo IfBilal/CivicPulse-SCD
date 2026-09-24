@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 
-import { DecodeText } from "../components/DecodeText";
+import { SplitTitle } from "../components/SplitTitle";
 import { Glass } from "../components/Glass";
 
 export default function NotFound() {
@@ -10,7 +10,7 @@ export default function NotFound() {
         404 · no signal
       </p>
       <h1 className="page-title" style={{ fontSize: 40 }}>
-        <DecodeText className="grad" text="Off the grid." />
+        <SplitTitle text="Off the grid." />
       </h1>
       <p className="page-sub" style={{ margin: "0 auto 20px" }}>
         This street isn&apos;t on our map.

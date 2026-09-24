@@ -657,3 +657,20 @@ a {
     transition-duration: 0.001ms !important;
   }
 }
+
+/* Reveal state for useReveal() — a CSS transition, deliberately (see the hook's own comment):
+   it keeps reaching opacity:1 even if the main thread stalls, which a JS-driven tween would not. */
+[data-reveal].reveal-hidden {
+  opacity: 0;
+  transform: translateY(28px);
+  filter: blur(8px);
+  transition:
+    opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.8s cubic-bezier(0.16, 1, 0.3, 1),
+    filter 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+}
+[data-reveal].reveal-hidden.reveal-shown {
+  opacity: 1;
+  transform: none;
+  filter: blur(0px);
+}

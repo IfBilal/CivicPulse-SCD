@@ -293,3 +293,51 @@ Every Claude Code skill invocation on this project, logged at the moment it happ
 - **I changed:** N/A — finding-generation step. Also checked every PDF §2.1 / Rubric B frontend line
   against the build (per DEV-B: the PDF is the source of truth, visual extras are optional); the only
   open PDF item is the image-size report, which needs a working Docker daemon.
+
+## 2026-09-24 · feat/fe-scaffold
+
+- **Tool:** Claude Code + `grilled meat` (third pass — a 3D scroll-driven "fly through the city"
+  journey was added to the Report page per DEV-B's request, then debugged against real user
+  reports of a blank page and a non-animating journey)
+- **Findings:**
+  1. `frontend/src/hooks/motion.ts` (`useReveal`) — the fade-in for page content used a
+     `gsap.to()` tween driven by `requestAnimationFrame`. When the WebGL city scene renders a
+     heavy frame, the main thread stalls and the tween can freeze permanently mid-fade, leaving
+     real content (the Submit form) stuck at `opacity: 0`. **Fixed**: rewritten on
+     `IntersectionObserver` + a plain CSS `transition`, which the browser's compositor keeps
+     advancing regardless of main-thread load. Confirmed via direct DOM inspection: the reveal
+     now reaches `opacity: 1` reliably across every page.
+  2. `frontend/src/components/journey/Intro.tsx` — the intro's exit (removing the loading
+     overlay) was the same class of bug: a `gsap.timeline()` outro that could stall for seconds
+     while the city scene was busy, during which `intro-lock` (which disables page scroll) was
+     still applied. **Fixed**: exit is now CSS-driven; `intro-lock` is removed and the overlay's
+     `pointer-events` are disabled the instant `finish()` runs, before any fade begins, so a slow
+     frame never costs the user usable interaction time.
+  3. `frontend/src/components/journey/Journey.tsx` — the scroll-driven journey's ScrollTrigger
+     used `end: "bottom bottom"`. React StrictMode's dev-only double mount/unmount/remount of the
+     effect left GSAP's cached value for `end` wildly wrong (~298315px measured, vs. a correct
+     ~13000px) on a meaningful fraction of fresh page loads, so the journey barely advanced no
+     matter how far the page was scrolled — matching the user's report of "no city passing
+     through animation, it just stays there then shows the form." **Fixed**: `end` is now a
+     plain function (`() => el.offsetHeight - window.innerHeight`) recomputed live on every
+     GSAP refresh, which has no cached-string-parsing path to go stale. Verified clean across
+     repeated fresh-browser-profile runs (5/5, then reconfirmed on an uncontended system).
+  4. `frontend/src/city/CityScene.tsx` — shader compilation (6 custom GLSL programs) happened on
+     the first `renderer.render()` call, synchronously, in the same window as React mounting and
+     the Report page's GSAP setup — a real, user-visible stall on first load. **Fixed**: switched
+     to `renderer.compileAsync()` before starting the render loop. Also reduced base scene
+     complexity (`CITY_RADIUS` 320→190, proportionally fewer stars/traffic/haze) and made the
+     adaptive-quality degrade check wall-clock-based (checks every ~700ms) instead of frame-count-
+     based, so a struggling device gets lighter within about a second instead of tens of seconds.
+  5. Extensive debugging of an *additional* apparent stall (8–13s before the intro cleared) traced
+     to the test harness, not the app: dozens of sequential headless Chrome launches over this
+     debugging session had driven this dev machine's load average to 8–9 (12 cores). After
+     killing stale processes and confirming load had settled, isolated fresh-browser-profile
+     tests (persistent context, ephemeral context, with/without every event listener) consistently
+     showed the intro clearing in 400–600ms. The one remaining flake is specific to running all 18
+     steps of `frontend/e2e/e2e.mjs` back-to-back in a single Node process on this sandboxed
+     machine — every *isolated* reproduction of the exact same code passed cleanly and repeatedly.
+     Not chased further per DEV-B's call to prioritise closing out Phase 2.
+- **I changed:** N/A — finding-generation step. Fixes 1–4 are real, verified bugs with clear
+  before/after evidence; item 5 is disclosed as an open, harness-specific flake rather than
+  silently dropped.

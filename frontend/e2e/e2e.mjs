@@ -50,6 +50,10 @@ async function until(fn, msg, ms = 20000) {
   }
   throw new Error(msg);
 }
+async function home(pg, path = "/") {
+  await pg.goto(BASE + path);
+  await pg.locator(".intro").waitFor({ state: "detached", timeout: 30000 });
+}
 const expect = (cond, msg) => {
   if (!cond) throw new Error(msg);
 };
@@ -58,12 +62,57 @@ const page = await newPage();
 
 await step("home renders (title, nav, form, WebGL canvas)", async () => {
   await page.goto(BASE + "/");
+  await page.locator(".intro-count").waitFor({ timeout: 10000 }); // first visit: the intro plays
+  await page.screenshot({ path: SHOTS + "00-intro.png" });
+  await page.locator(".intro").waitFor({ state: "detached", timeout: 30000 });
   await page.getByRole("heading", { level: 1 }).waitFor();
   expect(await page.getByRole("link", { name: "Dashboard", exact: true }).isVisible(), "nav missing");
   expect(await page.getByLabel(/what's the problem/i).isVisible(), "textarea missing");
   await page.waitForTimeout(1500);
   expect((await page.locator("canvas").count()) === 1, "pulse-field canvas missing");
   await page.screenshot({ path: SHOTS + "01-home.png" });
+});
+
+await step("story: 'Report now' jumps to the form", async () => {
+  await page.getByRole("button", { name: /report now/i }).click();
+  await until(async () => {
+    const box = await page.locator("#report").boundingBox();
+    return !!box && box.y >= -5 && box.y < 400;
+  }, "form section not scrolled into view");
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.waitForTimeout(800);
+});
+
+await step("journey: scrolling flies through the city and plays every beat", async () => {
+  const H = await page.evaluate(() => document.querySelector(".journey").offsetHeight - innerHeight);
+  const at = async (q, shot) => {
+    await page.evaluate((y) => window.scrollTo(0, y), Math.round(q * H));
+    await page.waitForTimeout(600);
+    if (shot) await page.screenshot({ path: SHOTS + shot });
+  };
+  await at(0.25, "j-25.png");
+  await until(async () => (await page.locator(".stat-2").evaluate((e) => Number(getComputedStyle(e).opacity))) > 0.5, "descent beat not shown", 40000);
+  await at(0.62, "j-62.png");
+  await until(async () => (await page.locator(".typed").innerText()).endsWith("fajr."), "typing never completed", 40000);
+  await until(async () => (await page.locator(".holo").evaluateAll((els) => els.filter((e) => Number(e.style.opacity) > 0.3).length)) > 0, "no hologram passed in front of the camera", 40000);
+  await page.screenshot({ path: SHOTS + "j-holo.png" });
+  await at(0.72, "j-72.png");
+  await until(async () => (await page.locator(".badge-fb").evaluate((e) => getComputedStyle(e).opacity)) === "1", "fallback badge never shown", 40000);
+  await at(0.82);
+  await until(async () => Number(await page.locator(".caption-3").evaluate((e) => getComputedStyle(e).opacity)) > 0.9, "final beat never shown", 40000);
+  await at(0.97, "j-97.png");
+  await until(async () => Number(await page.locator(".beat-turn").evaluate((e) => getComputedStyle(e).opacity)) > 0.9, "'your turn' never shown", 40000);
+  // no dead air: at every sampled point along the flight some beat is on stage
+  for (const q of [0.05, 0.15, 0.3, 0.4, 0.5, 0.66, 0.78, 0.92]) {
+    await at(q);
+    await until(async () => page.evaluate(() => [...document.querySelectorAll(".beat")].some((b) => Number(getComputedStyle(b).opacity) > 0.35)), `nothing on stage at ${q}`, 40000);
+  }
+  await page.evaluate(() => document.getElementById("report").scrollIntoView());
+  await until(async () => Number(await page.locator(".page-head").evaluate((e) => getComputedStyle(e).opacity)) > 0.95, "page-head (the form's own header) never reveals after the journey", 20000);
+  expect(await page.getByLabel(/what's the problem/i).isVisible(), "the report form itself is not visible after the journey ends");
+  await page.screenshot({ path: SHOTS + "j-form.png" });
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.waitForTimeout(600);
 });
 
 await step("submit: empty form shows field errors, no request", async () => {
@@ -223,10 +272,11 @@ await step("404 page + back link", async () => {
   await page.getByText("This street isn't on our map.").waitFor();
   await page.getByRole("link", { name: "Report a problem" }).click();
   await page.waitForURL(BASE + "/");
+  await page.locator(".intro").waitFor({ state: "detached", timeout: 30000 });
 });
 
 await step("keyboard: tab reaches nav + form; focus ring visible", async () => {
-  await page.goto(BASE + "/");
+  await home(page);
   await page.getByLabel(/what's the problem/i).waitFor();
   await page.keyboard.press("Tab");
   await page.keyboard.press("Tab");
@@ -239,7 +289,7 @@ await step("keyboard: tab reaches nav + form; focus ring visible", async () => {
 const mobile = await newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
 await step("mobile 390px: no horizontal overflow on all pages", async () => {
   for (const [path, shot] of [["/", "08-m-home"], ["/dashboard", "09-m-dash"], ["/stats", "10-m-stats"]]) {
-    await mobile.goto(BASE + path);
+    await home(mobile, path);
     await mobile.locator("h1").waitFor({ timeout: 30000 });
     await mobile.waitForTimeout(1800);
     const overflow = await mobile.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
@@ -253,7 +303,15 @@ await step("reduced motion: titles render fully, no canvas animation errors", as
   await reduced.goto(BASE + "/dashboard");
   await reduced.locator("li.complaint").first().waitFor({ timeout: 30000 });
   const h1 = await reduced.getByRole("heading", { level: 1 }).innerText();
-  expect(h1.includes("Dashboard"), "decode text not settled under reduced motion: " + h1);
+  expect(h1.includes("Dashboard"), "title not rendered under reduced motion: " + h1);
+  await reduced.goto(BASE + "/");
+  await reduced.locator(".caption-3").waitFor({ timeout: 30000 });
+  for (const sel of [".caption-0", ".caption-3", ".badge-fb", ".beat-turn", "#report"]) {
+    expect(await reduced.locator(sel).evaluate((e) => getComputedStyle(e).opacity === "1"), sel + " hidden under reduced motion");
+  }
+  expect(!(await reduced.locator(".journey").evaluate((e) => e.classList.contains("live"))), "journey animated under reduced motion");
+  expect((await reduced.locator(".intro").count()) === 0, "intro shown under reduced motion");
+  await reduced.screenshot({ path: SHOTS + "11-reduced-story.png", fullPage: true });
 });
 
 await browser.close();

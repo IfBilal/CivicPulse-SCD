@@ -1,4 +1,5 @@
 import gsap from "gsap";
+import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { runtimeConfig } from "../api/config";
@@ -7,7 +8,7 @@ import { CATEGORIES, PRIORITIES, STATUSES } from "../api/schemaMeta";
 import type { CacheState, Providers, Stats as StatsT } from "../api/types";
 import { CacheBadge, ProviderBadge } from "../components/Badges";
 import { CountUp } from "../components/CountUp";
-import { DecodeText } from "../components/DecodeText";
+import { SplitTitle } from "../components/SplitTitle";
 import { Gauge } from "../components/fx/Gauge";
 import { Glass } from "../components/Glass";
 import { prefersReducedMotion, useReveal } from "../hooks/motion";
@@ -31,7 +32,8 @@ function BarChart({ title, rows, total }: { title: string; rows: Row[]; total: n
   useLayoutEffect(() => {
     if (!ref.current || asTable || prefersReducedMotion()) return;
     const ctx = gsap.context(() => {
-      gsap.from(".bar-fill", { scaleX: 0, transformOrigin: "left center", duration: 1.1, ease: "expo.out", stagger: 0.07 });
+      gsap.from(".bar-row", { rotateX: -90, opacity: 0, transformOrigin: "50% 0%", duration: 0.7, ease: "back.out(1.6)", stagger: 0.06 });
+      gsap.from(".bar-fill", { scaleX: 0, transformOrigin: "left center", duration: 1.1, ease: "expo.out", stagger: 0.07, delay: 0.2 });
     }, ref);
     return () => ctx.revert();
   }, [rows, asTable]);
@@ -104,6 +106,19 @@ export default function Stats() {
   const [cycle, setCycle] = useState(0);
   const scope = useReveal<HTMLDivElement>([stats === null]);
 
+  // Depth: KPIs and charts drift at different speeds while scrolling.
+  useLayoutEffect(() => {
+    if (!stats || !scope.current || prefersReducedMotion()) return;
+    gsap.registerPlugin(ScrollTrigger);
+    const ctx = gsap.context(() => {
+      gsap.from(".kpi", { rotateY: -70, z: -120, opacity: 0, transformOrigin: "0% 50%", duration: 1, ease: "expo.out", stagger: 0.1 });
+      gsap.to(".kpis", { yPercent: -8, ease: "none", scrollTrigger: { trigger: ".kpis", start: "top 60%", end: "bottom top", scrub: true } });
+      gsap.fromTo(".stats-charts", { y: 40 }, { y: -10, ease: "none", scrollTrigger: { trigger: ".stats-charts", start: "top bottom", end: "bottom 40%", scrub: true } });
+    }, scope);
+    return () => ctx.revert();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stats === null]);
+
   // Only setState AFTER an await, so the polling effect never renders synchronously.
   const refresh = useCallback(async () => {
     try {
@@ -162,7 +177,7 @@ export default function Stats() {
         <div>
           <p className="eyebrow">City pulse</p>
           <h1 className="page-title">
-            <DecodeText className="grad" text="Live statistics" />
+            <SplitTitle text="Live statistics" />
           </h1>
           <p className="page-sub">Aggregates from the server&apos;s 30-second cache. Refreshes every {Math.round(cfg.statsPollMs / 1000)} s.</p>
         </div>
@@ -221,7 +236,7 @@ export default function Stats() {
             </Glass>
           </div>
 
-          <div className="grid-2" style={{ marginTop: 22 }}>
+          <div className="grid-2 stats-charts" style={{ marginTop: 22 }}>
             <BarChart title="By category" rows={cats} total={total} />
             <div className="stack">
               <BarChart title="By priority" rows={pris} total={total} />

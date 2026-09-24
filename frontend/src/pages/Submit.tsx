@@ -1,4 +1,5 @@
 import gsap from "gsap";
+import { Flip } from "gsap/Flip";
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 
@@ -6,12 +7,12 @@ import { api, ApiError } from "../api/client";
 import { LIMITS } from "../api/schemaMeta";
 import type { Complaint, ComplaintCreate } from "../api/types";
 import { CategoryChip, PriorityTag, ProviderBadge } from "../components/Badges";
-import { DecodeText } from "../components/DecodeText";
 import { burst } from "../components/fx/burst";
 import { Magnetic } from "../components/fx/Magnetic";
 import { Ticker } from "../components/fx/Ticker";
 import { useTypewriter } from "../components/fx/Typewriter";
 import { Glass } from "../components/Glass";
+import { Journey } from "../components/journey/Journey";
 import { prefersReducedMotion, useReveal } from "../hooks/motion";
 import { CATEGORY_HEX, shortId } from "../lib/format";
 import { emitPulse } from "../lib/pulse";
@@ -45,6 +46,8 @@ export default function Submit() {
   const [result, setResult] = useState<Complaint | null>(null);
   const timers = useRef<number[]>([]);
   const resultRef = useRef<HTMLDivElement>(null);
+  const textRef = useRef<HTMLTextAreaElement>(null);
+  const morphFrom = useRef<Flip.FlipState | null>(null);
   const scope = useReveal<HTMLDivElement>();
   const [textFocused, setTextFocused] = useState(false);
   const placeholder = useTypewriter(EXAMPLES, values.text === "" && !textFocused);
@@ -57,14 +60,25 @@ export default function Submit() {
 
   useLayoutEffect(() => {
     if (!result || !resultRef.current || prefersReducedMotion()) return;
+    const card = resultRef.current;
+    const from = morphFrom.current;
+    morphFrom.current = null;
     const ctx = gsap.context(() => {
       const tl = gsap.timeline();
-      const r = resultRef.current!.getBoundingClientRect();
-      burst(r.left + r.width / 2, r.top + 60, [CATEGORY_HEX[result.category], "#22e4ff", "#a26bff", "#3df5a6"]);
-      tl.from(resultRef.current, { opacity: 0, y: 30, scale: 0.94, rotateX: -12, transformPerspective: 900, duration: 0.8, ease: "expo.out" })
-        .from(".scanline", { yPercent: -100, duration: 0.9, ease: "power2.inOut" }, 0)
-        .from("[data-result-item]", { opacity: 0, x: -12, stagger: 0.08, duration: 0.45, ease: "power3.out" }, 0.2);
-    }, resultRef);
+      if (from) {
+        // your words become a triaged record: the card grows out of the textarea you typed in
+        tl.add(Flip.from(from, { targets: card, duration: 0.85, ease: "expo.inOut", absolute: true }));
+        tl.fromTo(card, { rotateY: -35, transformPerspective: 1000 }, { rotateY: 0, duration: 1.1, ease: "expo.out" }, "<0.1");
+      } else {
+        tl.from(card, { opacity: 0, y: 30, scale: 0.94, duration: 0.8, ease: "expo.out" });
+      }
+      tl.call(() => {
+        const r = card.getBoundingClientRect();
+        burst(r.left + r.width / 2, r.top + 60, [CATEGORY_HEX[result.category], "#22e4ff", "#a26bff", "#3df5a6"]);
+      })
+        .from(".scanline", { yPercent: -100, duration: 0.9, ease: "power2.inOut" }, "<")
+        .from("[data-result-item]", { opacity: 0, x: -12, stagger: 0.08, duration: 0.45, ease: "power3.out" }, "<0.1");
+    }, card);
     return () => ctx.revert();
   }, [result]);
 
@@ -88,6 +102,10 @@ export default function Submit() {
     try {
       const contact = values.reporter_contact?.trim();
       const created = await api.createComplaint({ text: values.text.trim(), location: values.location.trim(), reporter_contact: contact || null });
+      if (textRef.current && !prefersReducedMotion()) {
+        gsap.registerPlugin(Flip);
+        morphFrom.current = Flip.getState(textRef.current);
+      }
       setResult(created);
       emitPulse(CATEGORY_HEX[created.category]);
       setValues({ text: "", location: "", reporter_contact: "" });
@@ -112,13 +130,16 @@ export default function Submit() {
 
   return (
     <div ref={scope}>
-      <header className="page-head" data-reveal>
+      <Journey />
+
+      <div className="app-zone">
+      <header className="page-head" id="report" data-reveal>
         <p className="eyebrow">Citizen report</p>
-        <h1 className="page-title">
-          Tell the city what&apos;s <DecodeText className="grad" text="broken." />
-        </h1>
+        <h2 className="page-title">
+          Report a <span className="grad">problem</span>
+        </h2>
         <p className="page-sub">
-          Describe the problem in your own words — English, Urdu or both. Our AI reads it, sorts it and routes it to the right
+          Describe it in your own words — English, Urdu or both. Our AI reads it, sorts it and routes it to the right
           department in seconds. If the AI is down, you still get filed.
         </p>
       </header>
@@ -143,6 +164,8 @@ export default function Submit() {
                 </span>
               </label>
               <textarea
+                ref={textRef}
+                data-flip-id="complaint"
                 id="text"
                 className="textarea"
                 placeholder={placeholder}
@@ -217,7 +240,7 @@ export default function Submit() {
 
         <div className="stack">
           {result ? (
-            <div ref={resultRef} className="glass result-card glow-border" aria-live="polite" data-testid="result">
+            <div ref={resultRef} data-flip-id="complaint" className="glass result-card glow-border" aria-live="polite" data-testid="result">
               <div className="scanline" aria-hidden />
               <p className="eyebrow" style={{ color: "var(--ok)" }}>
                 Filed · #{shortId(result.id)}
@@ -258,7 +281,7 @@ export default function Submit() {
               </div>
             </div>
           ) : (
-            <Glass as="aside" tilt aria-label="How triage works">
+            <Glass as="aside" aria-label="How triage works">
               <h2 className="card-title">What happens when you press submit</h2>
               <p className="card-sub">Live pipeline — watch each stage light up.</p>
               <ol className="pipeline">
@@ -279,6 +302,7 @@ export default function Submit() {
             </Glass>
           )}
         </div>
+      </div>
       </div>
     </div>
   );

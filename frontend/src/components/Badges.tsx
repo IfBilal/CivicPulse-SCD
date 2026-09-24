@@ -1,3 +1,8 @@
+import gsap from "gsap";
+import { useLayoutEffect, useRef } from "react";
+
+import { prefersReducedMotion } from "../hooks/motion";
+import { emitPulse } from "../lib/pulse";
 import type { CacheState, Category, Priority, Status, TriagedBy } from "../api/types";
 import { CATEGORY_META, PRIORITY_META, providerLabel, STATUS_META } from "../lib/format";
 
@@ -52,8 +57,18 @@ export function ProviderBadge({ provider }: { provider: TriagedBy }) {
 
 export function CacheBadge({ cache, ageSeconds }: { cache: CacheState; ageSeconds: number | null | undefined }) {
   const hit = cache === "HIT";
+  const ref = useRef<HTMLSpanElement>(null);
+  // Flip the badge like a card whenever MISS ↔ HIT changes — the cache demo moment.
+  useLayoutEffect(() => {
+    if (!ref.current || prefersReducedMotion()) return;
+    const tween = gsap.fromTo(ref.current, { rotateX: 90, opacity: 0 }, { rotateX: 0, opacity: 1, duration: 0.7, ease: "back.out(2.2)", transformPerspective: 400 });
+    if (cache === "HIT") emitPulse("#3df5a6", { strength: 0.5, at: "random" });
+    return () => {
+      tween.kill();
+    };
+  }, [cache]);
   return (
-    <span className={`badge-cache ${hit ? "hit" : "miss"}`} role="status" data-cache={cache}>
+    <span ref={ref} className={`badge-cache ${hit ? "hit" : "miss"}`} role="status" data-cache={cache}>
       <span aria-hidden>{hit ? "⚡" : "⟳"}</span>
       <b>{cache}</b>
       <span>{hit ? `cached ${ageSeconds ?? 0} s ago` : "computed just now"}</span>

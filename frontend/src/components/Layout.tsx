@@ -5,9 +5,9 @@ import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { runtimeConfig } from "../api/config";
 import { prefersReducedMotion } from "../hooks/motion";
 import { CursorGlow } from "./fx/CursorGlow";
-import { Magnetic } from "./fx/Magnetic";
+import { Intro } from "./journey/Intro";
 
-const PulseField = lazy(() => import("./PulseField"));
+const CityScene = lazy(() => import("../city/CityScene"));
 
 const LINKS = [
   { to: "/", label: "Report", end: true },
@@ -36,6 +36,35 @@ export function Layout() {
   const indicator = useRef<HTMLSpanElement>(null);
   const page = useRef<HTMLDivElement>(null);
   const wipe = useRef<HTMLDivElement>(null);
+  const progress = useRef<HTMLDivElement>(null);
+
+  // Background scene mode per route: the story page gets the full city, data pages a calm one.
+  useLayoutEffect(() => {
+    document.documentElement.dataset.scene = location.pathname === "/" ? "story" : "calm";
+  }, [location.pathname]);
+
+  // Scroll-progress bar (rAF-throttled, passive).
+  useLayoutEffect(() => {
+    const bar = progress.current;
+    if (!bar) return;
+    let raf = 0;
+    const update = () => {
+      raf = 0;
+      const max = document.documentElement.scrollHeight - window.innerHeight;
+      bar.style.transform = `scaleX(${max > 0 ? Math.min(1, window.scrollY / max) : 0})`;
+    };
+    const onScroll = () => {
+      if (!raf) raf = requestAnimationFrame(update);
+    };
+    update();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onScroll);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onScroll);
+    };
+  }, [location.pathname]);
   const cfg = runtimeConfig();
 
   // Slide the gradient pill under the active link.
@@ -61,7 +90,12 @@ export function Layout() {
         .set(wipe.current, { transformOrigin: "right center" })
         .to(wipe.current, { scaleX: 0, duration: 0.42, ease: "power3.out" });
     }
-    tl.fromTo(page.current, { opacity: 0, y: 18, filter: "blur(6px)" }, { opacity: 1, y: 0, filter: "blur(0px)", duration: 0.6, ease: "power3.out", clearProps: "transform,filter" }, 0.2);
+    tl.fromTo(
+      page.current,
+      { opacity: 0, y: 30, z: -140, rotateX: 7, transformPerspective: 1600, transformOrigin: "50% 0%", filter: "blur(6px)" },
+      { opacity: 1, y: 0, z: 0, rotateX: 0, filter: "blur(0px)", duration: 0.75, ease: "expo.out", clearProps: "transform,filter" },
+      0.2,
+    );
     window.scrollTo?.({ top: 0 });
     return () => {
       tl.kill();
@@ -71,7 +105,7 @@ export function Layout() {
   return (
     <>
       <Suspense fallback={null}>
-        <PulseField />
+        <CityScene />
       </Suspense>
       <div className="aurora" aria-hidden>
         <span />
@@ -79,19 +113,19 @@ export function Layout() {
         <span />
       </div>
       <div className="bg-grain" aria-hidden />
-      <CursorGlow />
+      {location.pathname === "/" && <CursorGlow />}
+      {location.pathname === "/" && <Intro />}
+      <div className="scroll-progress" ref={progress} aria-hidden />
       <div className="route-wipe" ref={wipe} aria-hidden />
       <div className="shell">
         <header className="topbar">
           <div className="topbar-inner">
-            <Magnetic strength={0.25}>
-              <NavLink to="/" className="brand" aria-label="CivicPulse home">
-                <BrandMark />
-                <span className="brand-name">
-                  Civic<span>Pulse</span>
-                </span>
-              </NavLink>
-            </Magnetic>
+            <NavLink to="/" className="brand" aria-label="CivicPulse home">
+              <BrandMark />
+              <span className="brand-name">
+                Civic<span>Pulse</span>
+              </span>
+            </NavLink>
             <nav className="nav" ref={nav} aria-label="Primary">
               <span className="nav-indicator" ref={indicator} aria-hidden />
               {LINKS.map((l) => (

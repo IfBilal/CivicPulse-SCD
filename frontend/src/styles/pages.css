@@ -768,26 +768,6 @@
     background-position: 100% 0;
   }
 }
-.page-title:hover .grad {
-  animation:
-    grad-pan 6s ease-in-out infinite alternate,
-    glitch 0.4s steps(2) 2;
-}
-@keyframes glitch {
-  0% {
-    text-shadow: 2px 0 rgba(255, 61, 170, 0.7), -2px 0 rgba(34, 228, 255, 0.7);
-    transform: translateX(1px);
-  }
-  50% {
-    text-shadow: -2px 0 rgba(255, 61, 170, 0.7), 2px 0 rgba(34, 228, 255, 0.7);
-    transform: translateX(-1px);
-  }
-  100% {
-    text-shadow: none;
-    transform: none;
-  }
-}
-
 /* nav hover light */
 .nav a:not(.active)::after {
   content: "";
@@ -849,3 +829,10 @@
   }
 }
 .magnetic { display: inline-flex; }
+
+/* 3D stages for rows, bars and KPIs */
+.complaints,
+.bars,
+.kpis {
+  perspective: 1100px;
+}

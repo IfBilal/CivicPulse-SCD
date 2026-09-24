@@ -1,4 +1,5 @@
 import gsap from "gsap";
+import { Flip } from "gsap/Flip";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
@@ -7,11 +8,12 @@ import { CATEGORIES, LIMITS, PRIORITIES, STATUSES } from "../api/schemaMeta";
 import type { Category, Complaint, ComplaintPage, ListQuery, Priority, Status } from "../api/types";
 import { CategoryChip, PriorityTag, ProviderBadge, StatusPill } from "../components/Badges";
 import { CountUp } from "../components/CountUp";
-import { DecodeText } from "../components/DecodeText";
+import { SplitTitle } from "../components/SplitTitle";
 import { Glass } from "../components/Glass";
 import { Expand } from "../components/fx/Expand";
 import { prefersReducedMotion, useReveal } from "../hooks/motion";
-import { CATEGORY_META, PRIORITY_META, relativeTime, shortId, STATUS_META } from "../lib/format";
+import { CATEGORY_HEX, CATEGORY_META, PRIORITY_META, relativeTime, shortId, STATUS_META } from "../lib/format";
+import { emitPulse } from "../lib/pulse";
 
 const PAGE_SIZES = [10, 20, 50, 100].filter((n) => n <= LIMITS.pageSizeMax);
 const SORTS = [
@@ -64,6 +66,9 @@ export default function Dashboard() {
   // Only the latest request may write state: a slow response for an old filter/page must never
   // overwrite a newer one (found by the browser E2E run: filter change + fast "Next").
   const seq = useRef(0);
+  // Flip: capture row positions before a new list lands, then animate from them (filters/sort/page).
+  const flipState = useRef<Flip.FlipState | null>(null);
+  const animateList = useRef(false);
   const load = useCallback(async () => {
     const mine = ++seq.current;
     const latest = () => mine === seq.current;
@@ -71,7 +76,14 @@ export default function Dashboard() {
     setLoadError(null);
     try {
       const data = await api.listComplaints(readQuery(new URLSearchParams(key)));
-      if (latest()) setPage(data);
+      if (latest()) {
+        if (listRef.current && !prefersReducedMotion()) {
+          gsap.registerPlugin(Flip);
+          flipState.current = Flip.getState(listRef.current.querySelectorAll("li.complaint"));
+        }
+        animateList.current = true;
+        setPage(data);
+      }
     } catch (e) {
       if (latest()) setLoadError(e instanceof ApiError ? e.body.error.message : "Could not load complaints.");
     } finally {
@@ -88,9 +100,31 @@ export default function Dashboard() {
   }, [load]);
 
   useLayoutEffect(() => {
-    if (!page || !listRef.current || prefersReducedMotion()) return;
+    // Only a freshly LOADED list animates; an in-place status update must not re-shuffle rows.
+    if (!page || !listRef.current || !animateList.current || prefersReducedMotion()) return;
+    animateList.current = false;
+    const state = flipState.current;
+    flipState.current = null;
+    const rows = listRef.current.querySelectorAll("li.complaint");
+    if (state && state.elementStates.length) {
+      const flip = Flip.from(state, {
+        targets: rows,
+        duration: 0.6,
+        ease: "power3.inOut",
+        stagger: 0.015,
+        onEnter: (els) =>
+          gsap.fromTo(
+            els,
+            { opacity: 0, rotateX: -55, z: -80, transformOrigin: "50% 0%" },
+            { opacity: 1, rotateX: 0, z: 0, duration: 0.6, ease: "power3.out", stagger: 0.03, clearProps: "transform" },
+          ),
+      });
+      return () => {
+        flip.kill();
+      };
+    }
     const ctx = gsap.context(() => {
-      gsap.from("li.complaint", { opacity: 0, y: 18, duration: 0.5, ease: "power3.out", stagger: 0.035 });
+      gsap.from(rows, { opacity: 0, rotateX: -60, z: -90, transformOrigin: "50% 0%", duration: 0.7, ease: "power3.out", stagger: 0.04, clearProps: "transform" });
     }, listRef);
     return () => ctx.revert();
   }, [page]);
@@ -117,9 +151,11 @@ export default function Dashboard() {
       const updated = await api.updateStatus(c.id, { status: to });
       setPage((p) => p && { ...p, items: p.items.map((i) => (i.id === updated.id ? updated : i)) });
       setBanner({ kind: "success", text: `#${shortId(c.id)} is now ${STATUS_META[updated.status].label.toLowerCase()}.` });
+      emitPulse("#3df5a6", { strength: 1 });
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) {
         setBanner({ kind: "conflict", text: e.body.error.message }); // ← verbatim, never a mapped string
+        emitPulse("#ff4d6d", { strength: 0.8 });
         const d = e.body.error.details as { terminal?: boolean; from?: Status } | undefined;
         if (d?.terminal) setTerminal((t) => ({ ...t, [c.id]: e.body.error.message }));
         if (d?.from && d.from !== c.status) {
@@ -142,7 +178,7 @@ export default function Dashboard() {
       <header className="page-head" data-reveal>
         <p className="eyebrow">Operator console</p>
         <h1 className="page-title">
-          <DecodeText className="grad" text="Dashboard" />
+          <SplitTitle text="Dashboard" />
         </h1>
         <p className="page-sub">Every report, triaged. Filter, sort and move complaints through their lifecycle — the server decides what&apos;s allowed.</p>
       </header>
@@ -254,7 +290,13 @@ export default function Dashboard() {
               const open = expanded === c.id;
               const lockedMsg = terminal[c.id];
               return (
-                <li key={c.id} className={`complaint glass ${open ? "open" : ""}`} style={{ ["--c" as string]: CATEGORY_META[c.category].color }}>
+                <li
+                  key={c.id}
+                  data-flip-id={c.id}
+                  className={`complaint glass ${open ? "open" : ""}`}
+                  style={{ ["--c" as string]: CATEGORY_META[c.category].color }}
+                  onPointerEnter={(e) => e.pointerType === "mouse" && emitPulse(CATEGORY_HEX[c.category], { strength: 0.45, at: "random" })}
+                >
                   <button className="complaint-head" aria-expanded={open} aria-controls={`c-${c.id}`} onClick={() => setExpanded(open ? null : c.id)}>
                     <span className="cat-rail" aria-hidden />
                     <span className="complaint-main">
