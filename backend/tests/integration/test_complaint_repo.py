@@ -102,9 +102,11 @@ async def test_updated_at_trigger_fires(db_session: AsyncSession) -> None:
        querying — since `row` and the later "refreshed" object are looked up in the *same*
        `db_session`, `Session.get()` returned the identical in-memory Python object both times,
        so `before` and `refreshed.updated_at` were literally the same attribute, bit-identical
-       by construction regardless of what the trigger actually did server-side. `session.expire()`
-       forces the next attribute access to re-query the database instead of trusting the
-       identity-mapped object.
+       by construction regardless of what the trigger actually did server-side.
+       `AsyncSession.expire_all()` is a sync method that doesn't route through the async
+       greenlet bridge and raised `MissingGreenlet` when called directly; `await
+       db_session.refresh(row, ...)` is the documented async-safe way to force a re-query of a
+       specific already-loaded object.
     `pg_sleep()`, not `asyncio.sleep()`, guarantees the interval elapses on Postgres's own clock
     (CLAUDE.md HARD rule 15: never fake a real-time gap with a process-side sleep).
     """
@@ -128,11 +130,9 @@ async def test_updated_at_trigger_fires(db_session: AsyncSession) -> None:
         text("UPDATE complaints SET status = 'in_progress' WHERE id = :id"), {"id": row.id}
     )
     await db_session.commit()
-    db_session.expire_all()
+    await db_session.refresh(row)
 
-    refreshed = await repo.get(row.id)
-    assert refreshed is not None
-    assert refreshed.updated_at > before
+    assert row.updated_at > before
 
 
 async def test_list_page_returns_total_in_one_query(db_session: AsyncSession) -> None:
