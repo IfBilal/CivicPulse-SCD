@@ -1,5 +1,15 @@
 """D1, D2 — `05-DATA-LAYER.md §8`. Runs against its own container, separate from `db_session`,
-because these tests need to upgrade/downgrade/upgrade the schema itself."""
+because these tests need to upgrade/downgrade/upgrade the schema itself.
+
+`alembic/env.py` reads its connection URL from `app.settings.settings.database_url` by design
+(`05-DATA-LAYER.md §3.1`: "never `alembic.ini`, so the same migration runs against compose, CI
+and Kubernetes with no file edits"). That means the container URL has to reach Alembic via the
+`DATABASE_URL` env var, not via `Config.set_main_option` — the latter is what `alembic.ini`
+itself uses, and `env.py` intentionally overwrites it every time. Set `DATABASE_URL` before the
+first `command.upgrade`/`command.downgrade` call in each test.
+"""
+
+import os
 
 import pytest
 from sqlalchemy import create_engine
@@ -18,9 +28,9 @@ _BACKEND_ROOT = __file__.rsplit("/backend/", 1)[0] + "/backend"
 
 
 def _alembic_config(url: str) -> Config:
+    os.environ["DATABASE_URL"] = url
     cfg = Config(f"{_BACKEND_ROOT}/alembic.ini")
     cfg.set_main_option("script_location", f"{_BACKEND_ROOT}/alembic")
-    cfg.set_main_option("sqlalchemy.url", url)
     return cfg
 
 

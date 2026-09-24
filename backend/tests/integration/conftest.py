@@ -9,6 +9,7 @@ obviously correct than a savepoint-rollback scheme, and it still isolates tests 
 the next test even starts.
 """
 
+import os
 from collections.abc import AsyncGenerator, Iterator
 
 import pytest
@@ -35,10 +36,16 @@ def postgres_url() -> Iterator[str]:
 
 @pytest.fixture(scope="session")
 def migrated_db(postgres_url: str) -> Iterator[str]:
-    """`alembic upgrade head` against the live container, once per test session."""
+    """`alembic upgrade head` against the live container, once per test session.
+
+    `alembic/env.py` reads its URL from `app.settings.settings.database_url` by design, not
+    from this Config object — `set_main_option("sqlalchemy.url", ...)` here only affects what
+    `alembic.ini` would have supplied, which `env.py` overwrites unconditionally. The container
+    URL has to reach it via `DATABASE_URL`.
+    """
+    os.environ["DATABASE_URL"] = postgres_url
     cfg = Config(f"{_BACKEND_ROOT}/alembic.ini")
     cfg.set_main_option("script_location", f"{_BACKEND_ROOT}/alembic")
-    cfg.set_main_option("sqlalchemy.url", postgres_url)
     command.upgrade(cfg, "head")
     yield postgres_url
 
