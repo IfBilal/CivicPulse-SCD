@@ -117,6 +117,71 @@ so nothing breaks; on stock Debian/Ubuntu the bare `python` doesn't.
 
 ---
 
+## DEV-B · Phase 2 · Views built now against MSW (not placeholders)
+
+*ponytail record, 2026-09-23, `feat/fe-scaffold`.* The Phase 2 handover scopes the frontend to a
+scaffold with placeholder pages; DEV-B asked for the complete designed frontend now.
+**Chosen:** build Submit / Dashboard / Stats fully against MSW handlers typed off `schema.d.ts`,
+with the §6 component tests. Phase 4 becomes "turn MSW off, point at the live API, fix what the
+real backend disagrees with". **Rejected:** (a) placeholders now, views in Phase 4 — the spec's
+order, but puts all Rubric B UI risk into the same days as the AI-triage crunch; (b) views against
+the live backend only — impossible until Phase 3, and loses the zero-network test harness.
+
+## DEV-B · Phase 2 · The fake server lives in `frontend/mocks/`, outside `src/`
+
+*ponytail record.* MSW needs a stand-in backend that can return a realistic 409, which means some
+copy of the transition rule. **Chosen:** `frontend/mocks/fakeServer.ts`, outside `src/`, loaded
+only in `vite --mode mock` and tests; production builds tree-shake it out (verified: no `msw` in
+`dist/`). The app code in `src/` holds zero rules — enforced by ESLint `no-restricted-syntax`, the
+`make lint` grep, and `tests/client.test.ts`. **Rejected:** (a) mocks under `src/mocks` — trips the
+HARD-rule-9 grep and blurs "app" vs "test double"; (b) a mock that accepts every transition —
+then the verbatim-409 UX can't be exercised by hand at all.
+
+## DEV-B · Phase 2 · Validation bounds come from a copy of `openapi.json`
+
+*ponytail record.* `11-FRONTEND.md §3.1` wants client bounds read from the generated schema, but
+`schema.d.ts` is types only — `minLength` doesn't exist at runtime. **Chosen:** `make gen-client`
+also copies `openapi.json` to `frontend/src/api/openapi.json`; `api/schemaMeta.ts` reads bounds
+and enum members from it (and throws if they're missing). The CI drift gate diffs the copy too.
+**Rejected:** (a) importing `../../openapi.json` across the package boundary — breaks the Vite dev
+server's fs allow-list and couples the image to the repo layout; (b) hand-typed constants — the
+exact drift §2.1 forbids.
+
+## DEV-B · Phase 2 · `openapi-typescript --empty-objects-unknown`
+
+Found while building the Dashboard: Pydantic's `dict[str, Any]` (`ErrorBody.details`,
+`FieldError.constraint`) is emitted as `{"type":"object"}` and openapi-typescript's default renders
+that as `Record<string, never>` — no code could read `details.terminal` from a 409 type-safely.
+The flag renders it `Record<string, unknown>`. Generator config only: `openapi.json` is
+byte-identical, 2 lines of `schema.d.ts` change. Not a contract change.
+
+## DEV-B · Phase 2 · nginx resolves the backend per request, upstream set at boot
+
+*ponytail record.* `11-FRONTEND.md §2.1` has `proxy_pass http://backend:8000/api/;` — a literal
+host is resolved once at startup, so nginx **exits** if `backend` isn't resolvable yet (standalone
+`docker run` for the build-once-deploy-many evidence, compose restarts, k8s rollouts), and nginx's
+resolver ignores DNS search domains, so the short name fails inside Kubernetes.
+**Chosen:** `proxy_pass http://$backend_upstream;` with `resolver` taken from `/etc/resolv.conf`
+and `BACKEND_UPSTREAM` (default `backend:8000`; k8s sets the FQDN) written at boot by
+`10-config.sh`, which validates every value before writing it (config.js is served to browsers).
+**Rejected:** (a) the spec's static `proxy_pass` — crash-on-boot coupling; (b) a hard-coded
+`resolver 127.0.0.11` (Docker's DNS) — wrong inside Kubernetes.
+
+## DEV-B · Phase 2 · Build context = repo root, per-Dockerfile ignore files
+
+`12-DOCKER-COMPOSE.md §3` builds both images with `context: .`, so `backend/.dockerignore` and
+`frontend/.dockerignore` (as `§2` names them) would be **silently ignored** — Docker only reads the
+ignore file at the context root. Used BuildKit's `<Dockerfile>.dockerignore` convention instead:
+`backend/Dockerfile.dockerignore`, `frontend/Dockerfile.dockerignore`, both allow-lists. Also fixed
+a spec bug: Dockerfiles do not support trailing comments, so the spec's
+`COPY a b ./   # deps BEFORE source` would copy files named `#`, `deps`, … and fail.
+
+## DEV-B · Phase 2 · Palette validated, not eyeballed
+
+Category hues are OKLCH-generated inside the dark-mode lightness band (L 0.60–0.66, C ≥ 0.13) and
+run through a CVD/contrast validator: all checks pass; the one adjacent pair in the 6–8 ΔE CVD
+floor (sanitation/electricity, protan) is legal because every bar and chip also carries its text
+label and icon — colour is never the only channel.
 ## DEV-A · Phase 2 named queries for `ix_complaints_status_priority` and `ix_complaints_created_at`
 
 Per `05-DATA-LAYER.md §4` — *"an unexplained index is cargo cult"*.
@@ -210,3 +275,26 @@ invocation (bypasses the coverage plugin's output rewrite) or switch to `pytest 
 -q --no-header` and count lines matching a test-id regex instead of a bare `"::"` substring
 search. **Status:** flagged, not fixed — decide together before this becomes a real
 `RUBRIC-TESTS` false negative at a gate review.
+
+## DEV-B · Phase 2 · `nginx:1.27.2-alpine` → `-alpine-slim` (real Docker build, 2026-09-24)
+
+Once Docker actually worked on this machine, the frontend runtime image measured **81.7 MB**,
+over `11-FRONTEND.md §5`'s own "~60 MB means the split isn't doing its job" line — despite the
+multi-stage split working correctly (`/usr/share/nginx/html` is 1.2 MB; no `node`/`npm` in the
+final image). The gap was the base image itself: `nginx:1.27.2-alpine` bundles GeoIP/XSLT/
+image-filter/njs dynamic modules (one ~37.5 MB layer) that `frontend/nginx.conf` never loads.
+**Fixed**: switched to nginx's own `-alpine-slim` variant (same nginx build, no unused dynamic
+modules) — confirmed it still ships `wget` (used by `HEALTHCHECK`), `adduser`/`addgroup`/`su`
+(used to create the non-root user), and the `docker-entrypoint.d/` mechanism. Runtime image is
+now **29 MB**. No functional change; still pinned to an exact tag, never `:latest` or bare
+`:alpine`.
+
+Also verified end-to-end with real containers (previously only estimated): both images build
+clean via `docker build --target <stage>`; both run as the non-root `app` user; `/healthz`
+returns 200 and the Docker `HEALTHCHECK` reports `healthy`; `docs/evidence/runtime-config.txt`
+captures the same image digest serving two different `config.js` outputs under `APP_ENV=dev`
+vs `APP_ENV=prod` — the build-once-deploy-many proof ADR-0002 describes, now with a live
+digest instead of a description. `docs/evidence/dockerignore-context-sizes.txt` was also
+re-measured for real (`docker buildx`'s own "transferring context" figure, not the earlier tar
+estimate — Docker was previously broken on this dev machine, a system-level AppArmor/user-
+namespace issue, fixed by a reboot + restarting the docker snap service, unrelated to the repo).

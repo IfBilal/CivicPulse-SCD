@@ -1,0 +1,309 @@
+import gsap from "gsap";
+import { Flip } from "gsap/Flip";
+import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
+import { Link } from "react-router-dom";
+
+import { api, ApiError } from "../api/client";
+import { LIMITS } from "../api/schemaMeta";
+import type { Complaint, ComplaintCreate } from "../api/types";
+import { CategoryChip, PriorityTag, ProviderBadge } from "../components/Badges";
+import { burst } from "../components/fx/burst";
+import { Magnetic } from "../components/fx/Magnetic";
+import { Ticker } from "../components/fx/Ticker";
+import { useTypewriter } from "../components/fx/Typewriter";
+import { Glass } from "../components/Glass";
+import { Journey } from "../components/journey/Journey";
+import { prefersReducedMotion, useReveal } from "../hooks/motion";
+import { CATEGORY_HEX, shortId } from "../lib/format";
+import { emitPulse } from "../lib/pulse";
+import { CLASSIFYING_AFTER_MS, SLOW_AFTER_MS, STAGE_COPY, validate, type Field, type Stage } from "./submitForm";
+
+const EXAMPLES = [
+  "Pani ka pipe burst ho gaya hai near the masjid, water on the road since fajr…",
+  "Street light band hai for one week, gali mein andhera, ladies feel unsafe…",
+  "Kachra teen din se nahi uthaya gaya, smell is unbearable in the gali…",
+  "Sarak mein bara gadha hai, two bikes already slipped yesterday raat ko…",
+];
+
+const PIPELINE = [
+  { key: "validate", label: "Validate", sub: "bounds from the live contract" },
+  { key: "triage", label: "AI triage", sub: "category · priority · summary" },
+  { key: "guard", label: "Fallback guard", sub: "keyword rules if the model stalls" },
+  { key: "persist", label: "Filed", sub: "on the operator dashboard" },
+] as const;
+
+function stageIndex(stage: Stage, done: boolean): number {
+  if (done) return 4;
+  return { idle: -1, submitting: 0, classifying: 1, slow: 2 }[stage];
+}
+
+export default function Submit() {
+  const [values, setValues] = useState<ComplaintCreate>({ text: "", location: "", reporter_contact: "" });
+  const [touched, setTouched] = useState<Partial<Record<Field, boolean>>>({});
+  const [serverErrors, setServerErrors] = useState<Partial<Record<Field, string>>>({});
+  const [formError, setFormError] = useState<string | null>(null);
+  const [stage, setStage] = useState<Stage>("idle");
+  const [result, setResult] = useState<Complaint | null>(null);
+  const timers = useRef<number[]>([]);
+  const resultRef = useRef<HTMLDivElement>(null);
+  const textRef = useRef<HTMLTextAreaElement>(null);
+  const morphFrom = useRef<Flip.FlipState | null>(null);
+  const scope = useReveal<HTMLDivElement>();
+  const [textFocused, setTextFocused] = useState(false);
+  const placeholder = useTypewriter(EXAMPLES, values.text === "" && !textFocused);
+
+  const clientErrors = validate(values);
+  const busy = stage !== "idle";
+  const errorFor = (f: Field) => serverErrors[f] ?? (touched[f] ? clientErrors[f] : undefined);
+
+  useEffect(() => () => timers.current.forEach(clearTimeout), []);
+
+  useLayoutEffect(() => {
+    if (!result || !resultRef.current || prefersReducedMotion()) return;
+    const card = resultRef.current;
+    const from = morphFrom.current;
+    morphFrom.current = null;
+    const ctx = gsap.context(() => {
+      const tl = gsap.timeline();
+      if (from) {
+        // your words become a triaged record: the card grows out of the textarea you typed in
+        tl.add(Flip.from(from, { targets: card, duration: 0.85, ease: "expo.inOut", absolute: true }));
+        tl.fromTo(card, { rotateY: -35, transformPerspective: 1000 }, { rotateY: 0, duration: 1.1, ease: "expo.out" }, "<0.1");
+      } else {
+        tl.from(card, { opacity: 0, y: 30, scale: 0.94, duration: 0.8, ease: "expo.out" });
+      }
+      tl.call(() => {
+        const r = card.getBoundingClientRect();
+        burst(r.left + r.width / 2, r.top + 60, [CATEGORY_HEX[result.category], "#22e4ff", "#a26bff", "#3df5a6"]);
+      })
+        .from(".scanline", { yPercent: -100, duration: 0.9, ease: "power2.inOut" }, "<")
+        .from("[data-result-item]", { opacity: 0, x: -12, stagger: 0.08, duration: 0.45, ease: "power3.out" }, "<0.1");
+    }, card);
+    return () => ctx.revert();
+  }, [result]);
+
+  const set = (f: Field) => (e: { target: { value: string } }) => {
+    setValues((v) => ({ ...v, [f]: e.target.value }));
+    setServerErrors((s) => ({ ...s, [f]: undefined }));
+  };
+
+  async function onSubmit(e: FormEvent) {
+    e.preventDefault();
+    setTouched({ text: true, location: true, reporter_contact: true });
+    if (busy || Object.keys(clientErrors).length) return;
+    setFormError(null);
+    setServerErrors({});
+    setResult(null);
+    setStage("submitting");
+    timers.current = [
+      window.setTimeout(() => setStage("classifying"), CLASSIFYING_AFTER_MS),
+      window.setTimeout(() => setStage("slow"), SLOW_AFTER_MS),
+    ];
+    try {
+      const contact = values.reporter_contact?.trim();
+      const created = await api.createComplaint({ text: values.text.trim(), location: values.location.trim(), reporter_contact: contact || null });
+      if (textRef.current && !prefersReducedMotion()) {
+        gsap.registerPlugin(Flip);
+        morphFrom.current = Flip.getState(textRef.current);
+      }
+      setResult(created);
+      emitPulse(CATEGORY_HEX[created.category]);
+      setValues({ text: "", location: "", reporter_contact: "" });
+      setTouched({});
+    } catch (err) {
+      const fields = err instanceof ApiError ? (err.body.error.fields ?? []) : [];
+      const known = fields.filter((f): f is typeof f & { field: Field } => ["text", "location", "reporter_contact"].includes(f.field));
+      if (known.length && known.length === fields.length) {
+        setServerErrors(Object.fromEntries(known.map((f) => [f.field, f.message])));
+      } else {
+        // An error we can't pin to an input (e.g. `body`) must still be shown, never swallowed.
+        setFormError(err instanceof ApiError ? err.body.error.message : "Something went wrong. Please try again.");
+      }
+    } finally {
+      timers.current.forEach(clearTimeout);
+      setStage("idle");
+    }
+  }
+
+  const textLen = values.text.trim().length;
+  const active = stageIndex(stage, !!result && !busy);
+
+  return (
+    <div ref={scope}>
+      <Journey />
+
+      <div className="app-zone">
+      <header className="page-head" id="report" data-reveal>
+        <p className="eyebrow">Citizen report</p>
+        <h2 className="page-title">
+          Report a <span className="grad">problem</span>
+        </h2>
+        <p className="page-sub">
+          Describe it in your own words — English, Urdu or both. Our AI reads it, sorts it and routes it to the right
+          department in seconds. If the AI is down, you still get filed.
+        </p>
+      </header>
+
+      <Ticker />
+
+      <div className="grid-2">
+        <Glass>
+          <form onSubmit={onSubmit} noValidate aria-busy={busy}>
+            {formError && (
+              <div className="banner error" role="alert">
+                <span aria-hidden>⚠</span>
+                <span>{formError}</span>
+              </div>
+            )}
+
+            <div className="field">
+              <label htmlFor="text">
+                What&apos;s the problem?
+                <span className={`counter ${textLen > LIMITS.text.max ? "bad" : ""}`}>
+                  {textLen}/{LIMITS.text.max}
+                </span>
+              </label>
+              <textarea
+                ref={textRef}
+                data-flip-id="complaint"
+                id="text"
+                className="textarea"
+                placeholder={placeholder}
+                value={values.text}
+                onChange={set("text")}
+                onFocus={() => setTextFocused(true)}
+                onBlur={() => {
+                  setTextFocused(false);
+                  setTouched((t) => ({ ...t, text: true }));
+                }}
+                aria-invalid={!!errorFor("text")}
+                aria-describedby="text-error"
+                disabled={busy}
+              />
+              <p id="text-error" className="field-error" aria-live="polite">
+                {errorFor("text")}
+              </p>
+            </div>
+
+            <div className="field">
+              <label htmlFor="location">Where?</label>
+              <input
+                id="location"
+                className="input"
+                placeholder="Street 12, Sector G-9/1, Islamabad"
+                value={values.location}
+                onChange={set("location")}
+                onBlur={() => setTouched((t) => ({ ...t, location: true }))}
+                aria-invalid={!!errorFor("location")}
+                aria-describedby="location-error"
+                disabled={busy}
+              />
+              <p id="location-error" className="field-error" aria-live="polite">
+                {errorFor("location")}
+              </p>
+            </div>
+
+            <div className="field">
+              <label htmlFor="contact">
+                Contact <span className="opt">optional · phone or email</span>
+              </label>
+              <input
+                id="contact"
+                className="input"
+                placeholder="+92 300 1234567"
+                value={values.reporter_contact ?? ""}
+                onChange={set("reporter_contact")}
+                aria-invalid={!!errorFor("reporter_contact")}
+                aria-describedby="contact-error"
+                disabled={busy}
+              />
+              <p id="contact-error" className="field-error" aria-live="polite">
+                {errorFor("reporter_contact")}
+              </p>
+            </div>
+
+            <div className="row">
+              <Magnetic>
+                <button type="submit" className={`btn btn-primary ${busy ? "is-busy" : ""}`} disabled={busy}>
+                  {busy ? <span className="spinner" aria-hidden /> : <span aria-hidden className="arrow">⟶</span>}
+                  {busy ? "Working…" : "Submit report"}
+                </button>
+              </Magnetic>
+              {busy && (
+                <p role="status" className="stage-copy" data-stage={stage}>
+                  {STAGE_COPY[stage as Exclude<Stage, "idle">]}
+                </p>
+              )}
+            </div>
+          </form>
+        </Glass>
+
+        <div className="stack">
+          {result ? (
+            <div ref={resultRef} data-flip-id="complaint" className="glass result-card glow-border" aria-live="polite" data-testid="result">
+              <div className="scanline" aria-hidden />
+              <p className="eyebrow" style={{ color: "var(--ok)" }}>
+                Filed · #{shortId(result.id)}
+              </p>
+              <h2 className="card-title" style={{ fontSize: 22, marginTop: 8 }} data-result-item>
+                {result.ai_summary ?? result.text.slice(0, 120)}
+              </h2>
+              <div className="row" style={{ margin: "14px 0" }} data-result-item>
+                <CategoryChip category={result.category} />
+                <PriorityTag priority={result.priority} />
+              </div>
+              <dl className="kv" data-result-item>
+                <dt>Classified by</dt>
+                <dd>
+                  <ProviderBadge provider={result.triaged_by} />
+                </dd>
+                <dt>Triage time</dt>
+                <dd className="mono">{(result.triage_latency_ms / 1000).toFixed(2)} s</dd>
+                {result.triage_confidence != null && (
+                  <>
+                    <dt>Confidence</dt>
+                    <dd>
+                      <span className="meter" style={{ ["--v" as string]: result.triage_confidence }} aria-hidden />
+                      <span className="mono">{Math.round(result.triage_confidence * 100)}%</span>
+                    </dd>
+                  </>
+                )}
+                <dt>Where</dt>
+                <dd>{result.location}</dd>
+              </dl>
+              <div className="row" style={{ marginTop: 18 }} data-result-item>
+                <Link className="btn btn-sm" to="/dashboard">
+                  Open dashboard →
+                </Link>
+                <button className="btn btn-sm btn-ghost" onClick={() => setResult(null)}>
+                  Report another
+                </button>
+              </div>
+            </div>
+          ) : (
+            <Glass as="aside" aria-label="How triage works">
+              <h2 className="card-title">What happens when you press submit</h2>
+              <p className="card-sub">Live pipeline — watch each stage light up.</p>
+              <ol className="pipeline">
+                {PIPELINE.map((p, i) => (
+                  <li key={p.key} className={i < active ? "done" : i === active ? "active" : ""}>
+                    <span className="node" aria-hidden />
+                    <div>
+                      <b>{p.label}</b>
+                      <span>{p.sub}</span>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+              <p className="hint" style={{ marginTop: 14 }}>
+                Text {LIMITS.text.min}–{LIMITS.text.max} characters · location {LIMITS.location.min}–{LIMITS.location.max}. These
+                limits are read from the server&apos;s own contract.
+              </p>
+            </Glass>
+          )}
+        </div>
+      </div>
+      </div>
+    </div>
+  );
+}

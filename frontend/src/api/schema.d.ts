@@ -207,7 +207,7 @@ export interface components {
             /** Code */
             code: string;
             /** Details */
-            details?: Record<string, never> | null;
+            details?: Record<string, unknown> | null;
             /** Fields */
             fields?: components["schemas"]["FieldError"][] | null;
             /** Message */
@@ -224,7 +224,7 @@ export interface components {
             /** Code */
             code: string;
             /** Constraint */
-            constraint?: Record<string, never> | null;
+            constraint?: Record<string, unknown> | null;
             /** Field */
             field: string;
             /** Message */

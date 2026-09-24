@@ -204,6 +204,143 @@ Every Claude Code skill invocation on this project, logged at the moment it happ
      test is independent of the table rather than tautological.
 - **I changed:** N/A — finding-generation step.
 
+## 2026-09-23 · feat/fe-scaffold
+
+- **Tool:** Claude Code + `caveman` (start of Phase 2, DEV-B half, before any code)
+- **Shaped / Wrote:** stripped task list from `02-CRITICAL-PATH.md §4` PHASE 2 (B) +
+  `11-FRONTEND.md` + `12-DOCKER-COMPOSE.md §1–2` + `docs/handover/HANDOVER-phase2-deva-to-devb.md`:
+  1. Pin Vite 6 + React 18 + TS + router + GSAP + three + MSW + vitest in `frontend/package.json`.
+  2. Write `api/config.ts` (`API_BASE = "/api"`) + `/config.js` runtime flags.
+  3. Write `api/client.ts` — typed over `schema.d.ts`, `ApiError`, last `X-Request-ID`.
+  4. Derive validation bounds from the generated OpenAPI document, not hand-typed numbers.
+  5. Write MSW handlers + deterministic Urdu-influenced mock data, typed off `schema.d.ts`.
+  6. Build the design system — tokens, glass surfaces, reduced-motion-aware GSAP helpers.
+  7. Build the three.js "pulse field" background, lazy-loaded, WebGL-guarded.
+  8. Build router + shell + Submit / Dashboard / Stats + 404.
+  9. Write the error boundary with copyable last request id.
+  10. Write the seven component tests from `11-FRONTEND.md §6`.
+  11. Write `frontend/Dockerfile` + `nginx.conf` + `10-config.sh` (non-root, 4 gotchas).
+  12. Write `backend/Dockerfile` + `requirements.lock`.
+  13. Write both per-Dockerfile ignore files; measure context sizes into `docs/evidence/`.
+  14. Wire Makefile + CI frontend jobs; run `grilled meat`; open PR into `dev`.
+- **I changed:** the handover scoped Phase 2 to *placeholder* pages (views = Phase 4). DEV-B
+  asked for the full designed frontend now, so items 8/10 build the real views against MSW.
+  Phase 4 then shrinks to "switch MSW off, point at the live API, fix what the real backend
+  disagrees with". No business rule enters `frontend/src` either way (HARD rule 9).
+
+## 2026-09-23 · feat/fe-scaffold
+
+- **Tool:** Claude Code + `ponytail` (×6, at each fork as it appeared) + `dataviz` skill
+- **Shaped / Wrote:** decision records in `docs/ENGINEERING-NOTES.md` under "DEV-B · Phase 2":
+  views-now-vs-placeholders; fake server outside `src/`; bounds from a copy of `openapi.json`;
+  `--empty-objects-unknown`; nginx per-request upstream resolution; per-Dockerfile ignore files.
+  The `dataviz` skill's validator was run on the category palette (dark surface) instead of eyeballing it.
+- **I changed:** the first palette FAILED the validator (lightness band, chroma floor, normal-vision
+  floor) — replaced with OKLCH-generated hues inside the dark band; now all checks pass.
+
+## 2026-09-23 · feat/fe-scaffold
+
+- **Tool:** Claude Code + `grilled meat` (full Phase 2 DEV-B diff, before the PR)
+- **Findings:**
+  1. `frontend/src/pages/Dashboard.tsx:36` — `sort`, `page_size`, `page` and enum filters were read
+     from the user-editable URL unchecked; `?page_size=-5` or `?sort=bogus` went straight to the
+     server as a 400. **Fixed**: allow-list sort/enums, `positiveInt()` with fallback, clamp to the
+     generated max. Test `Dashboard.url.test.tsx` — confirmed red on the old code, green after.
+  2. `frontend/src/pages/Submit.tsx:82` — a 400 whose `fields[].field` isn't an input (e.g. `body`
+     for malformed JSON) was mapped to nothing and **silently swallowed**. **Fixed**: only map when
+     every field is a known input, else show the envelope message. Test `Submit.errors.test.tsx` —
+     confirmed red on the old code, green after.
+  3. `frontend/src/pages/Stats.tsx:130` — polling continued in a hidden tab: wasted requests and
+     fake cache MISSes that skew the measured hit rate. **Fixed**: skip ticks while `document.hidden`.
+  4. `frontend/nginx.conf:63` — an `add_header` inside a `location` drops every server-level
+     `add_header`, so `/config.js` and `/assets/` lost `X-Frame-Options`/`Referrer-Policy`.
+     **Fixed**: repeat all security headers in those locations.
+  5. `frontend/src/components/PulseField.tsx:151` — under reduced motion, a window resize cleared
+     the single static frame and left the background blank. **Fixed**: re-render on resize.
+  6. `backend/Dockerfile:7` (+ `frontend/Dockerfile`) — trailing `# comment` on a `COPY` line is not
+     a comment in a Dockerfile; the build would copy files named `#`, `deps`, … and fail. The same
+     bug is in `12-DOCKER-COMPOSE.md §1` / `11-FRONTEND.md §5`. **Fixed** here; doc bug flagged.
+  7. `11-FRONTEND.md §2.2` secret grep over `frontend/dist` — always false-positives on React's own
+     bundle (`__SECRET_INTERNALS…`, the `password` input type). **WONTFIX as written**: CI runs the
+     grep on `src/` and `public/` (which are clean); `dist/` is covered by gitleaks + this reasoning.
+  8. Docker daemon is broken on this dev machine (snap: "cannot create temporary directory for the
+     root file system"), so neither image was *built* here and the context-size evidence is a
+     labelled tar **estimate**. **Open, not fixed**: `make evidence-context` + `docker build` both
+     images on a machine with working Docker before Gate 2 is ticked.
+- **I changed:** N/A — finding-generation step.
+
+## 2026-09-24 · feat/fe-scaffold
+
+- **Tool:** Claude Code + `grilled meat` (second pass — a real-browser E2E run, `frontend/e2e/e2e.mjs`,
+  16 flows in headless Chrome via playwright-core, prompted by DEV-B reporting a blank page)
+- **Findings:**
+  1. `frontend/src/main.tsx` — the app only mounted *after* MSW started; a failed dynamic import of
+     the worker (Vite re-optimising `msw/browser` on first load) left a **blank page**. **Fixed**:
+     `optimizeDeps.include: ["msw/browser"]` + mount in `.finally()` and log the MSW error.
+  2. `frontend/src/pages/Dashboard.tsx` (load) — **race**: filter change then a fast "Next" fired two
+     list requests; the older, slower response overwrote the newer page ("Showing 1–20" on page 2).
+     **Fixed**: request sequence guard, only the latest response writes state. Test
+     `Dashboard.race.test.tsx` — confirmed red on the old code, green after.
+  3. `frontend/src/styles/global.css` (`.btn-primary:hover`) — `.btn:hover:not(:disabled)` out-ranked
+     `.btn-primary`, so hovering the primary CTA **flattened its gradient to grey**. **Fixed** with a
+     higher-specificity rule; E2E asserts the hover background is still a gradient.
+  4. `frontend/vite.config.ts` — in mock mode the dev proxy still forwarded any request MSW missed to
+     a non-existent backend, surfacing as a misleading 500. **Fixed**: no proxy in mock mode.
+  5. PDF §2.1 requires the runtime-config choice to be *stated in an ADR* — it wasn't yet.
+     **Fixed**: `docs/adr/0002-frontend-runtime-configuration.md` (with rejected alternatives).
+  6. Console hygiene: React Router v7 future-flag warnings and deprecated `THREE.Clock`. **Fixed**
+     (future flags opted in; `performance.now()` clock).
+- **I changed:** N/A — finding-generation step. Also checked every PDF §2.1 / Rubric B frontend line
+  against the build (per DEV-B: the PDF is the source of truth, visual extras are optional); the only
+  open PDF item is the image-size report, which needs a working Docker daemon.
+
+## 2026-09-24 · feat/fe-scaffold
+
+- **Tool:** Claude Code + `grilled meat` (third pass — a 3D scroll-driven "fly through the city"
+  journey was added to the Report page per DEV-B's request, then debugged against real user
+  reports of a blank page and a non-animating journey)
+- **Findings:**
+  1. `frontend/src/hooks/motion.ts` (`useReveal`) — the fade-in for page content used a
+     `gsap.to()` tween driven by `requestAnimationFrame`. When the WebGL city scene renders a
+     heavy frame, the main thread stalls and the tween can freeze permanently mid-fade, leaving
+     real content (the Submit form) stuck at `opacity: 0`. **Fixed**: rewritten on
+     `IntersectionObserver` + a plain CSS `transition`, which the browser's compositor keeps
+     advancing regardless of main-thread load. Confirmed via direct DOM inspection: the reveal
+     now reaches `opacity: 1` reliably across every page.
+  2. `frontend/src/components/journey/Intro.tsx` — the intro's exit (removing the loading
+     overlay) was the same class of bug: a `gsap.timeline()` outro that could stall for seconds
+     while the city scene was busy, during which `intro-lock` (which disables page scroll) was
+     still applied. **Fixed**: exit is now CSS-driven; `intro-lock` is removed and the overlay's
+     `pointer-events` are disabled the instant `finish()` runs, before any fade begins, so a slow
+     frame never costs the user usable interaction time.
+  3. `frontend/src/components/journey/Journey.tsx` — the scroll-driven journey's ScrollTrigger
+     used `end: "bottom bottom"`. React StrictMode's dev-only double mount/unmount/remount of the
+     effect left GSAP's cached value for `end` wildly wrong (~298315px measured, vs. a correct
+     ~13000px) on a meaningful fraction of fresh page loads, so the journey barely advanced no
+     matter how far the page was scrolled — matching the user's report of "no city passing
+     through animation, it just stays there then shows the form." **Fixed**: `end` is now a
+     plain function (`() => el.offsetHeight - window.innerHeight`) recomputed live on every
+     GSAP refresh, which has no cached-string-parsing path to go stale. Verified clean across
+     repeated fresh-browser-profile runs (5/5, then reconfirmed on an uncontended system).
+  4. `frontend/src/city/CityScene.tsx` — shader compilation (6 custom GLSL programs) happened on
+     the first `renderer.render()` call, synchronously, in the same window as React mounting and
+     the Report page's GSAP setup — a real, user-visible stall on first load. **Fixed**: switched
+     to `renderer.compileAsync()` before starting the render loop. Also reduced base scene
+     complexity (`CITY_RADIUS` 320→190, proportionally fewer stars/traffic/haze) and made the
+     adaptive-quality degrade check wall-clock-based (checks every ~700ms) instead of frame-count-
+     based, so a struggling device gets lighter within about a second instead of tens of seconds.
+  5. Extensive debugging of an *additional* apparent stall (8–13s before the intro cleared) traced
+     to the test harness, not the app: dozens of sequential headless Chrome launches over this
+     debugging session had driven this dev machine's load average to 8–9 (12 cores). After
+     killing stale processes and confirming load had settled, isolated fresh-browser-profile
+     tests (persistent context, ephemeral context, with/without every event listener) consistently
+     showed the intro clearing in 400–600ms. The one remaining flake is specific to running all 18
+     steps of `frontend/e2e/e2e.mjs` back-to-back in a single Node process on this sandboxed
+     machine — every *isolated* reproduction of the exact same code passed cleanly and repeatedly.
+     Not chased further per DEV-B's call to prioritise closing out Phase 2.
+- **I changed:** N/A — finding-generation step. Fixes 1–4 are real, verified bugs with clear
+  before/after evidence; item 5 is disclosed as an open, harness-specific flake rather than
+  silently dropped.
 ---
 
 ## 2026-09-24 · feat/data-layer
