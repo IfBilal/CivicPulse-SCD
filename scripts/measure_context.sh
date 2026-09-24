@@ -9,10 +9,23 @@ cd "$(dirname "$0")/.."
 
 human() { numfmt --to=iec --suffix=B --format="%.1f" "$1"; }
 
-docker_ctx() { # $1 = dockerfile ; prints bytes sent
-  DOCKER_BUILDKIT=1 docker build --no-cache --progress=plain -f "$1" --target "$2" -t ctx-probe:tmp . 2>&1 \
-    | grep -oE 'transferring context: [0-9.]+[kMG]?B' | tail -1 | awk '{print $3}' | numfmt --from=iec --suffix=B 2>/dev/null \
-    | tr -d B || echo 0
+# BuildKit prints its own size suffixes (B, kB, MB, GB — decimal-ish, not IEC K/M/G), and the
+# LAST "transferring context" line during a build is the final, complete total (earlier lines
+# are itself the transfer progressing) — so take the last one and convert it ourselves.
+bk_to_bytes() { # $1 = e.g. "144.38kB", "27B", "1.2MB"
+  python3 -c '
+import re, sys
+m = re.match(r"([0-9.]+)([kMG]?)B", sys.argv[1])
+n, unit = float(m.group(1)), m.group(2)
+mult = {"": 1, "k": 1000, "M": 1000**2, "G": 1000**3}[unit]
+print(int(n * mult))
+' "$1"
+}
+docker_ctx() { # $1 = dockerfile ; $2 = target ; prints bytes sent
+  local raw
+  raw=$(DOCKER_BUILDKIT=1 docker build --no-cache --progress=plain -f "$1" --target "$2" -t ctx-probe:tmp . 2>&1 \
+    | grep -oE 'transferring context: [0-9.]+[kMG]?B' | tail -1 | awk '{print $3}')
+  [ -n "$raw" ] && bk_to_bytes "$raw" || echo 0
 }
 
 tar_ctx_all() { tar --exclude=.git -cf - . 2>/dev/null | wc -c; }

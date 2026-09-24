@@ -275,3 +275,26 @@ invocation (bypasses the coverage plugin's output rewrite) or switch to `pytest 
 -q --no-header` and count lines matching a test-id regex instead of a bare `"::"` substring
 search. **Status:** flagged, not fixed — decide together before this becomes a real
 `RUBRIC-TESTS` false negative at a gate review.
+
+## DEV-B · Phase 2 · `nginx:1.27.2-alpine` → `-alpine-slim` (real Docker build, 2026-09-24)
+
+Once Docker actually worked on this machine, the frontend runtime image measured **81.7 MB**,
+over `11-FRONTEND.md §5`'s own "~60 MB means the split isn't doing its job" line — despite the
+multi-stage split working correctly (`/usr/share/nginx/html` is 1.2 MB; no `node`/`npm` in the
+final image). The gap was the base image itself: `nginx:1.27.2-alpine` bundles GeoIP/XSLT/
+image-filter/njs dynamic modules (one ~37.5 MB layer) that `frontend/nginx.conf` never loads.
+**Fixed**: switched to nginx's own `-alpine-slim` variant (same nginx build, no unused dynamic
+modules) — confirmed it still ships `wget` (used by `HEALTHCHECK`), `adduser`/`addgroup`/`su`
+(used to create the non-root user), and the `docker-entrypoint.d/` mechanism. Runtime image is
+now **29 MB**. No functional change; still pinned to an exact tag, never `:latest` or bare
+`:alpine`.
+
+Also verified end-to-end with real containers (previously only estimated): both images build
+clean via `docker build --target <stage>`; both run as the non-root `app` user; `/healthz`
+returns 200 and the Docker `HEALTHCHECK` reports `healthy`; `docs/evidence/runtime-config.txt`
+captures the same image digest serving two different `config.js` outputs under `APP_ENV=dev`
+vs `APP_ENV=prod` — the build-once-deploy-many proof ADR-0002 describes, now with a live
+digest instead of a description. `docs/evidence/dockerignore-context-sizes.txt` was also
+re-measured for real (`docker buildx`'s own "transferring context" figure, not the earlier tar
+estimate — Docker was previously broken on this dev machine, a system-level AppArmor/user-
+namespace issue, fixed by a reboot + restarting the docker snap service, unrelated to the repo).
