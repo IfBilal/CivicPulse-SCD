@@ -94,13 +94,14 @@ async def test_updated_at_trigger_fires(db_session: AsyncSession) -> None:
     """D6: a raw UPDATE (bypassing the ORM's `onupdate`, which doesn't exist here on purpose)
     still bumps `updated_at`, because the trigger is DB-enforced, not app-enforced.
 
-    Uses `clock_timestamp()`, not `now()`, to force a distinguishable timestamp between the two
-    inserts: `now()` is frozen to transaction-start time for the whole transaction it runs in,
-    so two `now()` calls close together (as `commit()` on the same AsyncSession can produce) can
-    resolve to the identical instant regardless of real wall-clock delay between them — which is
-    exactly what made this test flake in CI. Forcing an explicit earlier timestamp via a raw
-    UPDATE, then asserting the trigger overwrites it with something later, sidesteps the ambient
-    transaction-timing question entirely.
+    `set_updated_at()` stamps `NEW.updated_at = now()` unconditionally on every UPDATE — so a
+    prior attempt to force `updated_at` into the past via a raw UPDATE was itself overwritten by
+    the same trigger, and `now()` is frozen to transaction-start time for the whole transaction,
+    so two commits close together (as this test's two `commit()` calls can be) can resolve to
+    the identical instant regardless of wall-clock delay measured from Python. `pg_sleep()`
+    forces a real interval to elapse as Postgres's own clock sees it, which neither `now()`
+    semantics nor CI execution speed can collapse away — the correct fix, not `time.sleep()`
+    from Python (CLAUDE.md HARD rule 15: never fake this with a process-side sleep).
     """
     repo = ComplaintRepository(db_session)
     row = await repo.create(
@@ -115,16 +116,9 @@ async def test_updated_at_trigger_fires(db_session: AsyncSession) -> None:
         triage_confidence=None,
     )
     await db_session.commit()
+    before = row.updated_at
 
-    # Force updated_at into the past so the trigger's bump is unambiguously later, regardless
-    # of how Postgres resolves now() inside the surrounding transaction.
-    await db_session.execute(
-        text("UPDATE complaints SET updated_at = now() - interval '1 hour' WHERE id = :id"),
-        {"id": row.id},
-    )
-    await db_session.commit()
-    before = (await repo.get(row.id)).updated_at  # type: ignore[union-attr]
-
+    await db_session.execute(text("SELECT pg_sleep(0.02)"))
     await db_session.execute(
         text("UPDATE complaints SET status = 'in_progress' WHERE id = :id"), {"id": row.id}
     )
