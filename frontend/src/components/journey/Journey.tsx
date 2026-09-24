@@ -32,7 +32,7 @@ const HOLOGRAMS = [
   { text: "Stray dogs near the school", loc: "G-11/2", pri: "Normal" },
   { text: "Sewage overflow at the hospital gate", loc: "G-8", pri: "High" },
   { text: "Tube well down, whole sector dry", loc: "I-14/3", pri: "High" },
-  { text: "Signal dead at the chowk", loc: "Faizabad", pri: "Normal" },
+  { text: "Signal dead at the chowk", loc: "10th Avenue", pri: "Normal" },
   { text: "Illegal parking blocks the ambulance bay", loc: "Blue Area", pri: "Normal" },
 ];
 
