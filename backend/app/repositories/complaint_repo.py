@@ -110,19 +110,34 @@ class ComplaintRepository:
     async def stats_counts(
         self,
     ) -> tuple[int, dict[Category, int], dict[Priority, int], dict[Status, int]]:
-        """`07-BACKEND-API.md §5` shows this as one `UNION ALL`'d statement; this Phase 3 cut
-        issues four simple statements (count + three `GROUP BY`s) instead — same result, one
-        extra round trip under load, and far easier to read/typecheck than a `jsonb_object_agg`
-        FILTER query. Flagged as a deliberate simplification, not silently matching the spec's
-        prose: revisit if `/api/stats` load numbers (Phase 7) show this mattering. Returns raw
-        (non-zero-filled) counts — the service layer zero-fills every enum member in Python,
-        since that's presentation, not SQL (CLAUDE.md §3: repositories touch SQL, nothing
-        interprets business shape here)."""
+        """Four statements (count + three plain `GROUP BY`s), not the spec's single `UNION ALL`
+        + `FILTER` query — see `docs/ENGINEERING-NOTES.md` "`stats_counts()` is four simple
+        queries, not one `UNION ALL`" for the reasoning (simpler to verify, easier to typecheck,
+        `/api/stats` is cache-fronted so the extra round trips aren't hot-path). Backs `09-CACHE-
+        RATELIMIT.md §2`'s `GET /api/stats`. Every enum member is a key even at 0
+        (`04-CONTRACTS.md §6.5`); zero-filling happens here, next to the query, not scattered
+        into the service — required by `StatsService._compute()`, which passes these dicts
+        straight through with no zero-fill of its own."""
         total = await self.count()
-        cat_stmt = select(Complaint.category, func.count()).group_by(Complaint.category)
-        pri_stmt = select(Complaint.priority, func.count()).group_by(Complaint.priority)
-        sts_stmt = select(Complaint.status, func.count()).group_by(Complaint.status)
-        by_category: dict[Category, int] = dict((await self._s.execute(cat_stmt)).tuples().all())
-        by_priority: dict[Priority, int] = dict((await self._s.execute(pri_stmt)).tuples().all())
-        by_status: dict[Status, int] = dict((await self._s.execute(sts_stmt)).tuples().all())
+        by_category: dict[Category, int] = dict.fromkeys(Category, 0)
+        cat_rows = await self._s.execute(
+            select(Complaint.category, func.count()).group_by(Complaint.category)
+        )
+        for category, n in cat_rows.all():
+            by_category[category] = n
+
+        by_priority: dict[Priority, int] = dict.fromkeys(Priority, 0)
+        pri_rows = await self._s.execute(
+            select(Complaint.priority, func.count()).group_by(Complaint.priority)
+        )
+        for priority, n in pri_rows.all():
+            by_priority[priority] = n
+
+        by_status: dict[Status, int] = dict.fromkeys(Status, 0)
+        stat_rows = await self._s.execute(
+            select(Complaint.status, func.count()).group_by(Complaint.status)
+        )
+        for status, n in stat_rows.all():
+            by_status[status] = n
+
         return total, by_category, by_priority, by_status

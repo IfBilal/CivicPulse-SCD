@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     ollama_base_url: AnyHttpUrl = AnyHttpUrl("http://ollama:11434")
     ollama_model: str = "llama3.2:1b"
 
+    # ── Cache / rate limit — `.env.example`, `09-CACHE-RATELIMIT.md` ───────────────────
     stats_cache_ttl_s: int = 30
     stats_cache_key: str = "stats:v1"
     ratelimit_enabled: bool = True
