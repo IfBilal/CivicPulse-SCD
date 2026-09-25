@@ -493,6 +493,12 @@ the bug is no longer just a latent risk this PR would expose — **`dev`'s own f
 fails today if run unfiltered**, independent of this branch. Worth surfacing to DEV-A directly,
 not just left in this file, since it now affects tests he already merged.
 
+**Update, 2026-09-25, after merging `dev` again (now also includes Phase 5, PR #34) into this
+branch:** re-ran once more. Still exactly the same **three** failures — Phase 5's new cache/
+rate-limit tests didn't happen to trigger `create_app()` in a way that adds more casualties.
+Current numbers: **293 passed, 3 failed, 92.44% coverage**. Same three tests, same root cause,
+unchanged since the Phase 4 merge — the bug hasn't spread further, but it also hasn't been fixed.
+
 ## DEV-B · Phase 5 · branch protection only covers `main`, requiring a job that no longer exists
 
 `main`'s ruleset (`main-protection`, id `23726494`) requires exactly one status check,
@@ -778,3 +784,35 @@ which today only happens once, at app startup (`app/main.py`'s lifespan), not pe
 real design work — a per-request provider override — not a mechanical reconciliation, so it's
 flagged here for whoever picks up the middleware-wiring phase rather than done as a drive-by
 part of this merge.
+
+---
+
+## DEV-B · Phase 5 (post-merge) · X-Cache now works; a real invalidation-on-create bug found
+
+Re-verified `ci.yml`'s `integration` job against a live compose stack after merging `dev` (now
+includes Taimoor's `feat/cache-ratelimit`, PR #34). Good news first: **the basic `MISS`→`HIT`
+sequence genuinely works now** — confirmed against the real stack, not the old always-MISS stub.
+Upgraded that step in `ci.yml` from observe-only to a real hard assertion.
+
+While verifying "invalidation on write" (Gate 5's "after a POST, next call MISS"), found a real,
+reproducible bug: **a fresh `POST /api/complaints` does not invalidate the stats cache.**
+Reproduced twice, cleanly (flushed Redis between runs to rule out leftover rate-limit/cache
+state): `total` stayed unchanged and `X-Cache` stayed `HIT` immediately after a `201`-confirmed
+create.
+
+**Root cause, `backend/app/services/complaint_service.py:104-105`:** `self._stats.invalidate()`
+is called inside `change_status()` only. `create()` (lines 30-64) never calls it — the method
+returns straight from `self._repo.create(...)` with no invalidation step at all. `StatsService`
+itself (`stats_service.py`) is correct in isolation — `invalidate()` genuinely does `DEL
+stats:v1`, verified by testing it via the `change_status` path indirectly (not directly tested
+here, but the code path is unambiguous by inspection). This is a wiring gap in one call site, not
+a cache-logic bug.
+
+**Not fixed here** — `complaint_service.py` is backend/app territory, and `#34` (which introduced
+this) is already merged into `dev`; this is now a live bug on `dev`, not just this branch's
+finding. The fix is small and obvious once pointed at: add the same
+`if self._stats is not None: await self._stats.invalidate()` (or a shared helper) at the end of
+`create()`, after `repo.create()` returns — same "after commit, never before" ordering
+`StatsService.invalidate()`'s own docstring already documents. Flagging directly for DEV-A rather
+than leaving it to be rediscovered, since Gate 5's own checklist explicitly names this behavior
+("after a POST, next call MISS") and it currently doesn't hold.

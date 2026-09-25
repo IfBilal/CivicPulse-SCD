@@ -219,15 +219,19 @@ jobs:
           echo "category=$cat"
           [ -n "$cat" ] && [ "$cat" != "null" ] || { echo "::error::no category on created complaint"; exit 1; }
       - name: X-Cache MISS → HIT
-        # NOT gated on failure yet: the real Redis-backed stats cache is Phase 5A (Taimoor's
-        # feat/cache-ratelimit, PR #34, open — not merged). Today's stats_service.py is a
-        # disclosed pass-through stub that always reports MISS (backend/app/services/
-        # stats_service.py's own docstring). Report the observed values without failing the
-        # build on them; flip this to a hard assertion once #34 merges (single-line change).
+        # #34 (Taimoor's real Redis-backed stats cache) merged into dev — verified for real
+        # against a live compose stack before hard-gating this. NOT tested here: invalidation
+        # on POST /api/complaints. Found and disclosed separately (ENGINEERING-NOTES.md) that
+        # ComplaintService.create() never calls StatsService.invalidate() — only
+        # change_status() does (complaint_service.py:104-105) — so a fresh POST leaves stats
+        # stale until the 30s TTL. Not asserted here since it's confirmed broken; asserting it
+        # would just be a known-red check, not a useful signal. Backend/app territory, not
+        # fixed on this branch.
         run: |
           a=$(curl -si localhost:8080/api/stats | grep -i '^x-cache:' | tr -d '\r' | awk '{print $2}')
           b=$(curl -si localhost:8080/api/stats | grep -i '^x-cache:' | tr -d '\r' | awk '{print $2}')
-          echo "first=$a second=$b (expect MISS/HIT once the real cache lands)"
+          echo "first=$a second=$b"
+          [ "$a" = "MISS" ] && [ "$b" = "HIT" ] || { echo "::error::expected MISS then HIT, got $a/$b"; exit 1; }
       - name: network segmentation (§3.2) — this MUST fail
         run: |
           if docker compose exec -T frontend sh -c 'nc -z -w2 database 5432' 2>/dev/null; then
