@@ -510,3 +510,57 @@ and why, before the code, not after).
    out one field to fail closed instead. The `case _` branch and its comment were removed from
    `factory.py`; `match` is now exhaustive over the `Literal`'s four values, which mypy can
    verify statically.
+
+---
+
+## DEV-B · Phase 6 · real bugs found deploying to an actual k3d cluster
+
+Found by actually creating a k3d cluster, deploying `k8s/overlays/dev`, and running Gate 6's
+verification commands for real — not by static validation alone (which had already passed
+`kubeconform -strict` on both overlays before any of these surfaced).
+
+1. **`frontend`'s `readOnlyRootFilesystem: true` broke the whole container.**
+   `frontend/docker-entrypoint.d/10-config.sh` writes `config.js` into the image's own static
+   directory at container start (ADR-0002 — one image, per-environment config via a file written
+   at boot, not baked in). Under a read-only root filesystem that write fails and the container
+   crash-loops immediately: `can't create /usr/share/nginx/html/config.js: Read-only file
+   system`. Tried a single-file `subPath` emptyDir mount at that exact path first (keeps the rest
+   of the image read-only, writable only at that one file) — rejected by kubelet: `mount ...:
+   not a directory`, because `config.js` is deliberately never baked into the image at build
+   time, so there's no pre-existing file of the right type for the subPath bind-mount to land on.
+   Fixing that properly means adding a placeholder file to `frontend/Dockerfile`, out of scope
+   for a manifests-only PR. **Landed**: dropped `readOnlyRootFilesystem` from the frontend
+   container only (backend keeps it — its filesystem genuinely never needs a runtime write).
+   Frontend still runs non-root, `allowPrivilegeEscalation: false`, all capabilities dropped.
+2. **`Makefile::k8s-up` never installed an ingress controller.** The Ingress object declares
+   `ingressClassName: nginx`, but k3d ships Traefik by default and nothing installed
+   ingress-nginx. Added `--k3s-arg '--disable=traefik@server:*'` to cluster creation plus the
+   same ingress-nginx install `cd.yml` already uses for its kind-based deploy
+   (`15-CICD.md §4`), so dev and CD now agree on which controller is real.
+3. **NetworkPolicy enforcement genuinely works on this k3d/k3s version** —
+   `13-KUBERNETES.md §9`'s caveat says k3d/k3s's default CNI (flannel) may not enforce
+   NetworkPolicy without Calico. Empirically, on `k3d v5.7.4` / `k3s v1.30.4-k3s1`, it does:
+   confirmed both with DNS-name and raw-pod-IP `nc` attempts from `frontend` to `postgres`
+   (blocked both ways, `docs/evidence/netpol-enforcement.txt`) and the positive control from
+   `backend` (succeeds). Stating this precisely rather than repeating the doc's general caution
+   as if untested — the doc's caveat is about *kind*, and is right to flag as a risk, but this
+   specific k3d/k3s combination enforces it out of the box.
+4. **`Makefile::lint-localhost` had two more false positives once `k8s/` had real content**:
+   Ingress `host: civicpulse.localhost` (dev overlay's local-access hostname — a legitimate
+   external DNS name, not a service-to-service call) and a comment (`# ... never localhost
+   (§5.3 −8)`) that contains the literal word for explanatory purposes. Extended the same check
+   fixed in Phase 5 to exclude comment lines and `host:`/`value:` YAML fields ending in
+   `localhost`, re-verified against a real injected violation to confirm it still catches actual
+   hits.
+5. **This branch and `feat/ci-pipeline` (#36, unmerged) both touch `Makefile::lint-localhost`
+   independently** — Phase 6 branched off `dev` before #36 merged, so this branch never had #36's
+   fix to begin with and needed its own copy. Whichever PR merges first, the other will pick up
+   the final version via the normal `dev`-merge-in step; not a conflict, just noting why the same
+   fix appears twice in this project's history.
+
+Gate 6 verified for real end to end: `docs/evidence/persistence-k8s.txt` (36 rows survive
+`kubectl delete pod postgres-0`, same PVC re-attached), `docs/evidence/netpol-enforcement.txt`
+(frontend blocked by DNS name and raw IP; backend succeeds), Ingress served `/healthz` and
+`/api/stats` on one host, `kustomize build | kubeconform -strict` clean on both overlays (19
+resources each), StatefulSet confirmed for postgres (no Deployment), all four Services ClusterIP
+or headless, backend's resource requests present, probe paths `/health`/`/ready` confirmed.

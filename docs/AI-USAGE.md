@@ -1251,3 +1251,90 @@ independently.
   two real design forks were surfaced and decided rather than silently resolved, one real typed
   secret-handling bug was caught and fixed, and test files on both sides of the merge were
   updated to match the reconciled code rather than left calling APIs that no longer exist.
+
+## 2026-09-25 · feat/k8s-manifests · Phase 6 DEV-B — task list (logged late, disclosed)
+
+- **Tool:** Claude Code + `caveman`
+- **Process note, disclosed rather than hidden:** started writing `k8s/base/*.yaml` directly
+  before logging this list, breaking the project's own "caveman before any code" rule
+  (`CLAUDE.md §6`). Correcting course here rather than skipping the log entirely — the artefact
+  matters more once it's noticed missing, not less.
+- **Task list** (what was actually done, in order):
+  1. Read `13-KUBERNETES.md` in full; confirm no k8s tooling installed locally.
+  2. Install kubectl, kustomize, kubeconform, k3d into `~/.local/bin` (no sudo available).
+  3. Verify empirically whether `Settings`' `extra="forbid"` crashes on unrelated env vars
+     (needed to decide the ConfigMap/Secret split) — confirmed it does not.
+  4. Write `k8s/base/`: namespace, configmap, secret, postgres StatefulSet + headless Service,
+     redis Deployment + PVC + Service, backend Deployment + Service, frontend Deployment +
+     Service, Ingress, PDB, NetworkPolicy, base kustomization.
+  5. Write `k8s/overlays/{dev,prod}/kustomization.yaml` + patches.
+  6. Validate both overlays: `kustomize build` + `kubeconform -strict`, `:latest` grep, secrets
+     grep, StatefulSet-not-Deployment check, ClusterIP-only check — all static, all real.
+  7. Fix the Makefile's `k8s-up` target — no ingress-nginx install step exists yet, and the
+     Ingress object needs `ingressClassName: nginx` to mean something.
+  8. Stand up a real k3d cluster, deploy both overlays, run Gate 6's actual verification
+     commands for real (persistence-after-pod-delete, resource requests, probe paths, ClusterIP
+     enforcement, NetworkPolicy enforcement) — not just static validation.
+  9. Capture `docs/evidence/persistence-k8s.txt` and `docs/evidence/netpol-enforcement.txt` from
+     the real cluster.
+  10. Pre-PR hardening review, ≥3 file:line findings.
+  11. PR into `dev`.
+- **Accepted as-is.**
+
+## 2026-09-25 · feat/k8s-manifests · ponytail — three real forks
+
+- **Tool:** Claude Code + `ponytail`
+- **Fork 1 — `configMapGenerator: {behavior: merge}` against a plain base ConfigMap.**
+  `13-KUBERNETES.md §2`'s own prod-overlay sample uses this pattern. Tried it verbatim; kustomize
+  refused: `merging from generator ...: id ... does not exist; cannot merge or replace` — a
+  generator-behavior `merge` only works against a ConfigMap the *base* also created via a
+  generator, not a plain `resources:`-included one. **Chosen:** a JSON strategic-merge patch
+  (`configmap-patch.yaml`, targeted by `kind`+`name`) in each overlay instead — same effect,
+  works against a plain base resource. **Rejected:** switching `base/configmap.yaml` itself to a
+  `configMapGenerator` just to make the doc's literal merge pattern work — bigger blast radius
+  (every consumer's name reference would need the generator's hash suffix or `disableNameSuffixHash:
+  true`) for no benefit over a direct patch.
+- **Fork 2 — NetworkPolicy count.** `13-KUBERNETES.md §1`'s object inventory says "NetworkPolicy
+  ×4"; §9's code sample shows only 3 (`default-deny`, `postgres-allow-backend`,
+  `backend-egress`). Under strict `default-deny` (all ingress denied unless explicitly allowed),
+  the 3-policy sample leaves two real gaps: nothing allows ingress-nginx to reach
+  frontend/backend (Gate 6's "Ingress serves / and /api/stats" would silently fail), and nothing
+  allows ingress to redis despite `backend-egress` permitting egress to it (NetworkPolicy needs
+  both sides to agree). **Chosen:** added `allow-ingress-controller` and `redis-allow-backend`,
+  five policies total. **Rejected:** shipping exactly the doc's 3 and calling it done — matching
+  the letter over rediscovering, empirically, that the app wouldn't actually work.
+- **Fork 3 — ingress-nginx installation.** The Ingress object declares
+  `ingressClassName: nginx`, but neither the doc nor the existing `Makefile::k8s-up` installs an
+  nginx ingress controller — k3d ships Traefik by default, a different controller that would
+  simply ignore this Ingress. **Chosen:** add an ingress-nginx install step to `k8s-up` (disclosed
+  in the PR, not silently assumed to already exist). **Rejected:** switching `ingressClassName`
+  to `traefik` to avoid the extra install step — diverges from the doc's explicit spec and from
+  what `cd.yml`'s own `deploy-k8s` job already installs (`15-CICD.md §4`, ingress-nginx on kind),
+  so `traefik` would make dev and CD inconsistent with each other for no reason.
+
+## 2026-09-25 · feat/k8s-manifests · pre-PR hardening review
+
+- **Tool:** Claude Code, manual review discipline (`CLAUDE.md §6`'s plain ≥3-`file:line`-findings
+  pass).
+- **Findings, all found by actually deploying to a real k3d cluster, not by reading the YAML:**
+  1. **`k8s/base/frontend-deployment.yaml`** — `readOnlyRootFilesystem: true` crash-looped the
+     whole container (`docker-entrypoint.d/10-config.sh` writes `config.js` at boot). Tried a
+     `subPath` emptyDir mount first, rejected by kubelet (no pre-existing file of the right type
+     to bind onto — `config.js` is deliberately never baked into the image). **Fixed**: dropped
+     `readOnlyRootFilesystem` for frontend only, kept every other hardening flag
+     (`allowPrivilegeEscalation: false`, all capabilities dropped). Full detail in
+     `ENGINEERING-NOTES.md`.
+  2. **`Makefile::k8s-up`** — never installed an ingress controller; the Ingress declares
+     `ingressClassName: nginx` but k3d ships Traefik by default. **Fixed**: disable Traefik at
+     cluster creation, install the same ingress-nginx `cd.yml` already uses.
+  3. **`Makefile::lint-localhost`** — two more false positives once `k8s/` had real content
+     (Ingress `host: civicpulse.localhost`, and a comment containing the word). **Fixed**: same
+     check extended to exclude comment lines and `host:`/`value:` fields ending in `localhost`,
+     re-verified against a real injected violation.
+  4. **NetworkPolicy enforcement claim** — `13-KUBERNETES.md §9` cautions k3d/k3s may not enforce
+     NetworkPolicy without Calico. Verified empirically instead of repeating the caution
+     unchecked: it does enforce, on this exact k3d v5.7.4 / k3s v1.30.4-k3s1 combination,
+     confirmed with both a DNS-name and a raw-pod-IP negative test plus a positive control.
+     Logged the precise version and both test forms rather than a blanket claim.
+- **I changed:** shipped findings 1-3 as real fixes; finding 4 is a verification/correction of the
+  doc's own caveat, logged with the exact evidence rather than asserted.

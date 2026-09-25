@@ -1,0 +1,10 @@
+$ kubectl -n civicpulse exec deploy/frontend -- sh -c "nc -z -w2 postgres 5432; echo exit=$?"   (expect exit=1)
+nc: bad address 'postgres'
+exit=1
+
+$ kubectl -n civicpulse exec deploy/backend -- python -c "socket connect to postgres:5432"   (expect success — backend image has no nc)
+Defaulted container "backend" out of: backend, migrate (init)
+exit=0
+
+$ kubectl -n civicpulse exec deploy/frontend -- sh -c "nc -z -w2 10.42.0.10 5432; echo exit=$?"   (raw IP, bypasses DNS — expect exit=1 for real)
+exit=1

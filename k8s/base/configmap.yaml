@@ -1,0 +1,19 @@
+# Non-secret config only. Field names match backend/app/settings.py's env vars exactly
+# (pydantic-settings, extra="forbid" — verified empirically that unrelated keys don't crash
+# startup, but a *misspelled* key for one the app does read would silently fall back to that
+# field's default instead of erroring, so keep these names exact).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: civicpulse
+data:
+  APP_ENV: "dev"
+  LOG_LEVEL: "INFO"
+  LOG_FORMAT: "json"
+  POSTGRES_DB: "civicpulse"
+  REDIS_URL: "redis://redis:6379/0"          # no credentials — safe in a ConfigMap
+  TRIAGE_PROVIDER: "simulated"                # overlay may switch to llm/rules
+  LLM_BASE_URL: "https://api.groq.com/openai/v1"
+  LLM_MODEL: "openai/gpt-oss-20b"
+  TRUSTED_PROXY_HOPS: "1"                     # prod overlay sets 2 (ingress-nginx + frontend nginx)

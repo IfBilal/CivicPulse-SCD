@@ -1,0 +1,10 @@
+# Governs VOLUNTARY disruption only (kubectl drain, node upgrades) — not a node dying.
+# With replicas:2 and minAvailable:1, a drain evicts one pod at a time and waits.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: backend-pdb
+  namespace: civicpulse
+spec:
+  minAvailable: 1
+  selector: { matchLabels: { app: backend } }
