@@ -7,20 +7,24 @@ migrated-once assumption if run against the shared container.
 (`05-DATA-LAYER.md §3.1`). `settings` is a module-level singleton, instantiated once at
 whichever import happens first in the pytest process — setting the `DATABASE_URL` env var here
 is too late, since pytest already imported every collected test module (including ones that
-transitively import `app.settings`) during collection. Mutate the singleton directly instead.
+transitively import `app.settings`) during collection. `Settings` is `frozen=True` (Phase 3,
+`06-BACKEND-CORE.md §1`), so a field can't be assigned on the existing instance — swap the
+`app.settings` module's `settings` attribute for a `model_copy()` instead; `alembic/env.py`
+reads whatever that attribute points to at import time, which `command.upgrade()` below
+triggers.
 """
 
 import pytest
 from sqlalchemy import create_engine
 from testcontainers.postgres import PostgresContainer
 
+import app.settings as settings_module
 from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from app.db.base import Base
 from app.db.models import Complaint  # noqa: F401 - registers the table on Base.metadata
-from app.settings import settings
 
 pytestmark = pytest.mark.integration
 
@@ -28,7 +32,7 @@ _BACKEND_ROOT = __file__.rsplit("/backend/", 1)[0] + "/backend"
 
 
 def _alembic_config(url: str) -> Config:
-    settings.database_url = url
+    settings_module.settings = settings_module.settings.model_copy(update={"database_url": url})
     cfg = Config(f"{_BACKEND_ROOT}/alembic.ini")
     cfg.set_main_option("script_location", f"{_BACKEND_ROOT}/alembic")
     return cfg

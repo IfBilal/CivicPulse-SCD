@@ -7,6 +7,7 @@ together before Phase 7's load test if maxReplicas grows past 6.
 
 from collections.abc import AsyncGenerator
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.settings import settings
@@ -31,3 +32,10 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:  # wired to DI in
         except Exception:
             await session.rollback()
             raise
+
+
+async def check_connection() -> None:
+    """`SELECT 1` — used only by `/ready` (`06-BACKEND-CORE.md §5`). Lives here, not in
+    `routes/ops.py`, so `make lint-layers`'s "no SQL under routes/" grep stays meaningful."""
+    async with SessionLocal() as session:
+        await session.execute(text("SELECT 1"))

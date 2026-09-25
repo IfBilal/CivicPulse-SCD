@@ -17,9 +17,9 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from testcontainers.postgres import PostgresContainer
 
+import app.settings as settings_module
 from alembic import command
 from alembic.config import Config
-from app.settings import settings
 
 pytestmark = pytest.mark.integration
 
@@ -43,11 +43,21 @@ def migrated_db(postgres_url: str) -> Iterator[str]:
     is a module-level singleton (`app/settings.py`), instantiated once at whichever import
     happens first — and pytest imports every collected test module (including ones that
     transitively import `app.settings`, e.g. via `app.cli.seed`) during collection, before any
-    fixture runs. By the time this fixture executes, the singleton may already be frozen with
-    the fallback default. Mutate the already-instantiated object directly instead of relying on
-    env var timing.
+    fixture runs. By the time this fixture executes, the singleton may already hold the
+    fallback default.
+
+    `Settings` is `frozen=True` (Phase 3, `06-BACKEND-CORE.md §1` — no module may mutate config
+    after boot, which is what makes `/api/meta/providers.configured` trustworthy), so this can
+    no longer assign a field on the existing instance. Instead it swaps the `app.settings`
+    module's `settings` attribute for a `model_copy()` carrying the container's URL.
+    `alembic/env.py` does `from app.settings import settings` and reads `settings.database_url`
+    at import time, so it picks up whatever object that module attribute points to at the
+    moment `command.upgrade()` below triggers that import — a fresh frozen instance works
+    exactly as well as a mutated one would have.
     """
-    settings.database_url = postgres_url
+    settings_module.settings = settings_module.settings.model_copy(
+        update={"database_url": postgres_url}
+    )
     cfg = Config(f"{_BACKEND_ROOT}/alembic.ini")
     cfg.set_main_option("script_location", f"{_BACKEND_ROOT}/alembic")
     command.upgrade(cfg, "head")

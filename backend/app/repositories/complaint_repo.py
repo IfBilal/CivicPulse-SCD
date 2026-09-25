@@ -106,3 +106,23 @@ class ComplaintRepository:
 
     async def count(self) -> int:
         return (await self._s.execute(select(func.count()).select_from(Complaint))).scalar_one()
+
+    async def stats_counts(
+        self,
+    ) -> tuple[int, dict[Category, int], dict[Priority, int], dict[Status, int]]:
+        """`07-BACKEND-API.md §5` shows this as one `UNION ALL`'d statement; this Phase 3 cut
+        issues four simple statements (count + three `GROUP BY`s) instead — same result, one
+        extra round trip under load, and far easier to read/typecheck than a `jsonb_object_agg`
+        FILTER query. Flagged as a deliberate simplification, not silently matching the spec's
+        prose: revisit if `/api/stats` load numbers (Phase 7) show this mattering. Returns raw
+        (non-zero-filled) counts — the service layer zero-fills every enum member in Python,
+        since that's presentation, not SQL (CLAUDE.md §3: repositories touch SQL, nothing
+        interprets business shape here)."""
+        total = await self.count()
+        cat_stmt = select(Complaint.category, func.count()).group_by(Complaint.category)
+        pri_stmt = select(Complaint.priority, func.count()).group_by(Complaint.priority)
+        sts_stmt = select(Complaint.status, func.count()).group_by(Complaint.status)
+        by_category: dict[Category, int] = dict((await self._s.execute(cat_stmt)).tuples().all())
+        by_priority: dict[Priority, int] = dict((await self._s.execute(pri_stmt)).tuples().all())
+        by_status: dict[Status, int] = dict((await self._s.execute(sts_stmt)).tuples().all())
+        return total, by_category, by_priority, by_status

@@ -115,4 +115,13 @@ jobs:
         run: pip install -e "backend[dev]"
       - name: data-layer integration tests (real Postgres via testcontainers)
         working-directory: backend
-        run: pytest -m integration -k "test_migrations or test_complaint_repo or test_seed" -v
+        # --cov-fail-under=0 overrides pyproject.toml's project-wide 65% floor for this
+        # invocation only: this job runs a fixed 16-test D1-D11 slice, not the whole suite, so
+        # its coverage number moves with how big app/ happens to be, not with how well-tested
+        # this job's own slice is (docs/AI-USAGE.md, 2026-09-25, "three real bugs" entry, bug
+        # #3). The `contract` job's `pytest -m "unit or contract"` run is what the 65% floor
+        # actually gates (87%+ on its own) — --cov=app here still prints the number for
+        # visibility, it just doesn't fail this job on it.
+        run: >-
+          pytest -m integration -k "test_migrations or test_complaint_repo or test_seed" -v
+          --cov-fail-under=0

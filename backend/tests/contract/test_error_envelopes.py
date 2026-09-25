@@ -1,11 +1,19 @@
-"""The 400/404 envelopes are produced before any handler body runs, so they are testable in
-Phase 1 against the stub routes (04-CONTRACTS.md §5, §6.2, §6.3)."""
+"""The 400/404 envelopes are produced before any handler body runs, so they are testable here
+without a database (04-CONTRACTS.md §5, §6.2, §6.3). The handful of tests that DO reach a route
+body with a fully valid payload override `get_complaint_service` with an in-memory fake so this
+file stays DB-free — a real persistence round trip belongs in `tests/integration/`."""
 
 import uuid
+from datetime import UTC, datetime
+from typing import Any
+from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
 
+import app.main as main_module
+from app.deps import get_complaint_service
+from app.domain.enums import Category, Priority, Status, TriagedBy
 from app.main import create_app
 
 pytestmark = pytest.mark.contract
@@ -13,9 +21,45 @@ pytestmark = pytest.mark.contract
 VALID = {"text": "burst water main on Street 12", "location": "G-9/1, Islamabad"}
 
 
+class _FakeComplaint:
+    """Stands in for `app.db.models.Complaint` — `ComplaintOut.model_validate` only needs
+    attribute access (`from_attributes=True`), not a real ORM row."""
+
+    def __init__(self, text: str, location: str, contact: str | None) -> None:
+        self.id: UUID = uuid.uuid4()
+        self.text = text
+        self.location = location
+        self.reporter_contact = contact
+        self.category = Category.WATER
+        self.priority = Priority.NORMAL
+        self.status = Status.OPEN
+        self.ai_summary = "stub summary"
+        self.triaged_by = TriagedBy.SIMULATED
+        self.triage_latency_ms = 1
+        self.triage_confidence = 0.9
+        self.created_at = datetime.now(UTC)
+        self.updated_at = datetime.now(UTC)
+
+
+class _FakeComplaintService:
+    async def create(self, *, text: str, location: str, contact: str | None) -> Any:
+        return _FakeComplaint(text, location, contact)
+
+
 @pytest.fixture(scope="module")
 def client() -> TestClient:
-    return TestClient(create_app())
+    # This file exercises the error envelope, not rate limiting — dozens of POSTs across its
+    # tests would otherwise trip the innermost middleware's fixed-window counter and turn
+    # unrelated tests flaky. Rate limiting itself is covered by its own middleware-scoped test.
+    # `Settings` is frozen, so swap in a copy with rate limiting off rather than mutate it.
+    original = main_module.settings
+    main_module.settings = original.model_copy(update={"ratelimit_enabled": False})
+    try:
+        app = create_app()
+    finally:
+        main_module.settings = original
+    app.dependency_overrides[get_complaint_service] = lambda: _FakeComplaintService()
+    return TestClient(app)
 
 
 def _fields(resp_json: dict) -> dict[str, dict]:  # type: ignore[type-arg]
@@ -105,10 +149,13 @@ def test_invalid_request_id_is_replaced(client: TestClient) -> None:
     assert uuid.UUID(r.headers["X-Request-ID"]).version == 4
 
 
-def test_stub_routes_are_501_until_phase_3(client: TestClient) -> None:
+def test_valid_body_reaches_the_route_and_creates(client: TestClient) -> None:
+    # Phase 1 asserted 501 here (stub routes). Phase 3 fills the handler bodies, so a valid
+    # body now reaches `ComplaintService.create` (faked above) and returns 201 with a Location
+    # header — this is the same "passed validation" assertion updated for the real behavior.
     r = client.post("/api/complaints", json=VALID)
-    assert r.status_code == 501
-    assert r.json()["error"]["code"] == "not_implemented"
+    assert r.status_code == 201
+    assert r.headers["Location"].startswith("/api/complaints/")
 
 
 def test_non_v4_request_id_is_replaced_not_rewritten(client: TestClient) -> None:
@@ -129,4 +176,4 @@ def test_empty_contact_normalises_to_null() -> None:
 @pytest.mark.parametrize("contact", ["+923001234567", "ali@example.pk", "0300 1234567"])
 def test_valid_contacts_accepted(client: TestClient, contact: str) -> None:
     r = client.post("/api/complaints", json={**VALID, "reporter_contact": contact})
-    assert r.status_code == 501  # passed validation, reached the Phase 1 stub
+    assert r.status_code == 201  # passed validation, reached the route body
