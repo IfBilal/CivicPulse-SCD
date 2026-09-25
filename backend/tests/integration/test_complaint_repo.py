@@ -181,6 +181,42 @@ async def test_transition_conditional_update_is_atomic(db_session: AsyncSession)
     assert len(succeeded) == 1  # exactly one of the two concurrent transitions wins
 
 
+async def test_stats_counts_zero_fills_every_enum_member(db_session: AsyncSession) -> None:
+    """`stats_counts()` zero-fills every `Category`/`Priority`/`Status` member in the repository
+    itself (Phase 5, `09-CACHE-RATELIMIT.md §2` — moved here from a Phase 3 unit test against a
+    fake repo once `StatsService` stopped doing its own zero-filling and started trusting the
+    repository to have already done it; `04-CONTRACTS.md §6.5`: a category with no rows must
+    still appear as a key with value 0, not be missing — a chart whose axis disappears when a
+    bucket empties is a bug that only shows up in the demo). Only one real row exists
+    (`Category.WATER`); every other category must still be a `0` key, not absent."""
+    repo = ComplaintRepository(db_session)
+    await repo.create(
+        text="Water main burst near the market, flooding the whole street badly.",
+        location="Test Street 4",
+        reporter_contact=None,
+        category=Category.WATER,
+        priority=Priority.HIGH,
+        ai_summary=None,
+        triaged_by=TriagedBy.RULES,
+        triage_latency_ms=3,
+        triage_confidence=None,
+    )
+    await db_session.commit()
+
+    total, by_category, by_priority, by_status = await repo.stats_counts()
+
+    assert total == 1
+    assert set(by_category.keys()) == set(Category)
+    assert by_category[Category.WATER] == 1
+    assert by_category[Category.ROADS] == 0  # zero-filled, not missing
+    assert set(by_priority.keys()) == set(Priority)
+    assert by_priority[Priority.HIGH] == 1
+    assert by_priority[Priority.LOW] == 0
+    assert set(by_status.keys()) == set(Status)
+    assert by_status[Status.OPEN] == 1
+    assert by_status[Status.RESOLVED] == 0
+
+
 async def test_indexes_exist(db_session: AsyncSession) -> None:
     """D10: `pg_indexes` contains both named indexes — the actual Gate 2 checklist assertion,
     not just 'the model declares them'."""

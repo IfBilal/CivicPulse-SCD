@@ -600,3 +600,181 @@ regenerating `requirements.lock` (`make lock`) — an actual Python dependency v
 touching adjacent files) rather than the Dockerfile/base-image maintenance this branch owns.
 Flagging for DEV-A or a joint follow-up; `scan`'s `HIGH,CRITICAL` gate will keep failing on this
 one specific finding until then.
+
+---
+
+## DEV-A · Phase 5 (`feat/cache-ratelimit`) — branch-divergence state, verified before writing code
+
+This branch forked from `dev` before Phase 3 (`feat/backend-api`) and Phase 4 (`feat/ai-triage`)
+merged. Checked the actual repo state rather than trusting the task brief's assumptions:
+
+- `backend/app/repositories/complaint_repo.py` had **no** `stats_counts()` method (the brief
+  assumed one existed from an earlier phase). Added it here, in the repository layer where it
+  belongs (CLAUDE.md §3) — one `count()` call plus three grouped-count queries, zero-filled
+  against `Category`/`Priority`/`Status` so every enum member is a key even at 0
+  (`04-CONTRACTS.md §6.5`), matching `list_page`'s existing style in the same file.
+- The frozen stats schema is `StatsOut` (`app/schemas/stats.py`), not `StatsResponse` as the task
+  brief named it. Built `StatsService` against the real name; did not rename or touch the schema
+  itself (Phase 1 frozen contract surface).
+- `app/routes/stats.py`, `app/routes/complaints.py`, `app/routes/ops.py` are all still Phase 1
+  `raise NotImplementedError` stubs on this branch — Phase 3's real route bodies live on the
+  unmerged `feat/backend-api` branch. `app/middleware/`, `app/services/`, and
+  `app/providers/triage/` are empty except `__pycache__` (untracked, never committed) — no
+  `ComplaintService`, no middleware stack, no triage provider factory exist here yet.
+- Built `StatsService` (`app/services/stats_service.py`) and `RateLimiter` +
+  `client_ip()` (`app/providers/ratelimit/`) completely and independently testable against fakes,
+  per the branch's own precedent for this situation (Phase 4 shipped `providers/triage/` logic
+  ahead of its route wiring the same way). Route/middleware wiring is left as a one-line deferral
+  note wherever it applies, not reconstructed speculatively — reconstructing Phase 3's route
+  layer here risks a merge conflict with the real thing once it lands, exactly the same risk
+  the Phase 3 ponytail entry above (`compose.yaml`/`depends_on`) already identified and rejected
+  doing.
+- `compose.yaml`'s `cache` service was already configured with the exact AOF command
+  `09-CACHE-RATELIMIT.md §5` specifies (`--appendonly yes --appendfsync everysec --maxmemory
+  256mb --maxmemory-policy allkeys-lru --save ""`, volume `redisdata:/data`) — DEV-B's Phase 3
+  compose work already covered this. No edit needed; step 9 of the task brief is a no-op here,
+  confirmed by reading the file rather than assumed.
+
+## DEV-A · Phase 5 — `X-Cache` semantics, stated precisely (§2.1)
+
+`HIT` = this response body was read from Redis and **not recomputed**, including the case where
+the request waited on another request's stampede lock and then read the key once it was filled
+by the winner — that request never ran the aggregate query, so it is a HIT, not a MISS, even
+though it did not read a warm cache at the moment it first checked.
+
+`MISS` = this request **executed the aggregate query** — either because the key was genuinely
+absent, or because it won the stampede lock, or because it lost the lock but the poll timed out
+(300 ms) before the winner's write landed, and it fell through to computing itself rather than
+block the citizen indefinitely.
+
+`cache_age_seconds` is `0` on every MISS (the payload was just generated) and
+`now - generated_at` on every HIT (including the lock-wait-then-read HIT, which reports `0`
+because the payload it read was itself freshly computed by the winner moments earlier — not the
+age of some older cached value). This lets a future frontend badge render "cached 12s ago"
+instead of a bare HIT/MISS boolean.
+
+## DEV-A · Phase 5 — why TTL *and* explicit invalidation (§2.2), applied to this codebase
+
+1. **Invalidation alone is not sufficient — the `DEL` is a network call that can fail.**
+   `StatsService.invalidate()` swallows Redis errors on purpose (logs a WARNING, returns
+   normally) rather than raising, because CLAUDE.md HARD rule 5's sibling rule for the cache path
+   says a Redis outage must never become a 500. But that means a lost `DEL` is silent — without a
+   TTL, a single lost invalidation would freeze `/api/stats` at a stale value forever.
+2. **Not every writer goes through the app.** `python -m app.cli.seed` inserts rows with raw SQL
+   (bulk_seed / ON CONFLICT DO NOTHING) and does not go through `ComplaintService.create()` (which
+   doesn't exist on this branch yet, and even once it does, seeding bypasses it entirely). TTL
+   covers every writer, present and future, including ones the invalidation call sites don't know
+   about.
+3. **TTL alone is not sufficient — 30s of staleness is visible on camera.** A citizen submitting a
+   complaint and watching `/api/stats` not move for up to 30 seconds looks broken during a demo.
+   Explicit invalidation (once wired to the real write path) makes the common case instant.
+4. **They fail in opposite directions**, so both are needed: TTL bounds staleness but can't make
+   anything fresher sooner; invalidation makes things fresh immediately but can't bound staleness
+   when the `DEL` itself is the thing that fails. Compressed for the viva: *"invalidation is the
+   fast path, TTL is the correctness floor."*
+
+**Invalidation ordering — commit before DEL, never DEL before commit.** `StatsService.invalidate()`
+must be called strictly after `session.commit()` succeeds. Calling it before/inside the
+transaction opens a window where a concurrent `GET /api/stats` repopulates the cache from
+pre-commit state, and that stale value then survives a full TTL instead of the brief window a
+correctly-ordered `DEL` would leave. `invalidate()` itself touches only Redis — it has no
+awareness of the DB session — so the ordering guarantee is entirely the caller's responsibility.
+Proven in `tests/unit/services/test_stats_invalidation_order.py::test_invalidate_happens_after_commit`
+via call-order assertion (not just "both were called"), against a two-line stand-in write path
+shaped exactly like `ComplaintService.create()` will be, with a companion test
+(`test_invalidate_reversed_order_is_detected_as_wrong`) proving the assertion actually catches a
+reversed order rather than trivially passing.
+
+**Deferred, disclosed:** the actual `ComplaintService.create()` / `change_status()` write paths
+don't exist on this branch (Phase 3 scope, unmerged). `StatsService.invalidate()` is ready to be
+called from both once they land — `await session.commit(); await stats_service.invalidate()`,
+in that literal order.
+
+## DEV-A · Phase 5 — fixed-window rate limiting: known flaw and the named next step (§4.1)
+
+Shipped: fixed window (`rl:{ip}:{window_start}`, `INCR`+`EXPIRE`+`TTL` in one atomic Lua script,
+`10` requests per `60s`). **Known flaw, disclosed rather than hidden:** a client can send 10
+requests at `t=59.9s` and 10 more at `t=60.1s` — 20 requests in 200ms, because the two windows
+are independent counters with no memory of each other.
+
+**Named next step, not built this phase:** a sliding-window counter — a weighted blend of the
+current and previous window's counts, approximate but O(1) and cheap, no unbounded per-key
+memory (unlike a sliding-window log via `ZADD`/`ZREMRANGEBYSCORE`, which is exact but O(log n)
+and grows one entry per request). Token bucket (smooth, supports controlled bursts, needs
+`redis.call('TIME')` as the clock authority instead of any per-pod wall clock) is the more
+complex alternative mentioned in `09-CACHE-RATELIMIT.md §4.1` itself as a `RATELIMIT_ALGO`
+stretch option; not built this phase — the mandatory E1–E17 matrix took priority and fixed-window
+is what the spec offers as the primary implementation.
+
+**Why Lua and not two Python-side calls, restated for the viva:** `INCR` then `EXPIRE` as two
+separate round trips is not atomic. If the pod is killed between them (routine under an HPA
+scale-down), the key survives with no TTL and that IP is rate-limited forever, with no automatic
+recovery. `EVALSHA` against the loaded script makes the whole INCR+EXPIRE+TTL sequence one atomic
+server-side operation — there is no window where the key can exist without an expiry.
+
+## DEV-A · Phase 5 — `X-RateLimit-Reset` is an epoch timestamp, not a duration
+
+`09-CACHE-RATELIMIT.md §4.2`'s own example shows `Retry-After: 37` alongside
+`X-RateLimit-Reset: 1757830860` — two different kinds of value, not the same number twice. First
+draft of `rate_limited_response()` conflated them (set `X-RateLimit-Reset` to the same value as
+`Retry-After`). Fixed before shipping: `X-RateLimit-Reset = int(now) + retry_after_seconds`, an
+absolute Unix timestamp a client can compare against its own clock, with `now` injectable for
+deterministic tests (`tests/unit/test_ratelimit_response.py`).
+
+## DEV-A · Phase 5 — AOF justification, applied to this project's three actual keyspaces (§5)
+
+`compose.yaml`'s `cache` service already ships `--appendonly yes --appendfsync everysec
+--maxmemory 256mb --maxmemory-policy allkeys-lru --save ""` with a `redisdata:/data` volume
+(DEV-B's Phase 3 compose work — verified present, not re-authored here). The justification, for
+the viva: this Redis is not only a cache. `stats:v1` genuinely doesn't need the volume — it's a
+pure derivative of Postgres, rebuildable in one query. But `rl:{ip}:{window}` is authoritative
+state with no other source: losing it silently resets every rate-limited client's quota, which is
+a security-relevant event, not a performance blip. And `triage:v1:{model}:{sha256}` (§08) holds
+purchased inference results against a finite free-tier quota — losing that keyspace on a restart
+means re-paying for every cache entry, and if the quota is already exhausted that day, it cannot
+be rebuilt at all, and the system visibly degrades to `rules` classification. `appendfsync
+everysec` bounds loss to one second without making the limiter's `INCR` disk-bound (which `always`
+would). `--save ""` disables RDB so the same dataset isn't persisted twice by two mechanisms.
+`maxmemory 256mb` + `allkeys-lru` bounds growth so 24h triage entries don't eventually OOM-kill
+the container. Honest counterargument: if this Redis held only the stats cache, the volume would
+be pure overhead protecting data that one SQL query regenerates — the volume is justified by the
+*other two* jobs sharing the instance, which is the whole §2.4 lesson: persistence requirements
+follow from what's actually in the box, not from the box's category name ("cache").
+
+## DEV-A · Phase 5 — E15 (`test_probes_not_rate_limited`) not written this phase
+
+`app/middleware/` has no `RateLimitMiddleware` class on this branch yet (Phase 3 scope,
+unmerged) — there is no code path that could rate-limit `/health` in the first place, so a test
+asserting "100 `/health` calls all 200" would be testing the absence of a feature, not a real
+guarantee. Per the task brief's own instruction for this case ("only makes sense if middleware
+infra exists on this branch — if not, skip with a one-line note, don't fabricate"), skipped
+rather than faked. Once the real middleware lands, this test belongs alongside it, scoping the
+limiter to `POST /api/complaints` only and confirming `/health`/`/ready`/`/metrics` are excluded
+by construction (route match, not a bypass list that can drift).
+
+## DEV-A · Phase 5 — E16 fail-open, verified half vs. deferred half
+
+`09-CACHE-RATELIMIT.md §4.5`'s own resolved decision: "fail-open, bounded — allow the request,
+but force `TRIAGE_PROVIDER` degradation for that request to `rules`." Verified this phase:
+`RateLimiter.check()` deliberately does not catch Redis errors itself — it propagates them, so a
+caller (the middleware) can catch the failure and choose to allow the request rather than the
+limiter silently returning `(False, ...)`, which would fail *closed* (block traffic), the
+opposite of the spec's chosen posture. `tests/unit/test_ratelimit_fail_open.py` proves both the
+propagation and a fail-open wrapper built against the real `RateLimiter`.
+
+**Deferred when written, disclosed:** the "degrade the triage provider to `rules` for that
+request" half needed Phase 4's provider factory (`app/providers/triage/`), which was empty on
+this branch at the time (Phase 4, `feat/ai-triage`, hadn't merged into `dev` yet). Noted here
+rather than silently dropped, matching how Phase 4 itself deferred `/api/meta/providers` route
+wiring for the same kind of branch-divergence reason.
+
+**Update, at the Phase 5 merge into `dev` (2026-09-25):** Phase 4 is now merged, so
+`app/providers/triage/factory.py`'s `build_triage_provider` exists — the deferred half is no
+longer blocked on a missing dependency, it's genuinely unwired scope. Still not implemented in
+this merge: wiring "rate-limiter Redis outage → force `TRIAGE_PROVIDER=rules` for this request"
+requires the rate-limit middleware (also not yet wired to the real app middleware stack per this
+same file's earlier deferral note) to actually call into the triage-provider-selection path,
+which today only happens once, at app startup (`app/main.py`'s lifespan), not per-request. That's
+real design work — a per-request provider override — not a mechanical reconciliation, so it's
+flagged here for whoever picks up the middleware-wiring phase rather than done as a drive-by
+part of this merge.
