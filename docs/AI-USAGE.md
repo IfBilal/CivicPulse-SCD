@@ -1381,3 +1381,14 @@ independently.
   defaults than a fresh `bash -e {0}` invocation). Lesson for future CI work in this repo: a
   pre-PR review of a workflow file needs at least one real run before trusting a job's claimed
   pass/fail meaning, not just local command replication.
+
+## 2026-09-25 · feat/ci-pipeline · real CI run caught a second bug — unresolvable action version
+
+- **Tool:** none — caught by watching the `scan` job fail on the same CI run.
+- **What happened:** `scan` failed immediately with `Unable to resolve action
+  aquasecurity/trivy-action@0.28.0, unable to find version 0.28.0`. `15-CICD.md §3.5`'s own
+  reference snippet writes the pin as `@0.28.0` (no `v` prefix); checked the real repo's tags via
+  `gh api repos/aquasecurity/trivy-action/tags` — the actual tag is `v0.28.0`. A genuine
+  inaccuracy in the doc's example, not something introduced here.
+- **Fixed:** all three `trivy-action` references changed to `@v0.28.0`, matching the doc's
+  clearly-intended version with the correct real tag spelling.
