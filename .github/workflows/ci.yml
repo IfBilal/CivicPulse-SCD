@@ -63,29 +63,23 @@ jobs:
             || (echo "::error::schema.d.ts is stale — run 'make gen-client' and commit"; exit 1)
 
   test-backend:
+    # No `services:` postgres/redis and no ambient DATABASE_URL/REDIS_URL here, deliberately —
+    # verified against this repo's actual test suite, not assumed from 15-CICD.md's generic
+    # example. `tests/integration/conftest.py` spins its own Postgres via testcontainers
+    # regardless of env (ubuntu-24.04 runners have Docker preinstalled, confirmed by the old
+    # ci.yml's data-layer job), so a services: postgres would sit unused by anything that
+    # matters. Worse: tests/unit/test_ready_route.py's "postgres unreachable" cases rely on
+    # nothing listening at the *default* (unconfigured) database_url/redis_url — pointing those
+    # at a real, reachable services: postgres/redis flips /ready to 200 and breaks 4 real tests
+    # (confirmed by running it both ways; see docs/AI-USAGE.md, 2026-09-25).
     runs-on: ubuntu-24.04
-    services:
-      postgres:
-        image: postgres:16.4-alpine
-        env: { POSTGRES_USER: ci, POSTGRES_PASSWORD: ci, POSTGRES_DB: civicpulse_test }
-        options: >-
-          --health-cmd "pg_isready -U ci" --health-interval 5s --health-timeout 3s --health-retries 10
-        ports: ["5432:5432"]
-      redis:
-        image: redis:7.4.1-alpine
-        options: >-
-          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
-        ports: ["6379:6379"]
     env:
-      DATABASE_URL: postgresql+psycopg://ci:ci@localhost:5432/civicpulse_test
-      REDIS_URL: redis://localhost:6379/0
       TRIAGE_PROVIDER: simulated
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.12", cache: pip, cache-dependency-path: backend/pyproject.toml }
       - run: pip install -e "backend[dev]"
-      - run: cd backend && alembic upgrade head
       - run: cd backend && pytest   # --cov-fail-under=65 lives in backend/pyproject.toml; runs unit+contract+integration
       - uses: actions/upload-artifact@v4
         if: always()
