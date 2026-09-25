@@ -1392,3 +1392,18 @@ independently.
   inaccuracy in the doc's example, not something introduced here.
 - **Fixed:** all three `trivy-action` references changed to `@v0.28.0`, matching the doc's
   clearly-intended version with the correct real tag spelling.
+
+## 2026-09-25 · feat/ci-pipeline · real CI run caught a third issue — trivy-action's own broken pin
+
+- **Tool:** none — caught by watching `scan` fail again after the v0.28.0 tag fix.
+- **What happened:** `aquasecurity/trivy-action@v0.28.0` resolved fine, but failed downloading
+  its own internal composite dependency: `Unable to resolve action
+  aquasecurity/setup-trivy@v0.2.1, unable to find version v0.2.1`. Checked
+  `gh api repos/aquasecurity/setup-trivy/tags` — the oldest tag that still exists is `v0.2.6`;
+  `v0.2.1` was deleted upstream at some point after `trivy-action@v0.28.0` pinned it. Not
+  something fixable by editing anything in this repo — it's a broken pin inside a third-party
+  action release.
+- **Fixed:** re-pinned to `aquasecurity/trivy-action@v0.36.0` (latest available tag). Verified
+  the action's `action.yaml` at that ref still accepts every input this workflow uses
+  (`image-ref`, `severity`, `ignore-unfixed`, `exit-code`, `format`, `output`) before pushing,
+  rather than guessing and burning another CI round-trip.
