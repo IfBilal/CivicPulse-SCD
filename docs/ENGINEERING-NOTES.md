@@ -473,16 +473,25 @@ process with **no `-m` filter** (the old `ci.yml`'s `contract` job ran `pytest -
 contract"`, a different subset/order that apparently never hit this exact interaction; the old
 `data-layer` job ran a 16-test slice in isolation).
 
-**Not fixed here** — `app/logging_config.py` is backend/app territory (DEV-A's, and he has two
-open PRs, `feat/ai-triage` #33 and `feat/cache-ratelimit` #34, actively touching adjacent code),
-not something this branch should touch per the project's layer/ownership split. Likely direction
-for whoever picks it up: `configure_logging()` should only remove handlers it previously added
-itself (e.g. tag them, or track the single handler instance across calls) rather than wiping the
-root logger's entire handler list — or tests that call `create_app()` should snapshot/restore
+**Not fixed here** — `app/logging_config.py` is backend/app territory (DEV-A's), not something
+this branch should touch per the project's layer/ownership split. Likely direction for whoever
+picks it up: `configure_logging()` should only remove handlers it previously added itself (e.g.
+tag them, or track the single handler instance across calls) rather than wiping the root
+logger's entire handler list — or tests that call `create_app()` should snapshot/restore
 `logging.getLogger().handlers` around the call. Flagging so `ci.yml`'s `test-backend` job (this
-branch) isn't mistaken for broken when it shows this one specific, understood, reproducible
-failure — everything else in the full suite is green (136/137, 90% coverage, well over the 65%
-floor).
+branch) isn't mistaken for broken when it shows this specific, understood, reproducible failure
+— everything else in the full suite is green.
+
+**Update, 2026-09-25, after merging `dev` (which now includes Phase 4, PR #33) into this
+branch:** re-ran the full suite against the merged code. The bug is still present and now hits
+**three** tests, not one — Phase 4 added its own `caplog`-based fallback-warning tests
+(`tests/unit/services/test_triage_service.py::test_exactly_one_warning_per_fallback` and
+`::test_no_extra_warning_on_retryable_then_fallback`), both hit by the identical root cause as
+the original `test_logging_config.py::test_fallback_emits_exactly_one_warning`. Current numbers
+on merged `dev`+this branch: **258 passed, 3 failed, 91.15% coverage** (floor 65%). This means
+the bug is no longer just a latent risk this PR would expose — **`dev`'s own full suite already
+fails today if run unfiltered**, independent of this branch. Worth surfacing to DEV-A directly,
+not just left in this file, since it now affects tests he already merged.
 
 ## DEV-B · Phase 5 · branch protection only covers `main`, requiring a job that no longer exists
 
