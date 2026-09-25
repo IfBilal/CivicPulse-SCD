@@ -536,11 +536,15 @@ def test_ring_shared_across_service_instances_when_passed_explicitly() -> None:
     settings = _TestSettings()
 
     service_a = TriageService(
-        SimulatedTriage(failure_mode=FailureMode.NONE), InMemoryTriageCache(), settings,
+        SimulatedTriage(failure_mode=FailureMode.NONE),
+        InMemoryTriageCache(),
+        settings,
         ring=shared,
     )
     service_b = TriageService(
-        SimulatedTriage(failure_mode=FailureMode.NONE), InMemoryTriageCache(), settings,
+        SimulatedTriage(failure_mode=FailureMode.NONE),
+        InMemoryTriageCache(),
+        settings,
         ring=shared,
     )
 
