@@ -1143,6 +1143,31 @@ to the user, not silently narrowed in scope.
 
 ---
 
+## 2026-09-25 · feat/ai-triage — CI fix: same coverage-scoping bug, different branch
+
+- **Tool:** Claude Code, no skill invocation — a mechanical fix, root cause already diagnosed.
+- **Found:** PR #33's `data-layer` CI job failed with `FAIL Required test coverage of 65% not
+  reached. Total coverage: 53.67%` — but `16 passed, 196 deselected`, zero real test failures.
+  This is the identical bug fixed on `feat/backend-api` (this file's earlier "three real bugs"
+  entry, bug #3): `data-layer` runs a fixed 16-test D1-D11 slice, not the whole suite, so
+  `pyproject.toml`'s global `--cov-fail-under=65` doesn't meaningfully apply to it. Recurring
+  here specifically because `feat/ai-triage` branched from `dev` *before* that earlier fix
+  landed anywhere except the one branch that made it — `dev` itself still has the un-fixed
+  `ci.yml`, and Phase 4 added another ~450 lines to `app/` this narrow slice was never going to
+  cover either.
+- **Wrote:** the identical `--cov-fail-under=0` addition to this branch's own
+  `.github/workflows/ci.yml`, same reasoning, cross-referenced back to the original entry rather
+  than re-deriving the decision from scratch.
+- **I changed:** nothing about Phase 4's actual implementation — this is CI configuration only.
+  Flagging for whoever merges `feat/backend-api` and `feat/ai-triage` into `dev`: once both
+  land, `dev`'s `ci.yml` only needs this fix once; if `feat/backend-api` merges first, this
+  branch's copy of the same fix becomes a no-op duplicate on merge, not a conflict, since both
+  changed the same line the same way. **Update, at the actual merge:** correct — the rebase onto
+  `dev` (post-#31) hit exactly this predicted no-op duplicate on `ci.yml`, resolved by keeping
+  either side's (functionally identical) content; see the entry below for the full merge.
+
+---
+
 ## 2026-09-25 · merging feat/ai-triage onto dev (post feat/backend-api merge) — real conflicts, real fixes
 
 Rebasing `feat/ai-triage` onto `dev` after PR #31 (+#32) merged produced real `add/add` and
