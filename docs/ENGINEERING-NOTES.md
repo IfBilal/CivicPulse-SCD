@@ -445,3 +445,55 @@ process-local and resets on restart — acceptable for proving middleware wiring
 as the production limiter (a multi-pod deployment would let each pod's memory count
 independently, undercounting the true rate by a factor of replica count). This limitation is
 inherent to "stub now, build for real in Phase 5" and is not a Phase 3 defect.
+
+---
+
+## DEV-B · Phase 5 · real bug found running the full backend suite together in CI
+
+Found while verifying `ci.yml`'s new `test-backend` job (`pytest`, whole suite, no marker
+filter — `15-CICD.md §3.2`) for real, locally, before pushing it.
+
+**`app/logging_config.py::configure_logging()`** (lines 63-77) unconditionally does
+`for existing in list(root.handlers): root.removeHandler(existing)` on the **root** logger, with
+no save/restore. Any test that constructs `TestClient(create_app())` calls this once per
+process (app-factory startup), which strips **every** existing root handler — including
+pytest's own `caplog` handler, which pytest attaches to the root logger to capture records.
+Once any test creates the app, every *subsequent* test in the same process that asserts on
+`caplog.records` silently gets zero records back, regardless of whether logging actually
+happened.
+
+**Reproduced:** `tests/unit/test_logging_config.py::test_fallback_emits_exactly_one_warning`
+passes in isolation (`pytest tests/unit/test_logging_config.py -k fallback`) and fails
+(`assert 0 == 1`, zero warnings captured) when run as part of the full suite — confirmed by
+running the whole suite with `--no-cov` and isolating the failing test's traceback. This is
+test-order-dependent state leakage via global logging config, exactly the class of bug
+`CLAUDE.md` HARD rule 15 (never rely on shared mutable state across tests) exists to catch — it
+just wasn't triggered before because nothing previously ran the **whole** suite together in one
+process with **no `-m` filter** (the old `ci.yml`'s `contract` job ran `pytest -m "unit or
+contract"`, a different subset/order that apparently never hit this exact interaction; the old
+`data-layer` job ran a 16-test slice in isolation).
+
+**Not fixed here** — `app/logging_config.py` is backend/app territory (DEV-A's, and he has two
+open PRs, `feat/ai-triage` #33 and `feat/cache-ratelimit` #34, actively touching adjacent code),
+not something this branch should touch per the project's layer/ownership split. Likely direction
+for whoever picks it up: `configure_logging()` should only remove handlers it previously added
+itself (e.g. tag them, or track the single handler instance across calls) rather than wiping the
+root logger's entire handler list — or tests that call `create_app()` should snapshot/restore
+`logging.getLogger().handlers` around the call. Flagging so `ci.yml`'s `test-backend` job (this
+branch) isn't mistaken for broken when it shows this one specific, understood, reproducible
+failure — everything else in the full suite is green (136/137, 90% coverage, well over the 65%
+floor).
+
+## DEV-B · Phase 5 · branch protection only covers `main`, requiring a job that no longer exists
+
+`main`'s ruleset (`main-protection`, id `23726494`) requires exactly one status check,
+`bootstrap-check` — that job is removed/renamed in this PR's `ci.yml` (folded into
+`lint-and-type`, per `15-CICD.md §2`'s "the seven job names go verbatim into branch
+protection"). Left as-is, any future `dev`→`main` PR would hang forever on `bootstrap-check`
+("Expected — waiting for status", `15-CICD.md §2` trap 2). Updated the ruleset's
+`required_status_checks` to the new seven names after this PR's `ci.yml` ran once (so GitHub has
+seen the contexts). Also noted, not changed: `dev` — the branch every PR in this project actually
+targets — has **no** branch protection or required checks at all (`main`'s ruleset only applies
+to the repo's default branch). Whether to also protect `dev` is a repo-wide workflow policy
+decision, not something to change unilaterally inside a CI-scoped PR; flagging it here so it's a
+deliberate choice, not an oversight nobody noticed.

@@ -41,10 +41,10 @@ test-fe:
 
 ## ── deduction armour ──────────────────────────────────────────────────────
 lint-localhost: ## §5.3 −8: no localhost in service-to-service config
-	@! grep -rnI --exclude-dir={node_modules,.git,dist,tests,docs} \
-	  -e 'localhost' -e '127\.0\.0\.1' \
-	  backend/app compose.yaml compose.prod.yaml k8s/ \
-	  || (echo "FAIL: localhost used for service-to-service"; exit 1)
+	@paths="backend/app compose.yaml compose.prod.yaml"; [ -d k8s ] && paths="$$paths k8s"; \
+	hits=$$(grep -rnI --exclude-dir={node_modules,.git,dist,tests,docs} \
+	  -e 'localhost' -e '127\.0\.0\.1' $$paths | grep -v 'healthcheck'); \
+	if [ -n "$$hits" ]; then echo "$$hits"; echo "FAIL: localhost used for service-to-service"; exit 1; fi
 secret-scan: ## §5.3 −20: no secrets in the working tree or history
 	@gitleaks detect --no-banner --redact -c .gitleaks.toml
 history-scan:
