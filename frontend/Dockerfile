@@ -12,7 +12,7 @@ RUN npm run build                                           # → /app/dist (no 
 # -slim: nginx's own variant without GeoIP/XSLT/image-filter/njs — dynamic modules nginx.conf
 # never loads, which otherwise add ~37 MB the app gets no benefit from (12-DOCKER-COMPOSE.md §1:
 # "runtime 45-55 MB"; the non-slim tag alone is 80 MB before any app content is even added).
-FROM nginx:1.27.2-alpine-slim AS runtime
+FROM nginx:1.27.5-alpine-slim AS runtime
 RUN addgroup -g 10001 -S app && adduser -u 10001 -S app -G app \
  && rm -f /etc/nginx/conf.d/default.conf \
       /docker-entrypoint.d/10-listen-on-ipv6-by-default.sh \

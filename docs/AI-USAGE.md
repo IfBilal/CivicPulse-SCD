@@ -846,6 +846,107 @@ for visibility, it just doesn't fail the job on it.
   in Phase 3's own code. Verified locally: `pytest -m "unit or contract"` alone reaches 87.88%
   coverage before this fix, confirming the real gate isn't being weakened.
 
+## 2026-09-25 · feat/ci-pipeline · caveman task list, Phase 5 DEV-B
+
+- **Tool:** Claude Code + `caveman`
+- **Pre-work check:** confirmed real current state before planning, not assumed: `dev` HEAD is
+  `298630d` (Taimoor's Phase 3 backend API, PR #31, merged — all 10 routes real, no more
+  `NotImplementedError`). His Phase 4 (`feat/ai-triage`, PR #33) and Phase 5 (`feat/cache-ratelimit`,
+  PR #34) are open, not merged. Phase 3's `triage_service.py` and Phase 3's `rate_limit.py` are
+  disclosed, intentional interim stubs (their own docstrings say so) — rules/simulated triage
+  works for real now; rate limiting is a working in-memory single-process stub; `X-Cache` is
+  hardcoded `MISS` always until his Phase 5 PR lands the real Redis cache.
+- **Shaped/Wrote** the task list before touching `ci.yml`:
+  1. Write `ci.yml`'s 7 jobs (`lint-and-type`, `test-backend`, `test-frontend`, `build`, `scan`,
+     `manifests`, `integration`) per `15-CICD.md §3`.
+  2. Create `scripts/wait_for.sh` — referenced by `Makefile`'s `up` target and by `15-CICD.md`'s
+     `integration` job, but never actually created in any prior phase. Real, pre-existing gap.
+  3. Create `fixtures/one.json` — referenced by the `integration` job's rate-limiter step, doesn't
+     exist yet.
+  4. Verify `lint-and-type`, `test-backend`, `test-frontend`, `build` steps for real, locally.
+  5. Verify `integration` job's steps against the live compose stack: POST/GET/category assertion,
+     network segmentation, rate-limiter 429 — all should work today on Phase-3-stub behavior.
+     Confirm `X-Cache MISS→HIT` genuinely cannot pass yet (cache is a hardcoded-MISS stub) —
+     disclose, don't fake.
+  6. Decide `manifests` job scope — needs `k8s/overlays/{dev,prod}`, which is Phase 6 (my next
+     phase, not built yet). Ponytail fork, logged separately below.
+  7. Pre-PR hardening review, ≥3 file:line findings.
+  8. Open PR, disclose exactly which of the 7 jobs are green today and why the rest aren't yet.
+- **Accepted as-is.**
+
+## 2026-09-25 · feat/ci-pipeline · ponytail — manifests job scope fork
+
+- **Tool:** Claude Code + `ponytail`
+- **Fork:** `ci.yml`'s `manifests` job (`kustomize build k8s/overlays/{dev,prod} | kubeconform`)
+  needs `k8s/overlays/dev` and `k8s/overlays/prod` to exist. They don't — Kubernetes is Phase 6,
+  not built yet (my own next phase, not a Taimoor dependency this time).
+- **Alternatives considered:**
+  1. Drop the `manifests` job from this PR, add it in the Phase 6 PR instead → rejected: the spec
+     is one `ci.yml` with seven named jobs; branch protection registers required checks by exact
+     job name, so splitting it doesn't save work, it just defers the same "prove all seven green"
+     step to Phase 6 and produces two smaller, less coherent PRs for one conceptual deliverable.
+  2. Build a minimal k8s scaffold now, inside this CI-focused PR, purely to turn the job green →
+     rejected: Phase 6 is a real design surface (namespace, StatefulSet+PVC, Deployments, four
+     Services, Ingress, ConfigMap/Secret split, three probe kinds, PDB, NetworkPolicy default-deny)
+     that deserves its own pass, not a rushed stub bolted on to satisfy a CI checkbox. A hollow
+     manifest that merely passes `kubeconform -strict` is worse than an honest red job.
+  3. **Chosen:** ship `ci.yml` with all seven jobs coded to spec now (this is the actual Phase 5
+     deliverable — the workflow file), let `manifests` be the one job that's red until Phase 6
+     lands `k8s/`, and say so plainly in the PR body and Gate 5 status. Same pattern already used
+     for Phase 3 (backend-health-gated `depends_on` disclosed as a forward dependency on DEV-A,
+     closed by the very next merge) — here the forward dependency is on my own next phase instead
+     of a teammate's, but the honesty rule is identical: don't fake green.
+- **I changed:** nothing to force `manifests` green artificially. Phase 6 starts immediately after
+  this PR merges, at which point `manifests` goes green without touching `ci.yml` again.
+
+## 2026-09-25 · feat/ci-pipeline · pre-PR hardening review
+
+- **Tool:** Claude Code, manual review discipline (plain ≥3-`file:line`-findings pass, per
+  `CLAUDE.md §6`'s correction).
+- **Findings:**
+  1. **`Makefile:43-47`** (`lint-localhost`) — real, pre-existing bug, not introduced by this PR
+     but discovered and now depended on by this PR's `lint-and-type` job. The grep listed `k8s/`
+     unconditionally; since `k8s/` doesn't exist yet, `grep` exits 2 (path error) instead of 0/1,
+     and bash's `!` negates any nonzero to "pass" — the check silently no-ops regardless of real
+     matches. Separately, once that's fixed, the grep also has no way to distinguish a legitimate
+     self-referential `127.0.0.1` healthcheck (correct, per `12-DOCKER-COMPOSE.md`) from a real
+     service-to-service violation. **Fixed both**: only include `k8s` in the search paths if the
+     directory exists, and exclude lines containing `healthcheck` from the match set. Verified
+     with a real injected violation (`DATABASE_URL = 'postgresql://localhost:5432/x'` in a throwaway
+     file under `backend/app/`) that the check now genuinely fails on a real hit and genuinely
+     passes on the two legitimate compose healthcheck lines — not just silently green either way.
+  2. **`backend/app/logging_config.py:63-77`** (`configure_logging`) — real bug in Taimoor's
+     active code, found by actually running the full `pytest` suite together (this PR's
+     `test-backend` job does that for the first time; the old `ci.yml` never ran the whole suite
+     unfiltered in one process). Strips the root logger's entire handler list with no
+     save/restore, which silently breaks pytest's `caplog` fixture for every test that runs after
+     any `create_app()` call in the same process. Reproduced: the fallback-warning test
+     (`tests/unit/test_logging_config.py::test_fallback_emits_exactly_one_warning` — CLAUDE.md's
+     own "single most important test") passes alone, fails in the full run (`0 == 1`). **Not
+     fixed** — backend/app territory, disclosed in full in `ENGINEERING-NOTES.md` with the
+     reproduction and a suggested fix direction, left for DEV-A given his two open PRs already
+     touch adjacent code.
+  3. **`.github/workflows/ci.yml`** (`integration` job, `POST → GET` step) — the doc's reference
+     example asserts a hard-coded `category == "water"` against fixture text chosen to match a
+     keyword-based classifier. This project's CI always runs `TRIAGE_PROVIDER=simulated`
+     (`CLAUDE.md §4`), and `backend/app/providers/triage/simulated.py` is explicitly hash-based on
+     complaint text, not content-classified — confirmed by testing the real running stack: a
+     pothole-report fixture returned `category: "water"` purely from hash coincidence. Asserting
+     a fixed category against that would assert a hash artifact, not triage correctness, and
+     would silently break the moment `fixtures/one.json`'s text changed. **Changed** the
+     assertion to "a valid, non-null category was persisted" — proves triage ran end-to-end
+     without depending on `simulated`'s internal hash behavior.
+  4. **`main`'s branch-protection ruleset** (`23726494`) — required exactly `bootstrap-check`,
+     a job name this PR removes (folded into `lint-and-type`). Left as-is, any future PR to
+     `main` hangs forever on that check (`15-CICD.md §2` trap 2). **Fixed**: updated the ruleset's
+     required contexts to the new seven job names after this PR's first CI run (needed to exist
+     once — same trap the doc names). Disclosed, not fixed: `dev` — the branch every PR in this
+     project actually targets — has no branch protection at all; flagged in
+     `ENGINEERING-NOTES.md` as a deliberate-or-not policy question, not something to change
+     unilaterally inside a CI-scoped PR.
+- **I changed:** shipped findings 1, 3, 4 as real fixes in this PR. Finding 2 is disclosed only,
+  by design — see the "layer discipline" note above.
+
 ---
 
 ## 2026-09-25 · feat/ai-triage — Phase 4 kickoff (DEV-A)
@@ -1338,6 +1439,63 @@ independently.
      Logged the precise version and both test forms rather than a blanket claim.
 - **I changed:** shipped findings 1-3 as real fixes; finding 4 is a verification/correction of the
   doc's own caveat, logged with the exact evidence rather than asserted.
+
+---
+
+## 2026-09-25 · feat/ci-pipeline · real CI run caught a bug in this PR's own manifests job
+
+- **Tool:** none — caught by actually watching the first real GitHub Actions run of this PR's
+  `ci.yml`, not by local review.
+- **What happened:** the PR body (and the ponytail entry above) claimed `manifests` would be
+  "intentionally red until Phase 6 lands `k8s/`." The real run showed it **passing** instead —
+  for the wrong reason. `kustomize build k8s/overlays/dev | kubeconform ...` — `kustomize` fails
+  (`k8s/` doesn't exist), but GitHub's default `run:` shell is `bash -e {0}`, **not**
+  `-o pipefail**. Without pipefail, a pipeline's exit code is only its last command's;
+  `kubeconform` on empty stdin reports "0 resource found... Errors: 0" and exits 0, so the whole
+  step reports success. The `:latest`-check step (`kustomize build ... | grep ...`) has the same
+  shape. The secrets-check step (`! grep -rniE ... k8s/ || {...}`, no pipe) hit the *other*
+  masking bug this same PR already fixed once in `Makefile::lint-localhost` — grep exits 2 on a
+  missing path, `!` treats any nonzero as "pass" — I wrote the exact same anti-pattern again in
+  `ci.yml` after having just diagnosed and fixed it elsewhere in the same PR.
+- **Fixed:** added `defaults: {run: {shell: "bash -eo pipefail {0}"}}` at the workflow level (so
+  every job's every pipe is protected, not just `manifests`), plus an explicit
+  `[ -d k8s/overlays/dev ] && [ -d k8s/overlays/prod ]` guard as the first real step in
+  `manifests`, so the missing-`k8s/` case fails loudly with a clear `::error::` message instead
+  of accidentally passing through a masked pipe/grep exit code. Re-verified the guard logic
+  locally (real `k8s/` absence on this machine, confirmed it now reports the intended failure).
+- **I changed:** this is worth naming plainly rather than folding into the earlier pre-PR review
+  section — the original review didn't catch it because it never actually ran the workflow
+  against GitHub's real shell defaults, it only validated YAML syntax and ran the equivalent
+  commands in my own local zsh/bash session (which very likely *does* have different `set`
+  defaults than a fresh `bash -e {0}` invocation). Lesson for future CI work in this repo: a
+  pre-PR review of a workflow file needs at least one real run before trusting a job's claimed
+  pass/fail meaning, not just local command replication.
+
+## 2026-09-25 · feat/ci-pipeline · real CI run caught a second bug — unresolvable action version
+
+- **Tool:** none — caught by watching the `scan` job fail on the same CI run.
+- **What happened:** `scan` failed immediately with `Unable to resolve action
+  aquasecurity/trivy-action@0.28.0, unable to find version 0.28.0`. `15-CICD.md §3.5`'s own
+  reference snippet writes the pin as `@0.28.0` (no `v` prefix); checked the real repo's tags via
+  `gh api repos/aquasecurity/trivy-action/tags` — the actual tag is `v0.28.0`. A genuine
+  inaccuracy in the doc's example, not something introduced here.
+- **Fixed:** all three `trivy-action` references changed to `@v0.28.0`, matching the doc's
+  clearly-intended version with the correct real tag spelling.
+
+## 2026-09-25 · feat/ci-pipeline · real CI run caught a third issue — trivy-action's own broken pin
+
+- **Tool:** none — caught by watching `scan` fail again after the v0.28.0 tag fix.
+- **What happened:** `aquasecurity/trivy-action@v0.28.0` resolved fine, but failed downloading
+  its own internal composite dependency: `Unable to resolve action
+  aquasecurity/setup-trivy@v0.2.1, unable to find version v0.2.1`. Checked
+  `gh api repos/aquasecurity/setup-trivy/tags` — the oldest tag that still exists is `v0.2.6`;
+  `v0.2.1` was deleted upstream at some point after `trivy-action@v0.28.0` pinned it. Not
+  something fixable by editing anything in this repo — it's a broken pin inside a third-party
+  action release.
+- **Fixed:** re-pinned to `aquasecurity/trivy-action@v0.36.0` (latest available tag). Verified
+  the action's `action.yaml` at that ref still accepts every input this workflow uses
+  (`image-ref`, `severity`, `ignore-unfixed`, `exit-code`, `format`, `output`) before pushing,
+  rather than guessing and burning another CI round-trip.
 
 ---
 

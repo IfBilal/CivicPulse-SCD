@@ -448,6 +448,73 @@ inherent to "stub now, build for real in Phase 5" and is not a Phase 3 defect.
 
 ---
 
+## DEV-B · Phase 5 · real bug found running the full backend suite together in CI
+
+Found while verifying `ci.yml`'s new `test-backend` job (`pytest`, whole suite, no marker
+filter — `15-CICD.md §3.2`) for real, locally, before pushing it.
+
+**`app/logging_config.py::configure_logging()`** (lines 63-77) unconditionally does
+`for existing in list(root.handlers): root.removeHandler(existing)` on the **root** logger, with
+no save/restore. Any test that constructs `TestClient(create_app())` calls this once per
+process (app-factory startup), which strips **every** existing root handler — including
+pytest's own `caplog` handler, which pytest attaches to the root logger to capture records.
+Once any test creates the app, every *subsequent* test in the same process that asserts on
+`caplog.records` silently gets zero records back, regardless of whether logging actually
+happened.
+
+**Reproduced:** `tests/unit/test_logging_config.py::test_fallback_emits_exactly_one_warning`
+passes in isolation (`pytest tests/unit/test_logging_config.py -k fallback`) and fails
+(`assert 0 == 1`, zero warnings captured) when run as part of the full suite — confirmed by
+running the whole suite with `--no-cov` and isolating the failing test's traceback. This is
+test-order-dependent state leakage via global logging config, exactly the class of bug
+`CLAUDE.md` HARD rule 15 (never rely on shared mutable state across tests) exists to catch — it
+just wasn't triggered before because nothing previously ran the **whole** suite together in one
+process with **no `-m` filter** (the old `ci.yml`'s `contract` job ran `pytest -m "unit or
+contract"`, a different subset/order that apparently never hit this exact interaction; the old
+`data-layer` job ran a 16-test slice in isolation).
+
+**Not fixed here** — `app/logging_config.py` is backend/app territory (DEV-A's), not something
+this branch should touch per the project's layer/ownership split. Likely direction for whoever
+picks it up: `configure_logging()` should only remove handlers it previously added itself (e.g.
+tag them, or track the single handler instance across calls) rather than wiping the root
+logger's entire handler list — or tests that call `create_app()` should snapshot/restore
+`logging.getLogger().handlers` around the call. Flagging so `ci.yml`'s `test-backend` job (this
+branch) isn't mistaken for broken when it shows this specific, understood, reproducible failure
+— everything else in the full suite is green.
+
+**Update, 2026-09-25, after merging `dev` (which now includes Phase 4, PR #33) into this
+branch:** re-ran the full suite against the merged code. The bug is still present and now hits
+**three** tests, not one — Phase 4 added its own `caplog`-based fallback-warning tests
+(`tests/unit/services/test_triage_service.py::test_exactly_one_warning_per_fallback` and
+`::test_no_extra_warning_on_retryable_then_fallback`), both hit by the identical root cause as
+the original `test_logging_config.py::test_fallback_emits_exactly_one_warning`. Current numbers
+on merged `dev`+this branch: **258 passed, 3 failed, 91.15% coverage** (floor 65%). This means
+the bug is no longer just a latent risk this PR would expose — **`dev`'s own full suite already
+fails today if run unfiltered**, independent of this branch. Worth surfacing to DEV-A directly,
+not just left in this file, since it now affects tests he already merged.
+
+**Update, 2026-09-25, after merging `dev` again (now also includes Phase 5, PR #34) into this
+branch:** re-ran once more. Still exactly the same **three** failures — Phase 5's new cache/
+rate-limit tests didn't happen to trigger `create_app()` in a way that adds more casualties.
+Current numbers: **293 passed, 3 failed, 92.44% coverage**. Same three tests, same root cause,
+unchanged since the Phase 4 merge — the bug hasn't spread further, but it also hasn't been fixed.
+
+## DEV-B · Phase 5 · branch protection only covers `main`, requiring a job that no longer exists
+
+`main`'s ruleset (`main-protection`, id `23726494`) requires exactly one status check,
+`bootstrap-check` — that job is removed/renamed in this PR's `ci.yml` (folded into
+`lint-and-type`, per `15-CICD.md §2`'s "the seven job names go verbatim into branch
+protection"). Left as-is, any future `dev`→`main` PR would hang forever on `bootstrap-check`
+("Expected — waiting for status", `15-CICD.md §2` trap 2). Updated the ruleset's
+`required_status_checks` to the new seven names after this PR's `ci.yml` ran once (so GitHub has
+seen the contexts). Also noted, not changed: `dev` — the branch every PR in this project actually
+targets — has **no** branch protection or required checks at all (`main`'s ruleset only applies
+to the repo's default branch). Whether to also protect `dev` is a repo-wide workflow policy
+decision, not something to change unilaterally inside a CI-scoped PR; flagging it here so it's a
+deliberate choice, not an oversight nobody noticed.
+
+---
+
 ## DEV-A · Phase 4 (AI triage) — ambiguities resolved before writing code
 
 Written before the fallback-ladder implementation, per `CLAUDE.md §5` (say what you're choosing
@@ -564,6 +631,35 @@ Gate 6 verified for real end to end: `docs/evidence/persistence-k8s.txt` (36 row
 `/api/stats` on one host, `kustomize build | kubeconform -strict` clean on both overlays (19
 resources each), StatefulSet confirmed for postgres (no Deployment), all four Services ClusterIP
 or headless, backend's resource requests present, probe paths `/health`/`/ready` confirmed.
+
+---
+
+## DEV-B · Phase 5 · real HIGH/CRITICAL CVEs found by the new `scan` job — base images bumped
+
+Found on the first real `scan` job run once `trivy-action` itself was working (see `AI-USAGE.md`).
+Not a masking bug this time — genuine findings: **44 HIGH/CRITICAL** (40 HIGH, 4 CRITICAL) in the
+backend image, all in OS packages (`gpgv`, `libgnutls30`, `libssl3`, `openssl`, ...), every one
+with a `fixed` version already published. `python:3.12.7-slim-bookworm` was pinned back on
+2024-12-03; Docker Hub's current build of that same Python line is `3.12.14-slim-bookworm`
+(2026-09-19) — nearly two years of accumulated Debian security patches the pin never picked up.
+
+**Fixed:** bumped `backend/Dockerfile`'s two `FROM python:3.12.7-slim-bookworm` lines to
+`python:3.12.14-slim-bookworm` (same minor line, `12-DOCKER-COMPOSE.md §1`'s pinning discipline
+unchanged — still an exact tag, never `:latest`/`:slim`/floating), and
+`frontend/Dockerfile`'s runtime stage from `nginx:1.27.2-alpine-slim` to
+`nginx:1.27.5-alpine-slim` (latest patch on the same 1.27 line). Rebuilt both locally: backend
+imports clean (`python -c "import app.main"`), frontend serves `/healthz` and the
+`docker-entrypoint.d` config script runs exactly as before — no functional change, only the OS
+package versions underneath moved forward.
+
+**Not fixed here, disclosed:** the scan also found `orjson==3.10.18` (4× HIGH,
+`CVE-2025-67221`, unbounded-recursion DoS), fixed in `3.11.6`. `backend/pyproject.toml` pins
+`orjson==3.10.*`, so picking up the fix means widening that constraint to `3.11.*` and
+regenerating `requirements.lock` (`make lock`) — an actual Python dependency version change, in
+`backend/pyproject.toml`, which is backend/app territory (DEV-A's, with two open PRs already
+touching adjacent files) rather than the Dockerfile/base-image maintenance this branch owns.
+Flagging for DEV-A or a joint follow-up; `scan`'s `HIGH,CRITICAL` gate will keep failing on this
+one specific finding until then.
 
 ---
 
@@ -742,3 +838,35 @@ which today only happens once, at app startup (`app/main.py`'s lifespan), not pe
 real design work — a per-request provider override — not a mechanical reconciliation, so it's
 flagged here for whoever picks up the middleware-wiring phase rather than done as a drive-by
 part of this merge.
+
+---
+
+## DEV-B · Phase 5 (post-merge) · X-Cache now works; a real invalidation-on-create bug found
+
+Re-verified `ci.yml`'s `integration` job against a live compose stack after merging `dev` (now
+includes Taimoor's `feat/cache-ratelimit`, PR #34). Good news first: **the basic `MISS`→`HIT`
+sequence genuinely works now** — confirmed against the real stack, not the old always-MISS stub.
+Upgraded that step in `ci.yml` from observe-only to a real hard assertion.
+
+While verifying "invalidation on write" (Gate 5's "after a POST, next call MISS"), found a real,
+reproducible bug: **a fresh `POST /api/complaints` does not invalidate the stats cache.**
+Reproduced twice, cleanly (flushed Redis between runs to rule out leftover rate-limit/cache
+state): `total` stayed unchanged and `X-Cache` stayed `HIT` immediately after a `201`-confirmed
+create.
+
+**Root cause, `backend/app/services/complaint_service.py:104-105`:** `self._stats.invalidate()`
+is called inside `change_status()` only. `create()` (lines 30-64) never calls it — the method
+returns straight from `self._repo.create(...)` with no invalidation step at all. `StatsService`
+itself (`stats_service.py`) is correct in isolation — `invalidate()` genuinely does `DEL
+stats:v1`, verified by testing it via the `change_status` path indirectly (not directly tested
+here, but the code path is unambiguous by inspection). This is a wiring gap in one call site, not
+a cache-logic bug.
+
+**Not fixed here** — `complaint_service.py` is backend/app territory, and `#34` (which introduced
+this) is already merged into `dev`; this is now a live bug on `dev`, not just this branch's
+finding. The fix is small and obvious once pointed at: add the same
+`if self._stats is not None: await self._stats.invalidate()` (or a shared helper) at the end of
+`create()`, after `repo.create()` returns — same "after commit, never before" ordering
+`StatsService.invalidate()`'s own docstring already documents. Flagging directly for DEV-A rather
+than leaving it to be rediscovered, since Gate 5's own checklist explicitly names this behavior
+("after a POST, next call MISS") and it currently doesn't hold.
