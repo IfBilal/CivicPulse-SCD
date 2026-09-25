@@ -2,7 +2,7 @@
 `AsyncSession` directly (CLAUDE.md §3, `make lint-layers` greps routes for `session`)."""
 
 from collections.abc import AsyncIterator
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated, cast
 
 from fastapi import Depends, Request
 from redis.asyncio import Redis
@@ -16,6 +16,9 @@ from app.services.complaint_service import ComplaintService
 from app.services.stats_service import StatsService
 from app.services.triage_service import TriageService
 from app.settings import settings
+
+if TYPE_CHECKING:
+    from app.services.stats_service import _CacheRedis
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:
@@ -48,11 +51,26 @@ def get_complaint_service(
     triage_service = TriageService(
         triage, cache, settings, ring=getattr(request.app.state, "ring", None)
     )
-    stats_service = StatsService(repo)
+    # cast: `redis.asyncio.Redis`'s real `set()` has more keyword params (ex/xx/keepttl/...)
+    # than `StatsService`'s narrow `_CacheRedis` Protocol declares, which mypy's structural
+    # Protocol check rejects even though every actual call this service makes is safe — same
+    # tension as `providers/triage/llm.py`'s `AsyncOpenAI` construction, same fix.
+    stats_service = StatsService(
+        cast("_CacheRedis", request.app.state.redis),
+        repo,
+        cache_key=settings.stats_cache_key,
+        ttl_s=settings.stats_cache_ttl_s,
+    )
     return ComplaintService(repo=repo, triage=triage_service, stats=stats_service)
 
 
 def get_stats_service(
     session: Annotated[AsyncSession, Depends(get_session)],
+    redis: Annotated["Redis[str]", Depends(get_redis)],
 ) -> StatsService:
-    return StatsService(ComplaintRepository(session))
+    return StatsService(
+        cast("_CacheRedis", redis),
+        ComplaintRepository(session),
+        cache_key=settings.stats_cache_key,
+        ttl_s=settings.stats_cache_ttl_s,
+    )
