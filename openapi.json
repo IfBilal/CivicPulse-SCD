@@ -577,7 +577,7 @@
   },
   "info": {
     "title": "CivicPulse API",
-    "version": "1.0.0"
+    "version": "dev"
   },
   "openapi": "3.1.0",
   "paths": {
