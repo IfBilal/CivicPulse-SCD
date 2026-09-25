@@ -17,16 +17,27 @@ from app.settings import Settings
 pytestmark = pytest.mark.unit
 
 
+def _civicpulse_handlers(root: logging.Logger) -> list[logging.Handler]:
+    """Only handlers `configure_logging()` itself installed — pytest attaches its own
+    capture handlers (including, under `--capture`, a file-backed one) to root, and
+    `configure_logging()` deliberately leaves those alone now (2026-09-25 fix: it used to
+    remove every handler on root regardless of ownership, which silently broke `caplog`
+    in any test running after one that boots the real app via `TestClient`/`lifespan` —
+    see docs/AI-USAGE.md). These assertions must only judge what this module owns."""
+    return [h for h in root.handlers if getattr(h, "_civicpulse_owned", False)]
+
+
 def test_no_file_handlers_after_configure() -> None:
     configure_logging(Settings())
     root = logging.getLogger()
-    assert not any(isinstance(h, FileHandler) for h in root.handlers)
+    assert not any(isinstance(h, FileHandler) for h in _civicpulse_handlers(root))
 
 
 def test_handler_writes_to_stdout() -> None:
     configure_logging(Settings())
     root = logging.getLogger()
-    stream_handlers = [h for h in root.handlers if isinstance(h, logging.StreamHandler)]
+    owned = _civicpulse_handlers(root)
+    stream_handlers = [h for h in owned if isinstance(h, logging.StreamHandler)]
     assert stream_handlers
     assert all(h.stream is sys.stdout for h in stream_handlers)
 

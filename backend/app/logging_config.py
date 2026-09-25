@@ -64,11 +64,22 @@ def configure_logging(settings: Settings) -> None:
     root = logging.getLogger()
     root.setLevel(settings.log_level)
 
-    # Never a FileHandler / RotatingFileHandler — stdout only.
+    # Never a FileHandler / RotatingFileHandler — stdout only. Only remove handlers THIS
+    # function previously installed (marked below), never a handler owned by something
+    # else attached to root — e.g. pytest's `caplog` capture handler, which the FastAPI
+    # `lifespan` (and therefore this function) runs again every time a test builds a
+    # `TestClient`/`create_app()`. Removing unrelated handlers here silently broke
+    # `caplog`-based assertions in any test running after one that boots the real app
+    # (found via a CI-only failure: `tests/unit/services/test_triage_service.py`'s and
+    # `tests/unit/test_logging_config.py`'s "exactly one WARNING" tests passed in every
+    # local/narrow run but failed once real `TestClient` fixtures ran earlier in the same
+    # process, 2026-09-25 — see docs/AI-USAGE.md).
     for existing in list(root.handlers):
-        root.removeHandler(existing)
+        if getattr(existing, "_civicpulse_owned", False):
+            root.removeHandler(existing)
 
     handler = logging.StreamHandler(sys.stdout)
+    handler._civicpulse_owned = True  # type: ignore[attr-defined]
     handler.addFilter(_SecretRedactingFilter())
     if settings.log_format == "json":
         handler.setFormatter(JsonFormatter(service="backend", version=settings.version))

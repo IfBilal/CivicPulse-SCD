@@ -1810,3 +1810,68 @@ written before `ComplaintService` existed, never revisited once it did.
   suite net of the 2 added / 2 removed tests). `pytest -m integration --collect-only` — 26
   tests collect cleanly (was 25). `ruff check .`, `ruff format --check .`, `mypy app` (strict,
   57 source files), `make lint-layers` — all clean.
+
+## 2026-09-25 · fix/stats-invalidation-ordering — CI-only test-isolation bug in `configure_logging()`
+
+PR #41's new `test-backend` CI job (the partner's Phase 5 CI pipeline, `pytest` with no marker
+filter — unit + contract + integration together, ~297 tests, real Docker/testcontainers) failed
+three tests that pass in every local run: `test_exactly_one_warning_per_fallback`,
+`test_no_extra_warning_on_retryable_then_fallback`
+(`tests/unit/services/test_triage_service.py`), and `test_fallback_emits_exactly_one_warning`
+(`tests/unit/test_logging_config.py`) — all `assert 0 == 1` on captured `caplog` WARNING
+records for `app.triage`. None of these three files were touched by this branch's own diff
+(`complaint_service.py`/`complaint_repo.py`/`meta.py`), and `integration`/`build`/
+`test-frontend`/`lint-and-type` all passed on the same run — this was a genuine, pre-existing
+CI-only bug this PR happened to surface, not something this branch introduced.
+
+**Root cause found:** `app/logging_config.py::configure_logging()` (called from
+`app/main.py`'s `lifespan()` on every FastAPI app boot, including every `TestClient(app)`/
+`create_app()` construction across the unit+contract suite) unconditionally did
+`for existing in list(root.handlers): root.removeHandler(existing)` — stripping every handler
+on the root logger, including ones it doesn't own, then `root.setLevel(settings.log_level)`
+unconditionally. This is not idempotent and fights anything else managing root's handler list.
+Confirmed locally: reverting the fix made `tests/unit/test_logging_config.py::
+test_no_file_handlers_after_configure`/`test_handler_writes_to_stdout` immediately show a
+stray non-`FileHandler`-owned-by-pytest still on root after a `configure_logging()` call,
+proving pytest attaches its own capture handlers to root and `configure_logging()` was
+silently deleting them.
+
+**What I could NOT fully confirm:** the exact chain from "handler/level churn" to "zero
+records captured" for these three specific tests, because reproducing it requires the real
+`tests/integration/` suite (testcontainers Postgres+Redis) running immediately before the
+unit suite in the same process — this sandbox has no Docker socket (`docker info` → permission
+denied, same gap as every other integration-test limitation this session), so I could not
+execute the actual triggering sequence locally. A direct repro attempt (boot a real
+`TestClient(app)` mid-session, then run the exact WARNING-count assertion pattern) passed even
+against the unfixed code, meaning "any app boot breaks caplog" is not the whole story — the
+real trigger needs the integration suite's session-scoped fixtures too (also found, and
+separately concerning: `tests/integration/conftest.py`'s `migrated_db` fixture permanently
+replaces the module-level `app.settings.settings` singleton via
+`settings_module.settings = settings_module.settings.model_copy(...)` and never restores it —
+a real leak into any later code that reads the shared singleton, independent of this bug, not
+yet fixed, flagged here rather than silently left).
+
+**Fix applied:** `configure_logging()` now only removes/replaces handlers it previously
+installed itself (marked via a `_civicpulse_owned` attribute on the handler instance), never
+touching a handler it doesn't own — this is correct for production too (idempotent against a
+lifespan that somehow runs twice in one process), not just a test workaround.
+`tests/unit/test_logging_config.py::test_no_file_handlers_after_configure`/
+`test_handler_writes_to_stdout` updated to only judge `configure_logging`-owned handlers,
+since asserting "root has no `FileHandler` / root's only handlers point at stdout" was never
+actually this module's property to assert once other things (pytest, in tests) legitimately
+share root — it's `configure_logging`'s own handler that must never be a `FileHandler`/must
+write to stdout.
+
+**I changed:** did not blindly rewrite the three failing tests to work around the symptom
+(e.g. asserting on a private handler instead of `caplog`) without first fixing the actual
+non-idempotent-handler-removal bug, since CLAUDE.md HARD rule 14 requires understanding why a
+test fails, not just making it pass. Given I cannot reproduce the exact integration-suite
+interaction locally, I am pushing this as the best-evidence fix and will re-check the next
+real CI run's `test-backend` job rather than claim certainty I don't have.
+- **Verified:** `pytest -m "unit or contract"` — 271 passed, unchanged pass count. Falsified
+  the two rewritten assertions in `test_logging_config.py` by temporarily reverting
+  `logging_config.py`'s fix (`git stash`) — confirmed they fail on the old code
+  (`test_no_file_handlers_after_configure` sees a stray handler; `test_handler_writes_to_stdout`
+  sees a non-stdout stream), then restored the fix and confirmed both pass again. Full CI
+  re-run against real Docker is the only way to confirm the original 3-test failure is
+  actually resolved — not yet observed at the time of this entry.
