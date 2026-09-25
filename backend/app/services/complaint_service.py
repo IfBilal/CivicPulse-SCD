@@ -30,7 +30,15 @@ class ComplaintService:
     async def create(self, *, text: str, location: str, contact: str | None) -> Complaint:
         """Triage BEFORE persist (07-BACKEND-API.md §2.2) — the response returns a fully
         triaged row. The triage call happens before `repo.create()` is ever invoked, so it
-        never holds an open DB transaction (a slow HTTP call must not pin a pool connection)."""
+        never holds an open DB transaction (a slow HTTP call must not pin a pool connection).
+
+        Commits explicitly, then invalidates the stats cache — `09-CACHE-RATELIMIT.md §2.3`'s
+        required `COMMIT → DEL` ordering. `app/deps.py::get_session()`'s own commit (in its
+        generator teardown) only runs after this method has already returned, so relying on it
+        would make invalidation either never happen or happen before the data it's supposed to
+        reflect is actually visible — `repo.commit()` here makes the ordering correct instead
+        of accidental, and `get_session()`'s later commit becomes a safe no-op on an
+        already-clean session."""
         # The DB row (and its real id, assigned by Postgres's gen_random_uuid() default) does
         # not exist until AFTER triage returns, but the fallback WARNING and ring entry need
         # SOME complaint_id to correlate against at the moment triage runs. This generates a
@@ -45,7 +53,7 @@ class ComplaintService:
         outcome = await self._triage.triage_with_fallback(
             complaint_id=provisional_id, text=text, location=location
         )
-        return await self._repo.create(
+        row = await self._repo.create(
             text=text,
             location=location,
             reporter_contact=contact,
@@ -62,6 +70,10 @@ class ComplaintService:
             triage_latency_ms=outcome.latency_ms,
             triage_confidence=outcome.result.confidence,
         )
+        await self._repo.commit()
+        if self._stats is not None:
+            await self._stats.invalidate()
+        return row
 
     async def get(self, cid: UUID) -> Complaint:
         row = await self._repo.get(cid)
@@ -90,7 +102,10 @@ class ComplaintService:
         return list(rows), total
 
     async def change_status(self, cid: UUID, new: Status) -> Complaint:
-        """Table lookup, conditional UPDATE, race-safe 409 — `07-BACKEND-API.md §4` verbatim."""
+        """Table lookup, conditional UPDATE, race-safe 409 — `07-BACKEND-API.md §4` verbatim.
+
+        Commits before invalidating, same `COMMIT → DEL` ordering and reasoning as
+        `create()` — see that method's docstring."""
         current = await self._repo.get(cid)
         if current is None:
             raise NotFound(cid)
@@ -101,6 +116,7 @@ class ComplaintService:
             fresh = await self._repo.get(cid)
             assert fresh is not None  # it existed a moment ago; can't have been hard-deleted
             raise InvalidTransition(fresh.status, new)
+        await self._repo.commit()
         if self._stats is not None:
             await self._stats.invalidate()
         return updated

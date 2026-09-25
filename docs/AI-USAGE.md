@@ -1735,3 +1735,78 @@ picking one side wholesale for the whole diff:
   by reading the diff — the markers themselves were fully resolved and mypy-clean before any
   of #1-4 above were discovered, which is the whole reason to run tests after a merge instead
   of trusting that "no conflict markers left" means "done."
+
+---
+
+## 2026-09-25 · post-merge contrarian audit on `dev` (Phases 3+4+5 combined) — one real, blocking bug found and fixed
+
+A second independent audit, run cold against the actual merged `dev` tree (not any individual
+feature branch), found one genuine, spec-violating bug the merge process didn't catch:
+`ComplaintService.create()` never called `StatsService.invalidate()` at all, and
+`change_status()`'s call ran **before** the DB commit, not after — the reverse of
+`09-CACHE-RATELIMIT.md §2.3`'s explicit `COMMIT → DEL` requirement and a direct violation of
+Gate 5's own first checklist line (`"after a POST, next call MISS"`). No test in the merged
+suite caught it: the one test that looked like it covered this
+(`tests/unit/services/test_stats_invalidation_order.py`) tested a synthetic stand-in function
+written before `ComplaintService` existed, never revisited once it did.
+
+- **Root cause, verified independently before fixing:** `app/deps.py::get_session()` commits
+  inside a generator's post-yield code, which — confirmed by direct experiment, not assumed —
+  only runs after the route handler function has already returned. Nothing inside
+  `ComplaintService`'s methods (called *during* the handler, before it returns) can correctly
+  sequence "after commit" against that implicit commit; any `invalidate()` call placed inside
+  `create()`/`change_status()` necessarily runs before the real commit, no matter where in the
+  method body it's placed.
+- **Ponytail decision:** two real fixes existed — (a) give `ComplaintService` explicit control
+  over the commit point, or (b) use `fastapi.BackgroundTasks` to invalidate after the response
+  is sent. **Chosen: (a)**, because it matches the spec's own literal `COMMIT → DEL` wording
+  and worked test example exactly, needs no new FastAPI request-lifecycle machinery, and (b)
+  would actually be *later* than required (post-response, not just post-commit), adding a
+  narrower but real race a client's own immediate follow-up request could hit that (a) doesn't
+  have.
+- **Fix:** added `ComplaintRepository.commit()` (delegates to `self._s.commit()` — repositories
+  already own the session, so this is data-layer scope, not a new layer violation;
+  `make lint-layers` confirmed clean). `ComplaintService.create()` now calls
+  `repo.commit()` then `stats.invalidate()` in that order, and actually calls `invalidate()` at
+  all (previously it never did). `change_status()`'s existing call was reordered to also commit
+  first. `app/deps.py::get_session()`'s own later commit becomes a safe no-op on an
+  already-clean session (SQLAlchemy's documented behavior, not something new being relied on).
+- **Tests:** `tests/unit/test_complaint_service.py` gained
+  `test_create_commits_then_invalidates_stats_cache` and
+  `test_change_status_commits_then_invalidates_stats_cache`, against the real
+  `ComplaintService` (a `_FakeStats` and an extended `_FakeRepo` recording into one shared
+  `calls` list, so cross-object ordering is directly observable, not two separate lists that
+  could each look right in isolation while still being wrong relative to each other).
+  Falsified per CLAUDE.md HARD rule 14: temporarily removed the `commit()`/`invalidate()` calls
+  from `create()`, confirmed the new test goes red (`AssertionError`, `['create'] != ['create',
+  'commit', 'invalidate']`), restored.
+  `tests/unit/services/test_stats_invalidation_order.py`'s synthetic stand-in
+  (`_RecordingSession`/`_RecordingStatsService`, `test_invalidate_happens_after_commit`,
+  `test_invalidate_reversed_order_is_detected_as_wrong`) was removed rather than patched — it
+  tested a shape mirroring code that now actually exists elsewhere, and keeping it would mean
+  two tests asserting the same property, one against a fake shape and one against the real
+  thing. Its one still-independent test (`invalidate()` never touches the DB session) was kept.
+  Added a new integration test,
+  `tests/integration/test_cache_ratelimit.py::test_complaint_service_create_invalidates_stats_end_to_end`
+  — real `ComplaintService` → real `ComplaintRepository`/`StatsService`, real Postgres, real
+  Redis, directly reproducing `09-CACHE-RATELIMIT.md §2.3`'s own Gate-5 worked example. This is
+  the layer the audit's core point was about: the unit tests prove ordering against fakes, but
+  nothing previously exercised the real end-to-end wiring at all, which is exactly how the bug
+  shipped through CI in the first place (the `integration` CI job that would catch this at the
+  HTTP level doesn't exist yet — `bootstrap-check`/`contract`/`data-layer`/`frontend` are the
+  only jobs currently defined, none of which POST a complaint and check `/api/stats`).
+- **Also fixed, smaller, from the same audit's nitpick finding:** `app/routes/meta.py`'s
+  `available` provider list still hardcoded `["rules", "simulated"]` with a comment saying
+  `llm`/`ollama` didn't exist yet — they do now, post-merge. Fixed the list; left
+  `cache.hits/misses/hit_rate` as an honest zero rather than a fabricated number, since the
+  real fix (reading `TriageService.cache_hits`/`cache_misses`, or the Prometheus counters
+  `08-AI-TRIAGE.md §6` actually specifies) needs an app-lifetime `TriageService`/counter
+  object this route can read from — none exists yet, `TriageService` is constructed fresh
+  per-request in `deps.py`, same "per-request vs. app-lifetime" gap `app.state.ring` already
+  solved for the outcome ring but not yet applied to cache counters. Documented as a real,
+  larger, not-yet-done fix in the route's own comment rather than silently left stale or
+  patched with a wrong-shaped quick fix.
+- **Verified:** `pytest -m "unit or contract"` — 271 passed (272 total assertions across the
+  suite net of the 2 added / 2 removed tests). `pytest -m integration --collect-only` — 26
+  tests collect cleanly (was 25). `ruff check .`, `ruff format --check .`, `mypy app` (strict,
+  57 source files), `make lint-layers` — all clean.

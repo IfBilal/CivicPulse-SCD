@@ -64,6 +64,52 @@ async def test_stats_invalidate_forces_next_read_to_miss(stats_service: StatsSer
     assert hit_after_invalidate is False
 
 
+async def test_complaint_service_create_invalidates_stats_end_to_end(
+    redis_client, db_session: AsyncSession
+) -> None:
+    """`09-CACHE-RATELIMIT.md §2.3`'s own Gate-5 worked example, against the real
+    `ComplaintService` -> `ComplaintRepository`/`StatsService` wiring, real Postgres, real
+    Redis -- not the fakes the unit suite (`tests/unit/test_complaint_service.py::
+    test_create_commits_then_invalidates_stats_cache`) uses to prove the same ordering.
+    Added in the post-merge audit fix (2026-09-25, docs/AI-USAGE.md): the merge originally
+    left `ComplaintService.create()` never calling `invalidate()` at all, which no test
+    caught because nothing exercised the real service end-to-end -- this test exists
+    specifically to close that gap, not duplicate the unit-level ordering proof."""
+    from app.providers.triage.cache import InMemoryTriageCache
+    from app.providers.triage.rules import RuleBasedTriage
+    from app.services.complaint_service import ComplaintService
+    from app.services.triage_service import TriageService
+
+    repo = ComplaintRepository(db_session)
+    stats = StatsService(redis_client, repo, cache_key="stats:v1", ttl_s=30, poll_timeout_ms=300)
+
+    class _Settings:
+        triage_timeout_s = 1.0
+        triage_total_budget_ms = 2000
+        triage_max_retries = 0
+        triage_retry_jitter_ms = 10
+        triage_cache_ttl_s = 60
+        triage_min_confidence = 0.0
+        triage_ring_size = 20
+
+    triage = TriageService(RuleBasedTriage(), InMemoryTriageCache(), _Settings())
+    svc = ComplaintService(repo=repo, triage=triage, stats=stats)
+
+    payload_before, hit_before, _ = await stats.get()
+    assert hit_before is False  # first call, real MISS
+    total_before = payload_before.total
+
+    await svc.create(
+        text="water main burst flooding the street outside the market",
+        location="Integration Test Street 1",
+        contact=None,
+    )
+
+    payload_after, hit_after, _ = await stats.get()
+    assert hit_after is False  # invalidation forced a real MISS, not a stale HIT
+    assert payload_after.total == total_before + 1
+
+
 async def test_stampede_single_computation(redis_client, db_session: AsyncSession) -> None:
     """E8: 20 real-concurrent cache-miss requests against a real Redis lock result in
     exactly 1 (or a very small, bounded number if the lock genuinely expires mid-test)
