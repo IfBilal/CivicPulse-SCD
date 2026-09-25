@@ -22,6 +22,15 @@ env:
   NODE_VERSION: "22"
   TRIAGE_PROVIDER: simulated   # §2.5 — CI is pinned to the deterministic provider
 
+# GitHub's own default `run:` shell is `bash -e {0}` — NOT `-o pipefail`. Without it, a pipeline
+# like `kustomize build ... | kubeconform ...` reports only the last command's exit code, so a
+# failing kustomize with a healthy-on-empty-input kubeconform silently reports success (found
+# running this job for real — see docs/AI-USAGE.md, 2026-09-25). Set it globally rather than
+# per-step so no future pipe in this file can repeat the same masking bug.
+defaults:
+  run:
+    shell: bash -eo pipefail {0}
+
 jobs:
   lint-and-type:
     runs-on: ubuntu-24.04
@@ -164,6 +173,15 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - name: fail loudly, not silently, while k8s/ doesn't exist yet
+        # `! grep ... k8s/ || {...}` (below) can't tell "no match" from "path doesn't exist" —
+        # grep exits 2 either way and `!` treats any nonzero the same (the same bug class fixed
+        # in Makefile::lint-localhost this same PR). Guard explicitly instead of relying on that.
+        run: |
+          if [ ! -d k8s/overlays/dev ] || [ ! -d k8s/overlays/prod ]; then
+            echo "::error::k8s/overlays/{dev,prod} don't exist yet — Phase 6 hasn't landed"
+            exit 1
+          fi
       - run: |
           curl -sL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz | tar xz -C /usr/local/bin kubeconform
           curl -sL "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.4.3/kustomize_v5.4.3_linux_amd64.tar.gz" | tar xz -C /usr/local/bin kustomize

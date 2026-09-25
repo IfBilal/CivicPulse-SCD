@@ -1352,3 +1352,32 @@ independently.
   two real design forks were surfaced and decided rather than silently resolved, one real typed
   secret-handling bug was caught and fixed, and test files on both sides of the merge were
   updated to match the reconciled code rather than left calling APIs that no longer exist.
+
+## 2026-09-25 · feat/ci-pipeline · real CI run caught a bug in this PR's own manifests job
+
+- **Tool:** none — caught by actually watching the first real GitHub Actions run of this PR's
+  `ci.yml`, not by local review.
+- **What happened:** the PR body (and the ponytail entry above) claimed `manifests` would be
+  "intentionally red until Phase 6 lands `k8s/`." The real run showed it **passing** instead —
+  for the wrong reason. `kustomize build k8s/overlays/dev | kubeconform ...` — `kustomize` fails
+  (`k8s/` doesn't exist), but GitHub's default `run:` shell is `bash -e {0}`, **not**
+  `-o pipefail**. Without pipefail, a pipeline's exit code is only its last command's;
+  `kubeconform` on empty stdin reports "0 resource found... Errors: 0" and exits 0, so the whole
+  step reports success. The `:latest`-check step (`kustomize build ... | grep ...`) has the same
+  shape. The secrets-check step (`! grep -rniE ... k8s/ || {...}`, no pipe) hit the *other*
+  masking bug this same PR already fixed once in `Makefile::lint-localhost` — grep exits 2 on a
+  missing path, `!` treats any nonzero as "pass" — I wrote the exact same anti-pattern again in
+  `ci.yml` after having just diagnosed and fixed it elsewhere in the same PR.
+- **Fixed:** added `defaults: {run: {shell: "bash -eo pipefail {0}"}}` at the workflow level (so
+  every job's every pipe is protected, not just `manifests`), plus an explicit
+  `[ -d k8s/overlays/dev ] && [ -d k8s/overlays/prod ]` guard as the first real step in
+  `manifests`, so the missing-`k8s/` case fails loudly with a clear `::error::` message instead
+  of accidentally passing through a masked pipe/grep exit code. Re-verified the guard logic
+  locally (real `k8s/` absence on this machine, confirmed it now reports the intended failure).
+- **I changed:** this is worth naming plainly rather than folding into the earlier pre-PR review
+  section — the original review didn't catch it because it never actually ran the workflow
+  against GitHub's real shell defaults, it only validated YAML syntax and ran the equivalent
+  commands in my own local zsh/bash session (which very likely *does* have different `set`
+  defaults than a fresh `bash -e {0}` invocation). Lesson for future CI work in this repo: a
+  pre-PR review of a workflow file needs at least one real run before trusting a job's claimed
+  pass/fail meaning, not just local command replication.
