@@ -1,0 +1,60 @@
+$ docker compose exec -T database psql -U $POSTGRES_USER -tAc "select count(*) from complaints"   (before down)
+36
+
+$ docker compose down    (keeps named volumes: pgdata, redisdata, ollama_models)
+ Container civicpulse-frontend-1 Stopping
+ Container civicpulse-frontend-1 Stopped
+ Container civicpulse-frontend-1 Removing
+ Container civicpulse-frontend-1 Removed
+ Container civicpulse-backend-1 Stopping
+ Container civicpulse-backend-1 Stopped
+ Container civicpulse-backend-1 Removing
+ Container civicpulse-backend-1 Removed
+ Container civicpulse-cache-1 Stopping
+ Container civicpulse-database-1 Stopping
+ Container civicpulse-cache-1 Stopped
+ Container civicpulse-cache-1 Removing
+ Container civicpulse-cache-1 Removed
+ Container civicpulse-database-1 Stopped
+ Container civicpulse-database-1 Removing
+ Container civicpulse-database-1 Removed
+ Network civicpulse_internal Removing
+ Network civicpulse_edge Removing
+ Network civicpulse_internal Removed
+ Network civicpulse_edge Removed
+
+$ docker compose up -d
+ Network civicpulse_internal Creating
+ Network civicpulse_internal Created
+ Network civicpulse_edge Creating
+ Network civicpulse_edge Created
+ Container civicpulse-cache-1 Creating
+ Container civicpulse-database-1 Creating
+ Container civicpulse-database-1 Created
+ Container civicpulse-cache-1 Created
+ Container civicpulse-backend-1 Creating
+ Container civicpulse-backend-1 Created
+ Container civicpulse-frontend-1 Creating
+ Container civicpulse-frontend-1 Created
+ Container civicpulse-cache-1 Starting
+ Container civicpulse-database-1 Starting
+ Container civicpulse-database-1 Started
+ Container civicpulse-cache-1 Started
+ Container civicpulse-database-1 Waiting
+ Container civicpulse-cache-1 Waiting
+ Container civicpulse-database-1 Healthy
+ Container civicpulse-cache-1 Healthy
+ Container civicpulse-backend-1 Starting
+ Container civicpulse-backend-1 Started
+ Container civicpulse-backend-1 Waiting
+ Container civicpulse-backend-1 Error dependency backend failed to start
+dependency failed to start: container civicpulse-backend-1 is unhealthy
+
+$ docker compose ps --format "{{.Service}}\t{{.Health}}"
+backend	unhealthy
+cache	healthy
+database	healthy
+frontend	healthy
+
+$ docker compose exec -T database psql -U $POSTGRES_USER -tAc "select count(*) from complaints"   (after up)
+36

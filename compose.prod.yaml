@@ -1,0 +1,31 @@
+name: civicpulse
+services:
+  frontend:
+    image: ${REGISTRY}/frontend:${IMAGE_TAG}    # NO build: key anywhere in this file
+    networks: [edge]
+    ports: ["80:8080"]
+  backend:
+    image: ${REGISTRY}/backend:${IMAGE_TAG}
+    networks: [edge, internal]
+    # NO source bind mount
+  database:
+    image: postgres:16.4-alpine
+    networks: [internal]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    # NO ports:  ← §5.3 −8 if present
+  cache:
+    image: redis:7.4.1-alpine
+    networks: [internal]
+    volumes: ["redisdata:/data"]
+    # NO ports:
+
+networks:
+  edge:
+    driver: bridge
+  internal:
+    driver: bridge
+    internal: true
+
+volumes:
+  pgdata:
+  redisdata:
