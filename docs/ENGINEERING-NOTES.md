@@ -816,3 +816,70 @@ finding. The fix is small and obvious once pointed at: add the same
 `StatsService.invalidate()`'s own docstring already documents. Flagging directly for DEV-A rather
 than leaving it to be rediscovered, since Gate 5's own checklist explicitly names this behavior
 ("after a POST, next call MISS") and it currently doesn't hold.
+
+---
+
+## DEV-B · `fix/logging-caplog-and-orjson-cve` · fixing two disclosed bugs in DEV-A's code
+
+Per explicit user instruction, not DEV-B's normal lane — both issues were previously disclosed
+(not fixed) in this file across the Phase 5/6 entries above. Branched separately from the
+CI/K8s PRs since neither fix is compose/CI/k8s work.
+
+### `orjson` CVE (straightforward)
+
+`backend/pyproject.toml`: `orjson==3.10.*` → `orjson==3.11.*`. Regenerated
+`requirements.lock` via `make lock` (`uv pip compile`). Diffed the regenerated lockfile against
+the original: the **only** version that changed is `orjson` (`3.10.18` → `3.11.9`); the rest of
+the diff is hash-line reformatting from a full regen, not other packages moving. Full suite
+re-run clean after reinstalling: 296 passed.
+
+### The `caplog`/logging bug — three wrong turns before the real fix, disclosed in full
+
+**First attempt** (already shipped on `feat/ci-pipeline`/#36, disclosed there): stop
+`configure_logging()` wiping every root-logger handler unconditionally; only remove the one
+handler it previously installed itself. Correct as far as it went — fixed the originally-diagnosed
+mechanism — but re-running the full suite afterward still showed the same 3 failures. That
+disclosure was accurate about the mechanism it found, incomplete about the whole bug.
+
+**Second finding, empirically confirmed, not assumed:** debug-instrumented the actual failing
+test inside a real full-suite run (not an isolated `-k` selection, which doesn't reproduce
+order-dependent bugs) and found `logging.getLogger("app.triage").disabled == True` by the time
+it executes. `Logger.disabled` short-circuits `isEnabledFor()` entirely — independent of
+handlers, levels, or propagation, which is why the handler fix alone didn't close it.
+
+**Ruled out before landing a fix, not guessed:**
+- `uvicorn`'s own logging config — read `uvicorn.config.LOGGING_CONFIG` directly: it sets
+  `disable_existing_loggers: False` explicitly, and only touches the `uvicorn*` logger names.
+- Anything in this codebase's own source — grepped `app/` and `tests/` for `dictConfig`/
+  `.disabled =`: no hits.
+- pytest's own `_pytest/logging.py::_disable_loggers` (the one place in the installed dependency
+  tree that does set `.disabled = True`) — read its source: gated behind the `--logger-disable`
+  CLI option / `logger_disable` ini setting, neither configured anywhere in this repo, so it's
+  a dead code path here, not the trigger.
+
+The exact trigger among the remaining possibilities (some interaction across ~300 tests, several
+third-party libraries, and pytest's own internals) wasn't run to ground given the size of the
+search space relative to how well-understood and safe the fix is — see below.
+
+**Third finding:** the handler fix alone (in `configure_logging()`) only helps *after* the app
+factory has run at least once in the process. Two `test_triage_service.py` tests construct
+`TriageService` directly, never via `create_app()`, and happened to run early enough in the
+suite's real collection order to fail even with the handler fix in place, while an equivalent
+test in `test_logging_config.py` (which runs later, after some earlier test does construct the
+app) started passing. Order-dependent — exactly the class of bug CLAUDE.md HARD rule 15 names.
+
+**Final fix, two parts:**
+1. `app/logging_config.py::configure_logging()` now also unconditionally re-enables every known
+   logger (`logging.getLogger(name).disabled = False` for everything in
+   `logging.root.manager.loggerDict`) each time it runs — defensive, idempotent, and correct
+   regardless of what disabled them.
+2. `tests/conftest.py` (new — no suite-wide conftest existed before): an `autouse=True` fixture
+   doing the same re-enable, once per test, so the guarantee doesn't depend on `configure_logging()`
+   having run first. This is the piece that actually makes the fix order-independent.
+
+**Verified, not assumed:** full suite run twice in a row after the fix — **296 passed, 296
+passed**, no flakiness observed across both runs.
+
+**Why disclosed this thoroughly rather than a clean summary:** the first fix looked complete and
+wasn't — writing that down plainly, including the wrong turn, is worth more at viva than
+presenting a tidy story that skips how the real cause was actually found.
