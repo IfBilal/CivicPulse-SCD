@@ -8,7 +8,7 @@ that (`06-BACKEND-CORE.md §7`).
 from uuid import UUID, uuid4
 
 from app.db.models import Complaint
-from app.domain.enums import Category, Priority, Status
+from app.domain.enums import Category, Priority, Status, TriagedBy
 from app.domain.errors import InvalidTransition, NotFound
 from app.domain.transitions import is_allowed
 from app.repositories.complaint_repo import ComplaintRepository
@@ -52,7 +52,13 @@ class ComplaintService:
             category=outcome.result.category,
             priority=outcome.result.priority,
             ai_summary=outcome.result.summary,
-            triaged_by=outcome.triaged_by,
+            # TriageOutcome.triaged_by is `str` (it's built from a provider's plain-string
+            # `.name`, which the TriageProvider Protocol deliberately keeps un-typed to a
+            # closed enum — see 08-AI-TRIAGE.md §1's Protocol-over-inheritance point). Every
+            # real value is already a valid TriagedBy member; this wrap makes that explicit at
+            # the one boundary where it needs to be an enum (the DB column), rather than
+            # asking the whole triage layer to import app.domain.enums.
+            triaged_by=TriagedBy(outcome.triaged_by),
             triage_latency_ms=outcome.latency_ms,
             triage_confidence=outcome.result.confidence,
         )
