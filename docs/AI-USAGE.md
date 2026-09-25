@@ -778,3 +778,70 @@ than an honest account of debugging a genuinely subtle async-ORM/pytest-collecti
   passed), `ruff check`, `mypy app` (strict), and `make lint-layers` after the fix; all clean.
   `pytest -m integration` still cannot run in this sandbox (same disclosed Docker-permission
   gap as the entry above) — unchanged by this fix, not newly introduced by it.
+
+---
+
+## 2026-09-25 · feat/backend-api — three real bugs found and fixed via actual CI runs
+
+Once PR #31 (Phase 3) was pushed, its own CI (unreachable from this sandbox — no Docker) ran
+the code against real infrastructure for the first time. Three separate red runs, each
+diagnosed from the actual job log and fixed with a real code change, not a workaround:
+
+**1. Gitleaks flagged `backend/tests/unit/test_logging_config.py:55`** (`google-ai-key` rule) —
+a test fixture exercising `_redact()`'s `AIza[\w-]{35}` pattern happened to be a literal string
+matching Google's key shape. Not a live key, but CLAUDE.md HARD rule 1 treats a fixture shaped
+like a real key the same as a real one — gitleaks is shape-based by design and correctly
+doesn't distinguish. Fixed by assembling both key-shaped fixtures (`gsk_`/`AIza`) at runtime
+via generator expressions instead of embedding a matching literal in source, verified by hand
+against `.gitleaks.toml`'s exact `groq-key`/`google-ai-key` regexes and by disabling
+`_SECRET_PATTERNS` at runtime to confirm both tests still go red without the implementation.
+Because the flagged commit (`be8d08e`, created by an earlier rebase) had already been pushed,
+fixing forward wasn't enough — gitleaks scans the full PR commit range, so the flagged blob
+kept surfacing in every subsequent CI run even after a later commit fixed it. Resolved with
+`git reset --soft` to the branch's merge-base with `dev` and a single clean recommit, removing
+the flagged blob from this branch's history entirely (the branch was never shared — only this
+session had pushed to it, so rewriting was safe; confirmed via `--force-with-lease`, which
+would have refused had anyone else pushed).
+
+**2. `data-layer` CI job failed:** `pydantic_core.ValidationError: Instance is frozen`, on
+`Settings.database_url`. `backend/tests/integration/conftest.py::migrated_db` and
+`test_migrations.py::_alembic_config` — both pre-existing, Phase 2 fixtures — redirect the
+module-level `settings` singleton at an ephemeral testcontainers Postgres URL before Alembic's
+`env.py` imports it, by assigning `settings.database_url = url` directly. `Settings` gained
+`frozen=True` in this PR (`06-BACKEND-CORE.md §1`, a real Phase 3 requirement, not something to
+relax to keep the old pattern working), which made that assignment raise. Fixed both fixtures
+to reassign the `app.settings` module's `settings` attribute to a `model_copy()` instead of
+mutating a field — `alembic/env.py`'s `from app.settings import settings` reads whatever object
+that attribute points to at the moment its import actually runs, so a fresh frozen instance
+serves the same purpose. This was the first time this code path ran against a real
+testcontainers Postgres; the local sandbox's lack of Docker access meant `pytest -m
+integration` was disclosed as untestable here, not silently skipped, and CI caught exactly the
+kind of bug that gap predicted.
+
+**3. `data-layer` CI job failed again, different reason, same run family:** after fix #2,
+`16 passed, 121 deselected` — the actual bug was gone — but the job still exited 1:
+`FAIL Required test coverage of 65% not reached. Total coverage: 59.09%`.
+`backend/pyproject.toml`'s `addopts` applies `--cov-fail-under=65` globally to every `pytest`
+invocation, but `.github/workflows/ci.yml`'s `data-layer` job only ever runs a 16-test subset
+(`-k "test_migrations or test_complaint_repo or test_seed"`) — its own comment says this job is
+"Phase 2's own migration/repository/seed verification, distinct from Phase 5's integration job
+(the full compose-stack smoke test)." It was never meant to prove whole-`app/`-tree coverage;
+it passed before only because `app/` was small enough that a Phase-2-only test slice happened
+to clear 65% by coincidence. Phase 3 tripled `app/`'s size, and the coincidence broke.
+**Ponytail fork:** (a) override `--cov-fail-under` down or to 0 for this job's invocation only,
+since the `contract` job's `pytest -m "unit or contract"` run is the one actually responsible
+for the project-wide floor (confirmed: 87.88% on its own, comfortably clearing 65%, so real
+coverage enforcement is intact elsewhere) — vs. (b) scope `--cov=app` down to just the
+db/repositories/domain layers this job actually exercises, so its own narrower number stays
+meaningful. **Chosen: (a)**, because a narrower `--cov=` target for one job would need
+maintaining in step with which files the job's test selection happens to touch, which drifts
+silently as more Phase 3/4/5 code lands under the same `app/` tree — a flat "this job doesn't
+own the coverage gate, `contract` does" is simpler and matches what the job's own pre-existing
+comment already says its job is. Added `--cov-fail-under=0` to the `data-layer` step's pytest
+invocation in `ci.yml`; `--cov=app --cov-report=term-missing` still runs and prints the number
+for visibility, it just doesn't fail the job on it.
+- **I changed:** nothing about the Phase 3 implementation itself for bug #3 — this was a
+  pre-existing CI/pyproject scoping gap between two jobs measuring different test slices
+  against the same global threshold, exposed by Phase 3 growing `app/`, not caused by a defect
+  in Phase 3's own code. Verified locally: `pytest -m "unit or contract"` alone reaches 87.88%
+  coverage before this fix, confirming the real gate isn't being weakened.
