@@ -227,7 +227,13 @@ jobs:
         # stale until the 30s TTL. Not asserted here since it's confirmed broken; asserting it
         # would just be a known-red check, not a useful signal. Backend/app territory, not
         # fixed on this branch.
+        #
+        # FLUSHALL first: the "readiness" step above polls /api/stats via wait_for.sh, which
+        # itself populates the cache as a side effect — without this, "first" here already
+        # reads back that poll's HIT instead of a genuine MISS (found on a real CI run, not
+        # assumed: the first attempt at this assertion failed with "first=HIT second=HIT").
         run: |
+          docker compose exec -T cache redis-cli FLUSHALL
           a=$(curl -si localhost:8080/api/stats | grep -i '^x-cache:' | tr -d '\r' | awk '{print $2}')
           b=$(curl -si localhost:8080/api/stats | grep -i '^x-cache:' | tr -d '\r' | awk '{print $2}')
           echo "first=$a second=$b"
