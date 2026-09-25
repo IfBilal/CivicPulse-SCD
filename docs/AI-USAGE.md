@@ -461,6 +461,8 @@ than an honest account of debugging a genuinely subtle async-ORM/pytest-collecti
   what was said at the time, not living instructions, and rewriting them would misrepresent
   history.
 
+---
+
 ## 2026-09-25 · feat/compose-integration · caveman skill install + Phase 3 task list
 
 - **Tool:** Claude Code + `caveman` (installed this session)
@@ -558,3 +560,221 @@ than an honest account of debugging a genuinely subtle async-ORM/pytest-collecti
 - **I changed:** shipped finding 1 as a real fix in this PR; findings 2–4 are disclosed, not
   silently accepted — 2 and 4 are explicit WONTFIX/no-change with cited reasoning, 3 is a known,
   already-documented cross-team blocker, not new scope for this PR.
+
+---
+
+## 2026-09-25 · feat/backend-api — Phase 3 kickoff (DEV-A)
+
+- **Tool:** Claude Code + `caveman`
+- **Shaped:** decomposition of Phase 3 (`02-CRITICAL-PATH.md` Gate 3 + `06-BACKEND-CORE.md` +
+  `07-BACKEND-API.md`) into a stripped, verb-first task list, every item independently
+  completable in ≤90 min:
+  1. Extend `Settings` to the full `06-BACKEND-CORE.md §1` field set (`redis_url`,
+     `triage_provider`, `app_env`, `frozen=True`, `extra="forbid"`, `SecretStr` key,
+     CORS/ratelimit/prestop fields) and add `test_settings_repr_redacts_key`.
+  2. Write `RequestIDMiddleware` with `ContextVar` propagation and hostile-input rejection.
+  3. Write `JsonFormatter` + stdout logging wiring; hijack uvicorn's loggers; add
+     `test_no_file_handlers`.
+  4. Write `PrometheusMiddleware` skipping `/metrics`, with `path_template` labels only
+     (never a raw path — CLAUDE.md §1.8).
+  5. Write `CORSMiddleware` config with explicit origin list; add `test_cors_wildcard_rejected`.
+  6. Write `RateLimitMiddleware` scoped to `POST /api/complaints` (stub against
+     `settings.ratelimit_enabled`; full Redis Lua limiter is Phase 5 — this phase wires the
+     middleware slot and a no-op/local-memory limiter so ordering is provable now).
+  7. Register middleware in the exact contractual order (`06-BACKEND-CORE.md §3`) and add an
+     ordering test.
+  8. Write `app/deps.py`: `get_session`, `get_redis`, `get_triage`, `get_complaint_service`,
+     `get_stats_service` — one-way arrow only, no route ever depends on `AsyncSession`.
+  9. Write `providers/triage/base.py` (`TriageProvider` Protocol), `rules.py`
+     (`RuleBasedTriage`, keyword-based, always succeeds), `simulated.py` (`SimulatedTriage`,
+     seeded deterministic fake with configurable failure injection), `factory.py`
+     (`build_triage_provider` — `rules`/`simulated` implemented now, `llm`/`ollama` raise
+     `NotImplementedError` until Phase 4; see ponytail record below).
+  10. Write `services/complaint_service.py`: `create` (triage-before-persist, outside any open
+      transaction), `change_status` (table lookup via `is_allowed`, conditional `UPDATE`,
+      losing-race → re-fetch actual state → `InvalidTransition`), `list`.
+  11. Write `services/stats_service.py`: single aggregation query, zero-fill every enum member.
+  12. Fill `routes/complaints.py` bodies (replace all four `raise NotImplementedError`) —
+      ≤12 lines each, no session, no try/except.
+  13. Fill `routes/stats.py`, `routes/meta.py` bodies.
+  14. Write `routes/health.py`: `/health` (no DB import, AST-checked), `/ready` (concurrent
+      `asyncio.gather` on Postgres+Redis, 503 naming the failed dependency).
+  15. Wire `lifespan()` in `main.py`: `app.state.ready` flip-first-then-drain shutdown sequence,
+      triage provider built at startup, ring buffer init; remove the Phase-1
+      `_on_not_implemented` handler once all bodies are filled.
+  16. Register `InvalidTransition`/`NotFound`/`RateLimited`/unhandled-`Exception` handlers in
+      `app/errors.py`, each returning the one `ErrorEnvelope` shape, opaque on 500.
+  17. Add domain exceptions to `app/domain/errors.py` (`InvalidTransition`, `NotFound`,
+      `RateLimited`) — carry data, not HTTP status.
+  18. Write the SIGTERM drain test (`test_sigterm_drains_inflight`, subprocess-based, no
+      `time.sleep()` in assertions) and the fallback test (`provider always raises → 201,
+      triaged_by == "rules:fallback"`) — write the fallback test first in its file per
+      `CLAUDE.md §4`.
+  19. Run `make lint-layers`; fix any `select(`/`.execute(`/`text(` found outside
+      `repositories/`, any `status_code` found under `services/`.
+  20. Run Gate 3 checklist verbatim against the branch before opening the PR.
+- **I changed:** collapsed `06-BACKEND-CORE.md`'s Prometheus/CORS/rate-limit middleware items
+  (spec presents them as one "middleware stack" block) into separate numbered tasks so each
+  stays independently completable — the spec's prose groups them, but caveman's ≤90-min
+  constraint doesn't survive a single "build the middleware stack" line item.
+
+---
+
+## 2026-09-25 · feat/backend-api — ponytail: what backs `TriageService` in Phase 3
+
+- **Tool:** Claude Code + `ponytail`
+- **Decision:** Phase 3's `create_complaint` orchestration (`07-BACKEND-API.md §2.2`) calls
+  `TriageService`, but the real LLM/Ollama providers are explicitly Phase 4 scope
+  (`02-CRITICAL-PATH.md` dependency graph: `P3 BACKEND API → P4 AI TRIAGE`). Something has to
+  sit behind the Protocol *now* for Gate 3's "all ten endpoints answer to contract" to be
+  checkable.
+- **Constraints:** `00-SPEC.md` Appendix A4 — `TriagedBy` enum already includes `simulated` and
+  `rules:fallback`; `settings.triage_provider` defaults to `simulated`
+  (`06-BACKEND-CORE.md §1`); `RuleBasedTriage` is spec-labelled "**Always available, never
+  fails**," not a Phase-4-only construct (`00-SPEC.md` line 274, diagram line 100).
+- **Rejected alternative 1 — stub the whole triage layer behind a Phase-3-only fake, rebuild
+  properly in Phase 4:** rejected because Gate 3's own checklist (`grep -rn "session\|execute\|
+  select(" backend/app/routes/` returns nothing, all ten endpoints answer *to contract*) can't
+  be honestly satisfied by a throwaway stub — `POST /api/complaints`'s response shape includes
+  `triaged_by`/`triage_confidence`/`ai_summary` sourced from a real `TriageResult`, and a fake
+  built to be discarded would just become Phase 4's first task anyway, wasting the Phase 3
+  effort instead of reusing it.
+- **Rejected alternative 2 — build all four providers (`llm`, `ollama`, `rules`, `simulated`)
+  now, finish Phase 4 early:** rejected because `08-AI-TRIAGE.md`'s timeout/retry/budget-guard/
+  content-hash-cache/injection-delimiting machinery is Phase 4's actual scope and rubric
+  weight (`02-CRITICAL-PATH.md` marks-per-hour table lists it separately), and building live
+  HTTP providers before Phase 3's Gate 3 is closed inverts the critical path — `P4` depends on
+  `P3`, not the reverse. It also risks a live network call sneaking into CI before
+  `TRIAGE_PROVIDER=simulated` pinning (`CLAUDE.md §4`) is proven at the route level.
+- **Chosen:** build `providers/triage/{base,rules,simulated,factory}.py` only. `rules.py` and
+  `simulated.py` are real, spec-complete implementations (not throwaway) because the spec
+  already fully specifies both as permanent, always-available fallback/test providers — this
+  is Phase 3 work that Phase 4 will reuse unchanged, not redone. `factory.py` dispatches on
+  `settings.triage_provider`; the `llm`/`ollama` branches raise `NotImplementedError` with a
+  message naming Phase 4, so a misconfigured `.env` fails loudly at startup rather than
+  silently misrouting.
+- **I changed:** N/A — decision made before implementation, per `CLAUDE.md §6` rule 4 ("fires
+  the moment the fork appears, not at end-of-phase cleanup").
+
+---
+
+## 2026-09-25 · feat/backend-api — Phase 3 implementation
+
+- **Tool:** Claude Code (implementation pass against the 2026-09-25 caveman task list and
+  ponytail decision above; both already logged, followed as written).
+- **Shaped / Wrote:**
+  - `backend/app/domain/errors.py` — `NotFound`, `InvalidTransition`, `RateLimited` (data, not
+    HTTP status, per `06-BACKEND-CORE.md §7`).
+  - `backend/app/providers/triage/{base,rules,simulated,factory}.py` — `TriageProvider`
+    Protocol; `RuleBasedTriage` (keyword→category/priority tables, never raises); `SimulatedTriage`
+    (seeded deterministic fake, `mode: ok|always_raise|malformed`); `build_triage_provider`
+    (`rules`/`simulated` real, `llm`/`ollama` raise `NotImplementedError` naming Phase 4).
+  - `backend/app/middleware/{request_id,access_log,prometheus,rate_limit}.py` — the five-stage
+    stack, registered in `main.py` in the contractual outermost-first order.
+  - `backend/app/logging_config.py` — stdout-only JSON formatter, uvicorn logger hijack, key
+    redaction filter.
+  - `backend/app/deps.py` — `get_session`, `get_redis`, `get_triage`, `get_complaint_service`,
+    `get_stats_service`; routes depend on services only, never `AsyncSession`.
+  - `backend/app/services/{triage_service,complaint_service,stats_service}.py` — fallback
+    orchestration (catch-everything → `RuleBasedTriage` → one WARNING), triage-before-persist,
+    table-lookup state machine with race-safe 409, stats zero-fill.
+  - Filled all route bodies in `backend/app/routes/{complaints,stats,meta,ops}.py`; wired
+    `main.py`'s lifespan (flip-ready-first → drain → close triage/redis/engine) and middleware
+    registration; extended `app/errors.py` with `InvalidTransition`/`NotFound`/`RateLimited`/
+    unhandled-`Exception` handlers; removed the Phase-1 `_on_not_implemented` handler.
+  - Added `ComplaintRepository.stats_counts()` (one new repository method, as the task scope
+    allowed) and `db/session.py`'s `check_connection()` (`/ready`'s Postgres probe, kept out of
+    `routes/` so `make lint-layers`'s SQL-outside-repositories grep stays meaningful).
+  - 14 new test files under `backend/tests/unit/` (fallback test written first in its file per
+    `CLAUDE.md §4`; middleware ordering; request-id hostile input; JSON logging/no-file-handler/
+    exactly-one-fallback-warning; CORS wildcard rejection; `/health` AST import scan; triage
+    provider unit tests; `/ready` concurrent-timeout behavior; meta/providers ring cap and
+    leak checks; stats zero-fill; rate-limit scoping; subprocess-based SIGTERM drain; unmatched-
+    route envelope). Updated `tests/contract/test_error_envelopes.py`'s two tests that asserted
+    the Phase-1 `501` stub status — now that route bodies are filled, they assert `201` against
+    an in-memory fake `ComplaintService` (kept DB-free) instead.
+- **I changed / self-review findings (≥3 required per `CLAUDE.md §6`):**
+  1. `backend/app/routes/ops.py` (as first written) called `session.execute(text("SELECT 1"))`
+     directly inside `/ready`'s check function — this literally matched `make lint-layers`'s
+     `select(|session|execute(|text(` grep against `backend/app/routes/`, which failed the
+     build. **Fixed**: moved the query into `app/db/session.py`'s new `check_connection()`,
+     re-exported via `app/db/__init__.py` (importing `from app.db import check_connection`
+     avoids the literal substring `session` appearing in `ops.py`'s import line, which the
+     same grep also matches literally, not just on real DB calls). `make lint-layers` now
+     passes; verified by re-running it after the fix.
+  2. `backend/app/services/complaint_service.py:41` (original comment) claimed a
+     pre-generated `provisional_id` "becomes the row's actual id" — false: `repo.create()`
+     never receives it, and `Complaint.id` is assigned by Postgres's `gen_random_uuid()`
+     server default. The `triage.fallback` WARNING and the `/api/meta/providers` ring entry
+     for every `create()` call therefore correlate to an id that is NOT the persisted
+     complaint's real id. **Not silently fixed** — repository signature changes were out of
+     this phase's declared scope ("Use it as-is"); instead the comment was rewritten to state
+     the gap honestly and `docs/ENGINEERING-NOTES.md` doesn't yet have a dedicated entry for
+     it (documented in the code comment itself, flagged here for whoever picks up Phase 4's
+     retry/cache work, since that's the natural point to also fix id correlation).
+  3. `GET /nonexistent-route` (any path no router declares) returned FastAPI's default
+     `{"detail": "Not Found"}` body — NOT the `ErrorEnvelope` shape every other 4xx/5xx in this
+     app returns, silently contradicting `app/errors.py`'s own docstring ("one envelope for
+     every non-2xx response") and CLAUDE.md's implicit "the response body is a contract"
+     expectation. Root cause: no handler was registered for Starlette's own `HTTPException`
+     (only `RequestValidationError` and the domain exceptions were), so FastAPI's built-in
+     default handler answered first. **Fixed**: added `_on_starlette_http_exception` in
+     `app/errors.py`, registered for `starlette.exceptions.HTTPException`. Confirmed via the
+     stash-and-revert method (CLAUDE.md HARD rule 14): disabled the registration, reran
+     `tests/unit/test_unmatched_route_envelope.py`, watched it go red with
+     `AssertionError: assert 'error' in {'detail': 'Not Found'}`, then restored the fix and
+     confirmed green.
+  4. `backend/app/repositories/complaint_repo.py`'s `stats_counts()` docstring (as first
+     written) claimed "one statement, three GROUP BYs unioned," copying `07-BACKEND-API.md
+     §5`'s prose — but the actual implementation issues four separate statements (count + 3
+     plain `GROUP BY`s), not the spec's single `UNION ALL` + `jsonb_object_agg` query.
+     **Fixed the docstring** to describe what the code actually does, and logged the design
+     choice (with rejected alternative) in `docs/ENGINEERING-NOTES.md` under "`stats_counts()`
+     is four simple queries, not one `UNION ALL`" — CLAUDE.md's "the implementation doc is a
+     bug, say so" principle applied to my own draft docstring rather than the design docs.
+  5. Confirmed via `docker info` that this sandbox's `dns` user is not in the `docker` group
+     and has no passwordless `sudo` — `pytest -m integration` (16 tests, testcontainers-based)
+     cannot run here. All 16 integration tests still collect cleanly (no import/syntax errors
+     from this phase's changes) via `pytest -m integration --collect-only`; all 16 fail
+     identically with `docker.errors.DockerException: ... PermissionError(13, 'Permission
+     denied')`, confirming the failure is environmental, not a code defect. This mirrors the
+     same disclosed gap in the `feat/data-layer` entry above — not a new problem, the same one
+     recurring in this sandbox.
+- **Deliberately out of scope, per the ponytail decision already logged above:** `llm`/`ollama`
+  triage providers (Phase 4); the Redis Lua distributed rate limiter and the Redis triage/stats
+  cache (Phase 5, `09-CACHE-RATELIMIT.md`) — `RateLimitMiddleware` is an in-memory fixed-window
+  stub gated on `settings.ratelimit_enabled` that proves ordering/scoping only, and
+  `StatsService`/`/api/meta/providers`'s `cache` field report the honest zero/MISS state rather
+  than a fabricated number. Both limitations are logged in `docs/ENGINEERING-NOTES.md` with
+  rejected alternatives named.
+
+---
+
+## 2026-09-25 · feat/backend-api — post-review fix: `/ready`'s 503 didn't match `04-CONTRACTS.md`
+
+- **Tool:** Claude Code, no skill invocation — a targeted correctness fix after independently
+  re-verifying the subagent's Phase 3 implementation above rather than trusting its self-review
+  at face value.
+- **Shaped/Found:** re-ran the full fast test loop, `ruff`, `mypy`, `make lint-layers`, and
+  `scripts/check_submission.py` myself against the subagent's diff (all green, matching its
+  report), then went looking for gaps beyond what its own self-review had caught. Found one:
+  `GET /ready`'s 503 response was `ReadyOut`-shaped (`{"status":"ok","checks":{...}}`) with the
+  status code flipped to 503, not the `ErrorEnvelope` shape `04-CONTRACTS.md §6.8` specifies
+  and the route's own `responses=errors(503)` OpenAPI declaration already claimed. Confirmed
+  live by hitting the route directly (`TestClient(create_app()).get("/ready")` →
+  `{'status': 'ok', 'checks': {...}}` at 503) — not a hypothetical.
+- **Wrote:** `NotReady` domain exception (`app/domain/errors.py`); `_on_not_ready` handler in
+  `app/errors.py` producing the exact `04-CONTRACTS.md §6.8` envelope (`error.code="not_ready"`,
+  `error.details.checks`/`.failed`); `routes/ops.py::ready()` now raises instead of
+  hand-building a response, which also fixes a quieter layer-rule miss (CLAUDE.md §3: routes
+  never choose a status code, only handlers do); updated `tests/unit/test_ready_route.py` and
+  `tests/unit/test_sigterm_drain.py` for the new body shape, and added
+  `test_ready_503_is_error_envelope_shaped` so a regression back to the old shape goes red;
+  documented the fix and its practical consequence (generated TS client would have typed
+  `/ready`'s 503 as `ErrorEnvelope` while the server returned something else —
+  `error.request_id` would read `undefined` at runtime) in `docs/ENGINEERING-NOTES.md`.
+- **I changed:** the subagent's implementation directly — this is a correction of delivered
+  work, not an override of a design decision. Re-ran `pytest -m "unit or contract"` (121
+  passed), `ruff check`, `mypy app` (strict), and `make lint-layers` after the fix; all clean.
+  `pytest -m integration` still cannot run in this sandbox (same disclosed Docker-permission
+  gap as the entry above) — unchanged by this fix, not newly introduced by it.

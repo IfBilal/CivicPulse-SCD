@@ -353,3 +353,95 @@ Not fixed here — shared `Makefile` territory (like the `check_submission.py` p
 above), and the fix is a judgment call (create `k8s/.gitkeep` now vs. loop per-path so a missing
 directory can't swallow a real hit vs. `mkdir -p` guard in the recipe). Flagging for whoever
 touches `Makefile` next, ideally before Phase 6 lands anything under `k8s/` for real.
+
+---
+
+## DEV-A · Phase 3 — `ReadyOut.status` is `"ok"`, not `"ready"`
+
+`06-BACKEND-CORE.md §5`'s prose example for `/ready` shows `status="ready"`, but the frozen
+schema (`backend/app/schemas/health.py`, written and merged at Phase 1) declares
+`status: Literal["ok"]`. Per `CLAUDE.md`'s source-of-truth order, `04-CONTRACTS.md` (and the
+schema files that implement its frozen surface) outrank a design doc's prose example. Implemented
+`/ready` against `"ok"` as written in the schema; not silently reconciling the design-doc example
+to match, since `06-BACKEND-CORE.md §5` itself is now a documented bug rather than a followed
+instruction — flagging it here per `CLAUDE.md`'s "say so, don't quietly reconcile" rule.
+
+## DEV-A · Phase 3 — `/ready`'s 503 now ships the `ErrorEnvelope`, not `ReadyOut`
+
+Follow-up to the note above. The first pass of `/ready` returned a `ReadyOut`-shaped body
+(`{"status":"ok","checks":{...}}`) on *both* 200 and 503, just flipping the status code on
+failure. That satisfied `response_model=ReadyOut` and every test that existed at the time, but
+it silently diverged from `04-CONTRACTS.md §6.8`, which specifies the 503 as the one
+`ErrorEnvelope` shape used everywhere else — `{"error":{"code":"not_ready","message":...,
+"request_id":...,"details":{"checks":{...},"failed":[...]}}}`. The route's own
+`responses=errors(503)` OpenAPI declaration already documented `ErrorEnvelope` for that code;
+the runtime body just didn't match it. `test_error_responses_use_envelope`
+(`tests/contract/test_openapi.py`) only checks the *declared* schema, not what a route actually
+returns at runtime, so this shipped without a red test.
+
+Fixed by adding `NotReady` to `app/domain/errors.py` (carries `checks`/`failed`, no HTTP
+status — same pattern as `InvalidTransition`/`RateLimited`) and a `_on_not_ready` handler in
+`app/errors.py` that builds the contract's exact envelope. `routes/ops.py::ready()` now raises
+`NotReady` on any failure (dependency check or draining) instead of hand-building a response —
+which also brings it in line with CLAUDE.md §3's rule that routes never choose a status code,
+only registered handlers do. Added `test_ready_503_is_error_envelope_shaped` asserting the
+literal envelope fields, so a future regression back to the `ReadyOut`-on-503 shape goes red.
+Practical consequence of the bug, for the record: the generated TS client types `/ready`'s 503
+as `ErrorEnvelope` off the OpenAPI schema, so frontend code reading `error.request_id` on a 503
+would have read `undefined` at runtime against the old body.
+
+## DEV-A · Phase 3 — `SimulatedTriage`'s `malformed` mode raises, it doesn't return bad data
+
+`TriageResult` (`app/schemas/triage.py`) is a Pydantic model with `category: Category` and
+`priority: Priority` — both closed enums. There is no way to construct a "malformed"
+`TriageResult` instance; any attempt to build one with an invalid category/priority raises a
+`ValidationError` at construction time, which is exactly the class of failure a real LLM
+provider returning bad JSON would surface once its raw response is parsed into `TriageResult`.
+So `SimulatedTriage(mode="malformed")` raises `SimulatedTriageError` immediately, standing in
+for "the primary provider's output failed validation," rather than returning some
+not-actually-a-`TriageResult` sentinel that would need an escape hatch in the type system to
+exist. This keeps the provider's return type honest (`TriageProvider.triage` always returns a
+real `TriageResult` or raises) and pushes the "is this a validation failure (no retry) vs. a
+transient failure (one retry)" distinction to where it belongs — Phase 4's `TriageService`
+retry/budget wrapper, which doesn't exist yet. For Phase 3, `ComplaintService.create()` treats
+any exception from the primary provider identically: catch, fall back to `RuleBasedTriage`,
+201. The no-retry-on-validation-failure behavior itself (CLAUDE.md HARD rule 6) is Phase 4
+scope to prove with a real retry counter; Phase 3 proves only "primary raises → service catches
+→ falls back → 201," which is what `test_fallback_emits_201_and_rules_fallback` in
+`backend/tests/unit/test_complaint_service.py` asserts.
+
+## DEV-A · Phase 3 — `stats_counts()` is four simple queries, not one `UNION ALL`
+
+`07-BACKEND-API.md §5` shows the stats aggregation as a single statement: three `SELECT dim, k,
+count(*)` branches `UNION ALL`'d together, then `jsonb_object_agg(...) FILTER (WHERE dim = ...)`
+pivoted back out in the outer query. `ComplaintRepository.stats_counts()`
+(`backend/app/repositories/complaint_repo.py`) instead issues four separate, simple statements:
+`count(*)`, then one plain `GROUP BY` per dimension (category/priority/status).
+
+**Rejected alternative — implement the spec's literal `UNION ALL` + `jsonb_object_agg` query:**
+rejected for this phase because it trades one extra DB round trip (three round trips vs. four)
+for a meaningfully harder-to-verify query — `jsonb_object_agg` returns JSON, which SQLAlchemy
+doesn't type-check against `Category`/`Priority`/`Status` the way `dict(result.tuples().all())`
+does from three ordinary `GROUP BY`s, and the FILTER-based pivot is the kind of SQL that's easy
+to get subtly wrong (e.g. NULL handling per dimension) without integration-test coverage to
+catch it — which this sandbox couldn't run (no Docker). Four straightforward statements are
+strictly easier to reason about and match mypy strict cleanly.
+
+**Chosen:** four statements now. `/api/stats` isn't in the hot path the way `POST
+/api/complaints` is (it's cached — `09-CACHE-RATELIMIT.md`, Phase 5 — so the extra round trips
+happen once per cache TTL window, not per request), so the cost of the simpler version is low.
+Revisit if Phase 7's load test shows `/api/stats`'s cache-miss latency mattering; the return
+type of `stats_counts()` doesn't need to change if the query is optimized later, since callers
+(`StatsService.get()`) only see `(total, by_category, by_priority, by_status)`.
+
+## DEV-A · Phase 3 — `RateLimitMiddleware` is an in-memory stub, not the Redis Lua limiter
+
+`09-CACHE-RATELIMIT.md`'s distributed sliding-window Redis Lua rate limiter is explicitly
+Phase 5 scope. This phase wires the middleware slot in the contractual position (innermost,
+scoped to `POST /api/complaints` only) with a simple per-process in-memory fixed-window counter
+gated on `settings.ratelimit_enabled`, so the *ordering* and *route-scoping* are provable now by
+test without building distributed state a Phase 5 rewrite would discard anyway. The counter is
+process-local and resets on restart — acceptable for proving middleware wiring, not acceptable
+as the production limiter (a multi-pod deployment would let each pod's memory count
+independently, undercounting the true rate by a factor of replica count). This limitation is
+inherent to "stub now, build for real in Phase 5" and is not a Phase 3 defect.

@@ -1,6 +1,7 @@
 """Registered exception handlers — the ONLY place a status code is chosen for an error.
 Routes never try/except to pick a status (CLAUDE.md §3)."""
 
+import logging
 import uuid
 from collections.abc import Sequence
 from typing import Any
@@ -8,7 +9,10 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.domain.errors import InvalidTransition, NotFound, NotReady, RateLimited
+from app.domain.transitions import TRANSITIONS
 from app.schemas.errors import ErrorBody, ErrorEnvelope, FieldError
 
 # Pydantic error type → our stable `fields[].code`. Anything unlisted becomes "invalid".
@@ -96,11 +100,77 @@ async def _on_validation_error(request: Request, exc: Exception) -> JSONResponse
     )
 
 
-async def _on_not_implemented(request: Request, exc: Exception) -> JSONResponse:
-    # Phase 1 route stubs only. Remove this handler once Phase 3 fills every handler.
-    return error_response(request, 501, "not_implemented", "Endpoint not implemented yet.")
+async def _on_not_found(request: Request, exc: Exception) -> JSONResponse:
+    assert isinstance(exc, NotFound)
+    return error_response(request, 404, "not_found", "Resource not found.")
+
+
+async def _on_invalid_transition(request: Request, exc: Exception) -> JSONResponse:
+    assert isinstance(exc, InvalidTransition)
+    details = {
+        "from": exc.src.value,
+        "to": exc.dst.value,
+        "allowed_from_current": sorted(s.value for s in TRANSITIONS[exc.src]),
+        "terminal": not TRANSITIONS[exc.src],
+    }
+    return error_response(
+        request,
+        409,
+        "invalid_transition",
+        f"Cannot transition from '{exc.src.value}' to '{exc.dst.value}'.",
+        details=details,
+    )
+
+
+async def _on_rate_limited(request: Request, exc: Exception) -> JSONResponse:
+    assert isinstance(exc, RateLimited)
+    return error_response(
+        request,
+        429,
+        "rate_limited",
+        "Too many requests.",
+        headers={"Retry-After": str(exc.retry_after_s)},
+    )
+
+
+async def _on_not_ready(request: Request, exc: Exception) -> JSONResponse:
+    # 04-CONTRACTS.md §6.8 verbatim shape: error.details.{checks,failed}, message names the
+    # failed dependency (the first one, if several — `checks` still carries the full map).
+    assert isinstance(exc, NotReady)
+    return error_response(
+        request,
+        503,
+        "not_ready",
+        f"Dependency check failed: {', '.join(exc.failed)}",
+        details={"checks": exc.checks, "failed": exc.failed},
+    )
+
+
+async def _on_starlette_http_exception(request: Request, exc: Exception) -> JSONResponse:
+    """A genuinely unmatched route (no path in any router) raises Starlette's own
+    `HTTPException`, not one of ours — without this handler it falls through to FastAPI's
+    default `{"detail": ...}` body, breaking "one envelope for every non-2xx response." Only
+    reached for paths this app never declared; every endpoint this app DOES declare raises a
+    domain exception or a validation error instead, which the handlers above already cover."""
+    assert isinstance(exc, StarletteHTTPException)
+    code = "not_found" if exc.status_code == 404 else "http_error"
+    return error_response(request, exc.status_code, code, str(exc.detail))
+
+
+async def _on_unhandled(request: Request, exc: Exception) -> JSONResponse:
+    # Opaque body — no exception message, class name, or path (06-BACKEND-CORE.md §7). The
+    # request_id is the join key: header, body, and this log line all carry it.
+    logging.getLogger("app.errors").error(
+        "unhandled_exception", exc_info=exc, extra={"extra_fields": {"path": request.url.path}}
+    )
+    return error_response(request, 500, "internal_error", "An internal error occurred.")
 
 
 def register_error_handlers(app: FastAPI) -> None:
     app.add_exception_handler(RequestValidationError, _on_validation_error)
-    app.add_exception_handler(NotImplementedError, _on_not_implemented)
+    app.add_exception_handler(InvalidTransition, _on_invalid_transition)
+    app.add_exception_handler(NotFound, _on_not_found)
+    app.add_exception_handler(RateLimited, _on_rate_limited)
+    app.add_exception_handler(NotReady, _on_not_ready)
+    app.add_exception_handler(StarletteHTTPException, _on_starlette_http_exception)
+    app.add_exception_handler(Exception, _on_unhandled)
