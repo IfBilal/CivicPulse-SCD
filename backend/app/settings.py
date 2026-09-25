@@ -34,8 +34,13 @@ class Settings(BaseSettings):
     triage_min_confidence: float = 0.35
     triage_ring_size: int = 20
 
+    # SimulatedTriage — deterministic fake, CI default.
+    simulated_seed: int = 1337
+    simulated_failure_mode: str = "none"
+
     llm_base_url: AnyHttpUrl = AnyHttpUrl("https://api.groq.com/openai/v1")
-    llm_model: str = "llama-3.1-8b-instant"
+    llm_model: str = "openai/gpt-oss-20b"  # llama-3.1-8b-instant is retired on Groq's current
+    # catalog — confirmed live 2026-09-25, see docs/TRIAGE.md §1
     llm_api_key: SecretStr = SecretStr("")  # SecretStr: never printed by repr()
     ollama_base_url: AnyHttpUrl = AnyHttpUrl("http://ollama:11434")
     ollama_model: str = "llama3.2:1b"

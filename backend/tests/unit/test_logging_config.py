@@ -9,7 +9,8 @@ from logging import FileHandler
 import pytest
 
 from app.logging_config import _redact, configure_logging
-from app.providers.triage.simulated import SimulatedTriage
+from app.providers.triage.cache import InMemoryTriageCache
+from app.providers.triage.simulated import FailureMode, SimulatedTriage
 from app.services.triage_service import TriageService
 from app.settings import Settings
 
@@ -71,7 +72,9 @@ async def test_fallback_emits_exactly_one_warning(caplog: pytest.LogCaptureFixtu
     from uuid import uuid4
 
     caplog.set_level(logging.WARNING)
-    ts = TriageService(primary=SimulatedTriage(mode="always_raise"))
+    ts = TriageService(
+        SimulatedTriage(failure_mode=FailureMode.RAISE), InMemoryTriageCache(), Settings()
+    )
     await ts.triage_with_fallback(complaint_id=uuid4(), text="broken pipe", location="x")
 
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
