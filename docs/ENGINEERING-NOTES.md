@@ -497,3 +497,68 @@ targets — has **no** branch protection or required checks at all (`main`'s rul
 to the repo's default branch). Whether to also protect `dev` is a repo-wide workflow policy
 decision, not something to change unilaterally inside a CI-scoped PR; flagging it here so it's a
 deliberate choice, not an oversight nobody noticed.
+
+---
+
+## DEV-A · Phase 4 (AI triage) — ambiguities resolved before writing code
+
+Written before the fallback-ladder implementation, per `CLAUDE.md §5` (say what you're choosing
+and why, before the code, not after).
+
+1. **RETRYABLE classification for `SimulatedTriage`'s failure modes.** `08-AI-TRIAGE.md §5`
+   gives the RETRYABLE/NON_RETRYABLE tuples in terms of real exception types
+   (`httpx.TimeoutException`, `RateLimitError`, `APIStatusError_5xx`, ...), but `SimulatedTriage`
+   (§3.2) needs its own exception types per failure mode so the ladder can be exercised without
+   any real HTTP stack. **Chosen:** `SimulatedRateLimitError`/`SimulatedServerError` are new,
+   dedicated exception classes registered directly in `TriageService.RETRYABLE`;
+   `SimulatedMalformedResponseError`/`SimulatedValidationError` are registered in
+   `NON_RETRYABLE`. **Rejected:** (a) reusing `httpx.HTTPStatusError` inside `SimulatedTriage`
+   itself — rejected because it would force the simulated provider to fabricate a fake
+   `httpx.Request`/`Response` pair for a code path that has nothing to do with HTTP, coupling an
+   in-process fake to a wire-protocol library; (b) classifying by string-matching the exception
+   message — rejected as fragile and exactly the kind of stringly-typed logic `CLAUDE.md §3`
+   warns against.
+2. **`classify()`'s default for an unrecognised exception type.** The spec's RETRYABLE/
+   NON_RETRYABLE tuples aren't exhaustive — `FailureMode.RAISE` deliberately raises a bare
+   `RuntimeError`, which is neither. **Chosen:** treat anything unclassified as NON_RETRYABLE
+   (straight to fallback, no retry) rather than RETRYABLE. **Reasoning:** CLAUDE.md HARD rule 5
+   requires every path reach fallback regardless; routing unknown failures through NON_RETRYABLE
+   gets there in one hop instead of burning a retry (and the associated jitter sleep) on a
+   failure mode the ladder doesn't understand. **Rejected:** treating unknown exceptions as
+   RETRYABLE — would silently double the latency of any genuinely novel provider bug for no
+   benefit, since retrying an *unclassified* failure has no more reason to succeed than a
+   classified NON_RETRYABLE one.
+3. **`providers/triage/cache.py` vs `services/triage_cache.py`.** The task brief offered either
+   path. **Chosen:** `providers/triage/cache.py`, because the module's job (Redis wire format,
+   TTL, a third-party client shape) is exactly what `CLAUDE.md §3` scopes to `providers/`
+   ("httpx, redis, third-party wire — external formats, isolated"); `services/` is business
+   rules and orchestration order, which is `TriageService`'s job, not the cache's.
+4. **Calling convention for `TriageProvider.triage`.** `08-AI-TRIAGE.md §1` writes
+   `async def triage(self, text: str, location: str) -> TriageResult` (positional). **Chosen:**
+   keyword-only, `triage(self, *, text: str, location: str)`, applied consistently across
+   `RuleBasedTriage`/`SimulatedTriage`/`LLMTriage`/`OllamaTriage`/`TriageService`. **Reasoning:**
+   two adjacent `str` parameters of the same type are a classic transposition hazard
+   (`triage(location, text)` vs `triage(text, location)` both type-check and neither raises);
+   keyword-only args make the mistake a `TypeError` at the call site instead of a silent
+   mis-classification. This is the same category of deviation the spec itself pre-declares for
+   `async` vs `def` — the *shape* of the contract (one method, text+location in, `TriageResult`
+   out) is unchanged.
+5. **Provider default on an unrecognised `TRIAGE_PROVIDER` value.** Written when this branch's
+   own `Settings.triage_provider` was a plain `str` with no enum constraint, at which point
+   `factory.py`'s `match` block had no `case _` and could receive any string. Original choice:
+   fail closed to `RuleBasedTriage()` rather than raise at startup, on the reasoning that `rules`
+   structurally cannot fail (`08-AI-TRIAGE.md §3.1`) and a config typo should degrade the
+   classifier, not crash the boot.
+
+   **Superseded, 2026-09-25, at the merge of Phase 3 into Phase 4:** Phase 3's
+   `Settings.triage_provider` is typed `Literal["llm","ollama","rules","simulated"]`
+   (`06-BACKEND-CORE.md §1`), which Pydantic validates at settings-construction time — an
+   unrecognised value is already a `ValidationError` before `build_triage_provider` ever runs,
+   making the `case _` branch above dead code once both phases' `Settings` classes were
+   reconciled into one. **Re-decided, at the merge:** keep the `Literal` type and its fail-fast
+   behavior rather than widening back to `str` — every other field in `Settings` (`extra=
+   "forbid"`, `frozen=True`) already treats a config typo as a startup crash, not a silent
+   degradation, and `TRIAGE_PROVIDER` following that same rule is more consistent than carving
+   out one field to fail closed instead. The `case _` branch and its comment were removed from
+   `factory.py`; `match` is now exhaustive over the `Literal`'s four values, which mypy can
+   verify statically.

@@ -10,10 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import SessionLocal
 from app.providers.triage.base import TriageProvider
+from app.providers.triage.cache import RedisTriageCache
 from app.repositories.complaint_repo import ComplaintRepository
 from app.services.complaint_service import ComplaintService
 from app.services.stats_service import StatsService
 from app.services.triage_service import TriageService
+from app.settings import settings
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:
@@ -42,7 +44,10 @@ def get_complaint_service(
     request: Request,
 ) -> ComplaintService:
     repo = ComplaintRepository(session)
-    triage_service = TriageService(primary=triage, ring=getattr(request.app.state, "ring", None))
+    cache = RedisTriageCache(request.app.state.redis, ttl_s=settings.triage_cache_ttl_s)
+    triage_service = TriageService(
+        triage, cache, settings, ring=getattr(request.app.state, "ring", None)
+    )
     stats_service = StatsService(repo)
     return ComplaintService(repo=repo, triage=triage_service, stats=stats_service)
 
