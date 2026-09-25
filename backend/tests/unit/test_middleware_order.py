@@ -33,21 +33,54 @@ def test_request_id_is_outermost_so_a_429_still_carries_it() -> None:
     """06-BACKEND-CORE.md §3: 'If the rate limiter rejects at 429, that response still needs
     X-Request-ID.' Proves the ordering has a real, observable effect rather than being
     decorative — RateLimitMiddleware is innermost, so RequestIDMiddleware wraps it and sets
-    the header regardless of what an inner middleware does."""
-    from fastapi.testclient import TestClient
+    the header regardless of what an inner middleware does.
 
-    import app.main as main_module
+    Uses both REAL middleware classes stacked on a minimal Starlette app (not the full
+    `create_app()`), with `RateLimitMiddleware` given an injected `RateLimiter(FakeRedis())`
+    at `ratelimit_requests=0` so it deterministically rejects the first request — no real
+    Redis reachable in this sandbox, and going through the full FastAPI app would also hit
+    `TriageService`'s own real-Redis cache lookup deeper in the request (a second, unrelated
+    failure point this test isn't about). This still proves the actual ordering claim: two
+    real middleware instances, wired in the real outermost/innermost relationship, and the
+    429 that RateLimitMiddleware itself produces still carries the header RequestIDMiddleware
+    set on the way in."""
+    import asyncio
 
-    original = main_module.settings
-    main_module.settings = original.model_copy(
-        update={"ratelimit_enabled": True, "ratelimit_requests": 0}
-    )
-    try:
-        app = create_app()
-    finally:
-        main_module.settings = original
+    from starlette.applications import Starlette
+    from starlette.requests import Request
+    from starlette.responses import JSONResponse
 
-    client = TestClient(app)
-    r = client.post("/api/complaints", json={"text": "x" * 20, "location": "somewhere"})
-    assert r.status_code == 429
-    assert "X-Request-ID" in r.headers
+    from app.middleware.rate_limit import RateLimitMiddleware
+    from app.middleware.request_id import RequestIDMiddleware
+    from app.providers.ratelimit.limiter import RateLimiter
+    from app.settings import settings as real_settings
+    from tests.unit.fakes import FakeRedis
+
+    async def _endpoint(request: Request) -> JSONResponse:
+        return JSONResponse({"ok": True}, status_code=201)
+
+    settings = real_settings.model_copy(update={"ratelimit_enabled": True, "ratelimit_requests": 0})
+    starlette_app = Starlette(routes=[])
+    rate_limited = RateLimitMiddleware(starlette_app, settings, limiter=RateLimiter(FakeRedis()))
+    outer = RequestIDMiddleware(rate_limited)  # RequestID wraps RateLimit, per the real order
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/api/complaints",
+        "headers": [],
+        "client": ("1.2.3.4", 12345),
+        "app": starlette_app,
+    }
+    request = Request(scope)
+    response = asyncio.run(outer.dispatch(request, lambda r: rate_limited.dispatch(r, _endpoint)))
+
+    assert response.status_code == 429
+    assert "X-Request-ID" in response.headers
+    # Not just "a" request id — THE SAME one RequestIDMiddleware set on request.state, proving
+    # the ordering effect specifically. `app/errors.py::request_id_of()` falls back to minting
+    # its own fresh UUID if `request.state.request_id` was never set (e.g. if RequestID were
+    # innermost instead of outermost) — that fallback alone would already satisfy an "X-Request-
+    # ID is present" assertion without proving anything about ordering, which is why this
+    # checks equality against the value the middleware itself observed, not just presence.
+    assert response.headers["X-Request-ID"] == request.state.request_id

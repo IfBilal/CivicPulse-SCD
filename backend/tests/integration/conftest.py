@@ -13,9 +13,11 @@ from collections.abc import AsyncGenerator, Iterator
 
 import pytest
 import pytest_asyncio
+import redis.asyncio as redis_asyncio
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from testcontainers.postgres import PostgresContainer
+from testcontainers.redis import RedisContainer
 
 import app.settings as settings_module
 from alembic import command
@@ -73,3 +75,27 @@ async def db_session(migrated_db: str) -> AsyncGenerator[AsyncSession, None]:
         await session.commit()
         yield session
     await engine.dispose()
+
+
+# ── Redis — mirrors the Postgres fixture pattern above exactly: one container for the
+# whole session, a fresh client per test, `FLUSHDB` before each test instead of a fresh
+# container (cheap to boot once, expensive per test — same rationale as the Postgres
+# TRUNCATE-before-each-test strategy). AOF is enabled here directly (rather than only via
+# `compose.yaml`) so E17 (`test_aof_enabled`) is meaningful even if `compose.yaml` isn't
+# on this branch — see `docs/ENGINEERING-NOTES.md`.
+@pytest.fixture(scope="session")
+def redis_url() -> Iterator[str]:
+    with RedisContainer("redis:7.4.1-alpine") as rc:
+        rc.get_client().config_set("appendonly", "yes")
+        host = rc.get_container_host_ip()
+        port = rc.get_exposed_port(6379)
+        yield f"redis://{host}:{port}/0"
+
+
+@pytest_asyncio.fixture
+async def redis_client(redis_url: str) -> AsyncGenerator[redis_asyncio.Redis, None]:
+    client = redis_asyncio.Redis.from_url(redis_url, decode_responses=True)
+    await client.flushdb()
+    yield client
+    await client.flushdb()
+    await client.aclose()

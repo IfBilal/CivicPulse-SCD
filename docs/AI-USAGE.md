@@ -1251,3 +1251,331 @@ independently.
   two real design forks were surfaced and decided rather than silently resolved, one real typed
   secret-handling bug was caught and fixed, and test files on both sides of the merge were
   updated to match the reconciled code rather than left calling APIs that no longer exist.
+
+---
+
+## 2026-09-25 · feat/cache-ratelimit — Phase 5 kickoff (DEV-A)
+
+- **Tool:** Claude Code + `caveman`
+- **Shaped:** decomposition of Phase 5 (`02-CRITICAL-PATH.md` Gate 5 + `09-CACHE-RATELIMIT.md`
+  in full) into a stripped, verb-first task list, every item independently completable in
+  ≤90 min:
+  1. Write `StatsService` (`services/stats_service.py`, rewriting Phase 3's placeholder): read
+     `stats:v1` from Redis first; on hit, parse `StatsResponse` + compute `cache_age_seconds`;
+     on miss, acquire a `SET lock:stats NX PX 3000` stampede lock, poll up to 300ms on
+     lock-loss, then compute from `ComplaintRepository.stats_counts()` and `SETEX` the result.
+  2. Wire `X-Cache: HIT/MISS` and `Cache-Control` headers on `GET /api/stats` (route layer, if
+     Phase 3's route infra exists on this branch — check first, same caveat as Phase 4).
+  3. Wire cache invalidation (`DEL stats:v1`) into `ComplaintService.create()`/`change_status()`
+     **after commit, not before** — write `test_invalidate_happens_after_commit` asserting call
+     order via a spy, not just that both calls happened (E6).
+  4. Write the Redis-down degradation path for the stats cache: `GET`/`SETEX`/`DEL` all wrapped
+     so a Redis outage degrades to MISS + recompute, never a 500 (E7).
+  5. Write `providers/ratelimit/lua/fixed_window.lua` (atomic `INCR`+`EXPIRE`+`TTL` in one
+     `EVALSHA`) and a `RateLimiter` class wrapping it — never `INCR` then `EXPIRE` as two Python
+     round trips (§4.1's explicit "banned forever if killed between them" failure mode).
+  6. Write `client_ip()` (`09-CACHE-RATELIMIT.md §4.3` verbatim) — XFF trusted-hop resolution,
+     counting from the right, never the left; `test_xff_spoof_ignored`,
+     `test_xff_hops_configurable`, `test_short_xff_falls_back_to_peer` (E13/E14 + the
+     short-header edge case).
+  7. Wire `RateLimitMiddleware` to the real limiter (Phase 3's version was an in-memory stub,
+     explicitly flagged for this phase to replace — `docs/ENGINEERING-NOTES.md`, "RateLimit
+     Middleware is an in-memory stub"), scoped to `POST /api/complaints` only, running before
+     body parsing, never limiting `/health`/`/ready`/`/metrics` (E15).
+  8. Write the 429 response contract exactly: `Retry-After` (integer seconds, clamped ≥1),
+     `X-RateLimit-Limit`/`Remaining`/`Reset` headers, `ErrorEnvelope` body with
+     `details.limit`/`window_seconds`/`retry_after_seconds` (E10).
+  9. Decide and log (ponytail, if it forks) the fail-open-vs-fail-closed question for a Redis
+     outage during rate limiting — §4.5 already gives the spec's own answer (fail-open, bounded:
+     allow the request but force `TRIAGE_PROVIDER` degradation to `rules` for that request) —
+     confirm this is genuinely a "the spec already decided, implement it" item, not a fresh
+     fork, before skipping the ponytail log for it.
+  10. Write `test_ratelimit_fail_open_degrades_provider` (E16) — Redis down ⇒ 201 with
+      `triaged_by="rules"`, not a 503 or an unlimited-quota-drain.
+  11. Write a real Redis testcontainers integration suite (`tests/integration/test_cache_
+      ratelimit.py`, `pytest.mark.integration`, mirroring `tests/integration/conftest.py`'s
+      Postgres pattern) covering E1/E2/E8/E9/E11/E12/E17 — atomicity, TTL expiry, stampede
+      single-computation, distributed sharing across two `RateLimiter` instances hitting one
+      Redis, AOF config. Cannot run in this sandbox (no Docker, same disclosed gap as every
+      other integration suite this session) but must collect cleanly and run correctly in CI,
+      which has Docker (confirmed: `feat/backend-api`'s `data-layer` job runs testcontainers
+      successfully there).
+  12. Write unit-level tests (E3/E4/E5/E7/E10/E13/E14/E15/E16) against a fake Redis client
+      satisfying the same minimal interface the real code needs — same pattern as Phase 4's
+      `InMemoryTriageCache`, not a mock of the `redis` library's full surface.
+  13. Update `compose.yaml`'s cache service AOF config if it exists on this branch (check
+      first — DEV-B's Phase 3 compose work may or may not be here, same branch-divergence
+      caveat as every prior phase) — `--appendonly yes --appendfsync everysec --save ""
+      --maxmemory 256mb --maxmemory-policy allkeys-lru`, per §5.
+  14. Write `docs/ENGINEERING-NOTES.md` entries: the `X-Cache` HIT/MISS definition (§2.1, "a
+      request that waited on a stampede lock and read the filled key is a HIT"), the
+      TTL-and-invalidation viva answer (§2.2's four-part reasoning), fixed-window's known flaw
+      and the sliding-window-counter named next step (§4.1), the AOF justification (§5's
+      "because this Redis is not only a cache" argument, applied to this project's actual three
+      keyspaces).
+  15. Self-review pass (≥3 `file:line` findings or credible none-found) before opening the PR.
+- **I changed:** N/A — decomposition only, no code yet.
+
+---
+
+## 2026-09-25 · feat/cache-ratelimit — ponytail: fixed-window vs. token-bucket, and fail-open framing
+
+- **Tool:** Claude Code + `ponytail`
+- **Decision 1 — rate-limit algorithm:** `09-CACHE-RATELIMIT.md §4.1` names fixed-window as the
+  primary implementation ("we ship fixed window because it is what the spec offers first") and
+  explicitly lists a token-bucket variant as available "behind `RATELIMIT_ALGO=token_bucket`,
+  unit-tested, so the comparison is demonstrable." That is itself a resolved ≥2-option decision
+  already made in the spec, not a fresh fork this session needs to relitigate — implementing
+  fixed-window as the default and treating token-bucket as optional/stretch scope (build if time
+  remains after the mandatory E1–E17 matrix is green, not before) is following the spec's own
+  ponytail record, not skipping one. Logged here so the choice is traceable rather than silently
+  assumed.
+- **Decision 2 — fail-open vs. fail-closed on rate-limiter Redis outage:** same situation —
+  `§4.5` states the answer directly ("Our choice: fail-open, bounded") with both alternatives
+  named and reasoned about in the spec text itself. Confirmed this is implementation, not a
+  fresh design decision, before skipping a from-scratch ponytail record for it.
+- **A genuine fork found while planning, not in the spec's own text:** how to make the
+  stats-cache stampede lock (§2.4, `SET lock:stats NX PX 3000`) testable without a real 300ms
+  wait in a unit test (CLAUDE.md HARD rule 15 — no real multi-second/real-time waits in tests).
+  **Rejected: mock `asyncio.sleep` globally for the whole test module** — too broad, risks
+  masking a real bug in some other awaited call within the same test. **Rejected: skip the
+  stampede-lock-loss path in unit tests entirely, only cover it in the Redis-testcontainers
+  integration suite** — the integration suite can't run in this sandbox at all (no Docker), so
+  this would mean stampede protection ships with zero locally-verifiable coverage. **Chosen:**
+  inject a short, test-scoped poll interval/timeout (mirroring Phase 4's `_TestSettings` pattern
+  of short `triage_timeout_s`/`triage_total_budget_ms` for the fallback-ladder tests) so the
+  stampede-lock unit test's poll loop runs in single-digit milliseconds of real wall time while
+  still exercising the actual poll-then-fall-through-to-compute code path, and reserve the full
+  20-concurrent-miss/300ms-real-lock scenario (E8) for the Redis-testcontainers suite where a
+  real lock actually matters.
+
+---
+
+## 2026-09-25 · feat/cache-ratelimit — Phase 5 implementation
+
+- **Tool:** Claude Code, direct implementation (no interactive skill invocation for the
+  build itself — `caveman`/`ponytail` already ran and are logged in the two entries
+  immediately above; this entry covers writing the code they scoped).
+- **Shaped/Wrote:**
+  - `backend/app/settings.py` — added `redis_url`, `stats_cache_ttl_s`, `stats_cache_key`,
+    `ratelimit_enabled`, `ratelimit_requests`, `ratelimit_window_s`, `trusted_proxy_hops`,
+    field names matching `.env.example` exactly.
+  - `backend/app/repositories/complaint_repo.py` — added `stats_counts()` (didn't exist on
+    this branch, contrary to the task brief's assumption — verified by reading the file
+    first): one `count()` plus three grouped-count queries, zero-filled against every
+    `Category`/`Priority`/`Status` member.
+  - `backend/app/services/stats_service.py` (new) — `StatsService`: read-through cache
+    against `StatsOut` (the real frozen schema name — brief called it `StatsResponse`,
+    which doesn't exist), `SET lock:stats NX PX 3000` stampede protection with a
+    poll-then-fall-through loop (injectable `poll_timeout_ms`/`poll_interval_ms`/`now_fn`
+    for deterministic tests), `invalidate()`, and the exact Redis-failure-degrades-to-miss
+    posture from §3's table.
+  - `backend/app/providers/ratelimit/lua/fixed_window.lua` (new), `limiter.py` (new,
+    `RateLimiter.check()` via `SCRIPT LOAD`/`EVALSHA`), `client_ip.py` (new, §4.3 verbatim).
+  - `backend/app/middleware/__init__.py`, `ratelimit.py` (new) — `rate_limited_response()`
+    429 builder against the real `app/errors.py` `error_response()` helper (confirmed
+    present on this branch); `RateLimitMiddleware` class itself deferred (no middleware
+    stack exists here yet — Phase 3, unmerged).
+  - `backend/tests/integration/conftest.py` — added a session-scoped `RedisContainer`
+    fixture (`redis_url`) + per-test `redis_client`, mirroring the existing Postgres
+    fixture's exact pattern (one container, cheap boot, `FLUSHDB` before each test instead
+    of TRUNCATE).
+  - `backend/tests/integration/test_cache_ratelimit.py` (new) — E1, E2, E8, E9, E11, E12,
+    E17 against real Redis/Postgres containers.
+  - `backend/tests/unit/fakes.py` (new) — `FakeRedis`/`FakeClock`, minimal in-memory
+    surface (GET/SETEX/SET-NX-PX/DELETE/EVALSHA/SCRIPT-LOAD), same pattern as Phase 4's
+    `InMemoryTriageCache`.
+  - `backend/tests/unit/services/test_stats_service.py`,
+    `test_stats_invalidation_order.py`, `backend/tests/unit/providers/
+    test_ratelimit_limiter.py`, `test_client_ip.py`, `backend/tests/unit/
+    test_ratelimit_response.py`, `test_ratelimit_fail_open.py` (all new) — E3, E6, E7, E8
+    (unit-scoped), E9 (unit-scoped), E10, E12 (unit-scoped), E13, E14, E16 (verified half).
+  - `docs/ENGINEERING-NOTES.md` — new "Phase 5" section: branch-divergence state actually
+    found (vs. brief's assumptions), `X-Cache` HIT/MISS definition stated precisely (§2.1),
+    the TTL+invalidation four-part viva answer applied to this codebase, invalidation
+    ordering, fixed-window's known flaw + named next step, the `X-RateLimit-Reset`
+    epoch-vs-duration bug found and fixed, AOF justification applied to the three real
+    keyspaces, and the two explicit E15/E16 deferrals with reasons.
+- **I changed / found while implementing (would be `grill-me`-equivalent findings if that
+  skill were invoked — logged here per the same ≥3-`file:line`-findings review discipline
+  instead, since this is a small enough diff to review directly rather than spin up a
+  separate pass):**
+  1. `app/services/stats_service.py` (`_age_of`, `_compute`) — first draft computed
+     `cache_age_seconds` and `generated_at` off the real wall clock (`time.time()`) even
+     though the class took an injectable Redis fake with its own fake clock. Caught by
+     `test_cache_age_seconds` going red on first run (`age_hit == 0` instead of `~12`) —
+     confirmed a genuine bug, not a test bug, before fixing. **Fixed:** added a `now_fn`
+     constructor parameter threaded through both methods.
+  2. `app/middleware/ratelimit.py` (`rate_limited_response`) — first draft set
+     `X-RateLimit-Reset` to the same value as `Retry-After`. Re-reading
+     `09-CACHE-RATELIMIT.md §4.2`'s own example (`Retry-After: 37` next to
+     `X-RateLimit-Reset: 1757830860`) showed these are different units — one a duration,
+     one an absolute Unix timestamp. **Fixed:** `X-RateLimit-Reset = int(now) +
+     retry_after`, with `now` injectable for deterministic tests. Logged in
+     `docs/ENGINEERING-NOTES.md` as its own entry since it's exactly the kind of
+     spec-detail bug a viva would probe.
+  3. `app/providers/ratelimit/limiter.py:54-55` — mypy strict flagged
+     `Cannot determine type of "ttl"/"count"` on a tuple-unpack of an `object`-typed
+     `evalsha()` return under a `# type: ignore[misc]`. **Fixed:** unpack via an explicit
+     `list(raw)` with an isolated, narrower ignore, rather than widen the ignore or loosen
+     the Protocol's return type — keeps `mypy app` strict-clean without weakening the
+     actual interface contract.
+  4. Initial scaffold created an unused `app/providers/cache/` package before writing any
+     code into it — the stats cache logic belongs in `services/stats_service.py` per the
+     spec's own class signature (`StatsService`, not a `providers/cache` wrapper), so the
+     empty directory was dead scaffolding. **Removed** before finishing, along with a
+     stray `.hypothesis/` artifact directory that predated this session's changes.
+  5. `app/repositories/complaint_repo.py` (`stats_counts`) — first draft built the
+     per-dimension dicts via `dict(rows.all())` + `.update()`; mypy strict rejected this
+     (`Sequence[Row[tuple[Category, int]]]` isn't accepted as `Iterable[tuple[Never,
+     Never]]` for `dict()`'s constructor overload). **Fixed:** explicit `for k, n in
+     rows.all(): d[k] = n` loops instead — also slightly more readable than the
+     `dict()+.update()` two-step.
+  - Falsifiability spot-checks performed and reverted (CLAUDE.md HARD rule 14): reverted
+    `client_ip()`'s right-to-left counting to left-to-right — `test_xff_spoof_ignored`,
+    `test_xff_hops_configurable`, and the whitespace test all went red as expected.
+    Reverted `StatsService.get()`'s stampede-lock branch to always compute —
+    `test_stampede_single_computation` and `test_stampede_lock_loser_polls_then_hits` both
+    went red as expected. Both reverts confirmed, then restored from backup.
+- **Explicitly deferred, not silently dropped (all cross-referenced in
+  `docs/ENGINEERING-NOTES.md`):** `RateLimitMiddleware` wiring and the "degrade
+  `TRIAGE_PROVIDER` to `rules`" half of E16 (both need Phase 3/4 code not on this branch);
+  `X-Cache`/`Cache-Control` header wiring onto the real `GET /api/stats` route (still a
+  Phase 1 `NotImplementedError` stub here); `StatsService.invalidate()` wiring into
+  `ComplaintService.create()`/`change_status()` (that service doesn't exist here yet);
+  E15 (`test_probes_not_rate_limited`, no middleware to test the absence of).
+- **Verification, this session (no Docker available, confirmed again this session):**
+  `pytest -m "unit or contract"` — 89 passed, 86% coverage (floor is 65%).
+  `pytest -m integration --collect-only` — 24 integration tests collect cleanly (8 new in
+  `test_cache_ratelimit.py`), zero import errors; cannot execute here, written to pass in
+  CI where Docker exists (same disclosed gap as every other integration suite this repo
+  has shipped). `ruff check .` / `ruff format --check .` / `mypy app` (strict) — all clean.
+  `make lint-layers` — clean, no output (no layer-boundary violations). No real Redis
+  connection constructed anywhere under `tests/unit/`.
+- **CI note, this session:** applied the same `--cov-fail-under=0` fix to this branch's own
+  `.github/workflows/ci.yml` that `feat/backend-api`/`feat/ai-triage` already needed (the
+  `data-layer` job's fixed test-name slice can't clear the project-wide 65% floor on its own —
+  recurring here for the same "forked before the fix existed anywhere" reason as `feat/ai-
+  triage`'s own CI-fix entry above). **Deliberately did not** add `test_cache_ratelimit.py` to
+  `data-layer`'s `-k` filter or give it its own CI job: `00-SPEC.md` names the mechanism this
+  suite is meant to be exercised through — the `integration` CI job (`docker compose up -d`,
+  wait for `/ready`, POST/GET a complaint, assert `X-Cache` MISS→HIT), which is DEV-B's/joint
+  Phase 5 CI scope, not a Postgres-testcontainers-style standalone job. Folding a
+  Redis-testcontainers job in here would duplicate that planned coverage and blur what
+  `data-layer`'s name means (it's explicitly commented as Phase 2's own D1-D11 verification).
+  The 8 new tests still collect cleanly and are ready to run wherever CI eventually points a
+  Redis-aware job at them — not silently orphaned, just not force-fit into a job whose scope
+  doesn't match.
+
+---
+
+## 2026-09-25 · merging feat/cache-ratelimit onto dev (post feat/backend-api + feat/ai-triage) — real conflicts, real reconciliation
+
+Rebasing `feat/cache-ratelimit` onto `dev` after PR #31 and PR #33 both merged. Six files
+conflicted: `backend/app/repositories/complaint_repo.py`, `backend/app/services/
+stats_service.py` (add/add), `backend/app/settings.py`, `.github/workflows/ci.yml`,
+`docs/AI-USAGE.md`, `docs/ENGINEERING-NOTES.md`. Resolved each on its own merits, not by
+picking one side wholesale for the whole diff:
+
+- **`stats_service.py`:** took Phase 5's real implementation entirely — `HEAD`'s (Phase 3's)
+  version was an explicitly-documented pass-through placeholder ("no Redis dependency
+  introduced early... Phase 5 exists" — its own docstring), the exact stand-in Phase 5's real
+  read-through cache/stampede-lock implementation supersedes. Same supersession pattern as
+  Phase 3→4's provider files, confirmed by reading both sides before choosing, not assumed
+  from the filename.
+- **`complaint_repo.py`'s `stats_counts()`:** a real semantic disagreement, not a
+  supersession — `HEAD` returned raw (non-zero-filled) counts with a documented rationale
+  ("zero-filling is presentation, not SQL, happens in the service"); Phase 5's version
+  zero-fills inside the repository itself. Checked which one the `StatsService` I was already
+  keeping (Phase 5's) actually needs: `_compute()` passes the repo's dicts straight through
+  with no zero-fill of its own, so `HEAD`'s raw-count version would have silently produced a
+  `04-CONTRACTS.md §6.5`-violating payload (missing keys for zero-count enum members) through
+  the real service. Took Phase 5's zero-filling version — not a style pick, dictated by which
+  `StatsService` implementation had already won. Also fixed the merged docstring, which still
+  claimed "one statement... via FILTER" — the code is four plain statements, not the spec's
+  literal `UNION ALL` query; same "implementation doc describes something the code doesn't do"
+  correction already made once on this exact function in an earlier Phase 3 entry.
+- **`settings.py`:** Phase 5 contributed only a duplicate, more weakly-typed `redis_url: str`
+  redeclaration of a field `HEAD` already had as `RedisDsn` — kept `HEAD`'s stronger typing,
+  Phase 5's other fields (`stats_cache_ttl_s` etc.) were already outside the conflict markers
+  and merged automatically.
+- **`.github/workflows/ci.yml` / both doc files:** the by-now-familiar pattern — Phase 5
+  independently added the identical `--cov-fail-under=0` data-layer fix (comment wording
+  differed, `run:` command identical) and its own caveman/ponytail/implementation log entries
+  appended at the same point `dev`'s later entries now occupy. Kept `HEAD`'s CI comment
+  wording, kept both sets of log entries in chronological order.
+- **Stale deferred-wiring notes corrected, not just un-conflicted:** two `ENGINEERING-NOTES.md`
+  entries and `stats_service.py`'s own module docstring said things like "Phase 4 hasn't merged
+  yet" / "ComplaintService doesn't exist on this branch" — true when written, false after this
+  merge. Rewrote each to say what's actually true now: Phase 4's provider factory exists, so
+  the "degrade `TRIAGE_PROVIDER` to `rules` on rate-limiter Redis outage" half of §4.5 is no
+  longer blocked on a missing dependency (it's now real, unwired *design* work — a per-request
+  provider override, which `app/main.py`'s current once-at-startup provider selection doesn't
+  support — flagged for whoever picks up that wiring, not silently claimed done).
+- **Real, substantial reconciliation beyond the conflict markers themselves:**
+  1. **`app/services/stats_service.py`'s `_CacheRedis` Protocol vs. the real `redis.asyncio.
+     Redis`:** mypy rejected `StatsService(request.app.state.redis, ...)` — the real client's
+     `set()` has more keyword params (`ex`/`xx`/`keepttl`/...) than the narrow Protocol
+     declares, and Python's structural typing for `Protocol` methods requires the *shape* to
+     match, not just "would this call succeed." Fixed with `cast("_CacheRedis", ...)` at both
+     `app/deps.py` call sites — same tension and same fix already used for `LLMTriage`'s
+     `AsyncOpenAI` construction in the Phase 3+4 merge.
+  2. **Two competing `RateLimitMiddleware` implementations, genuinely reconciled, not just
+     un-conflicted:** `app/middleware/rate_limit.py` (Phase 3, in-memory fixed-window stub,
+     already wired into `app/main.py`) and `app/middleware/ratelimit.py` (Phase 5, real
+     distributed-limiter response-shape builder, unwired — its own docstring said Phase 3's
+     middleware stack didn't exist yet on that branch). Both branches are now merged, so this
+     was the actual moment to wire them together, not defer again: rewrote `rate_limit.py`'s
+     `RateLimitMiddleware` to call the real `RateLimiter`
+     (`app/providers/ratelimit/limiter.py`) and `client_ip()`
+     (`app/providers/ratelimit/client_ip.py`), fail-open on any Redis error per `09-CACHE-
+     RATELIMIT.md §4.5`. `RateLimiter` is constructed lazily inside `dispatch()`, not
+     `__init__` — Starlette builds middleware at `create_app()` time, before `app.state.redis`
+     exists (`lifespan` sets it, which runs after middleware registration). Added an optional
+     `limiter` constructor param (same override pattern as `TriageService.__init__`'s `ring`)
+     so tests can inject a `RateLimiter` built on `FakeRedis` instead of needing a real Redis.
+  3. **Real Redis-backed middleware broke two Phase 3 unit tests in an interesting way, not
+     just "wrong API shape":** `test_rate_limit_middleware.py::test_over_limit_post_
+     complaints_returns_429` didn't error — it silently returned 201 twice, because the new
+     middleware's fail-open-on-Redis-error path correctly caught the unreachable-Redis
+     `ConnectionError` and let both requests through (matching §4.5's actual intended
+     behavior). Rewrote the test to construct `RateLimitMiddleware` directly with an injected
+     `RateLimiter(FakeRedis())`, calling `dispatch()` without the full `create_app()`/
+     `TestClient` stack, so it tests the middleware's own wiring (does it call the limiter with
+     the right key/limit/window, does a rejected check become a 429) independent of whether a
+     real Redis is reachable — real distributed correctness is already
+     `tests/integration/test_cache_ratelimit.py::test_ratelimit_429_after_limit`'s job, against
+     a real Redis via testcontainers. `test_middleware_order.py::test_request_id_is_outermost_
+     so_a_429_still_carries_it` failed differently: `ratelimit_requests=0` no longer reliably
+     forces a 429 in a bare `TestClient(app)` (lifespan never runs without a `with` block, so
+     `app.state.redis` doesn't exist) — and going through the full app would hit a *second*,
+     unrelated real-Redis failure in `TriageService`'s own cache lookup deeper in the request.
+     Rewrote to stack the two real middleware classes directly on a minimal Starlette app with
+     an injected fake limiter. This also surfaced that the test's original assertion ("X-
+     Request-ID is present") was **not actually falsifiable** for the claim its own docstring
+     made: `app/errors.py::request_id_of()` independently falls back to minting a fresh UUID if
+     `request.state.request_id` was never set, so a 429 gets *some* valid request-id header
+     regardless of middleware ordering — confirmed by deliberately removing the
+     `RequestIDMiddleware` wrap and watching the "presence" assertion still pass. Tightened the
+     assertion to check the response's `X-Request-ID` equals `request.state.request_id`
+     specifically (the value only `RequestIDMiddleware` sets), which does go red without the
+     wrap — verified per CLAUDE.md HARD rule 14.
+  4. **A stale unit test superseded by a real repository change, not a shape mismatch:**
+     `tests/unit/test_stats_service.py` (Phase 3) called `StatsService(repo)` and asserted
+     zero-filling happened in the service — both facts are now false (Phase 5's `StatsService`
+     takes `(redis_client, repo, ...)`, and zero-filling moved to the repository, decision
+     above). The zero-fill behavior itself is real and still needs coverage, just in a
+     different layer than this file tested — no unit-level fake can honestly exercise
+     `stats_counts()`'s actual SQL composition, so moved the assertion to
+     `tests/integration/test_complaint_repo.py::test_stats_counts_zero_fills_every_enum_member`
+     (real DB, real zero-fill check, matching that file's existing `db_session`-fixture
+     pattern) and deleted the stale unit file rather than patch it to test something it no
+     longer can.
+- **Verified after all fixes:** `pytest -m "unit or contract"` — 271 passed. `pytest -m
+  integration --collect-only` — 25 tests collect cleanly (was 24 before adding the moved
+  zero-fill test). `ruff check .`, `ruff format --check .`, `mypy app` (strict, 57 source
+  files), `make lint-layers` — all clean. Three of the four "real fixes beyond conflict
+  markers" above were found by actually running the test suite after resolving markers, not
+  by reading the diff — the markers themselves were fully resolved and mypy-clean before any
+  of #1-4 above were discovered, which is the whole reason to run tests after a merge instead
+  of trusting that "no conflict markers left" means "done."

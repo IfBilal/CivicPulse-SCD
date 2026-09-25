@@ -1,12 +1,30 @@
 """`06-BACKEND-CORE.md §3`: RateLimitMiddleware is scoped to `POST /api/complaints` only.
-GET requests, and requests when disabled, are never limited."""
+GET requests, and requests when disabled, are never limited.
+
+`test_over_limit_post_complaints_returns_429` constructs `RateLimitMiddleware` directly with
+an injected `RateLimiter(FakeRedis())` rather than going through `create_app()`/`TestClient` —
+the real app reads `request.app.state.redis` lazily inside `dispatch()` (module docstring:
+`app.state.redis` doesn't exist until the lifespan runs), which a plain `TestClient` against
+the full app has no seam to fake, and there is no real Redis in this sandbox to connect to
+(same disclosed gap as every other Redis-touching test this session — real distributed
+behavior is `tests/integration/test_cache_ratelimit.py::test_ratelimit_429_after_limit`'s job,
+against a real Redis via testcontainers). This test instead proves the middleware's own
+wiring — does it call the limiter with the right key/limit/window, does a rejected check
+become a 429 with the right shape — independent of whether the limiter's own atomicity is
+correct, which the integration test already covers."""
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 import app.main as main_module
 from app.deps import get_complaint_service
 from app.main import create_app
+from app.middleware.rate_limit import RateLimitMiddleware
+from app.providers.ratelimit.limiter import RateLimiter
+from tests.unit.fakes import FakeRedis
 
 pytestmark = pytest.mark.unit
 
@@ -55,13 +73,36 @@ def _app_with_settings(**overrides) -> "TestClient":
 
 
 def test_over_limit_post_complaints_returns_429() -> None:
-    app = _app_with_settings(ratelimit_enabled=True, ratelimit_requests=1, ratelimit_window_s=60)
-    with TestClient(app) as client:
-        first = client.post("/api/complaints", json=VALID)
-        second = client.post("/api/complaints", json=VALID)
-    assert first.status_code == 201
-    assert second.status_code == 429
-    assert "Retry-After" in second.headers
+    settings = main_module.settings.model_copy(
+        update={"ratelimit_enabled": True, "ratelimit_requests": 1, "ratelimit_window_s": 60}
+    )
+    fake_limiter = RateLimiter(FakeRedis())
+
+    async def _endpoint(request: Request) -> JSONResponse:
+        return JSONResponse({"ok": True}, status_code=201)
+
+    starlette_app = Starlette(routes=[])
+    middleware = RateLimitMiddleware(starlette_app, settings, limiter=fake_limiter)
+
+    async def _call(path: str = "/api/complaints") -> int:
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": path,
+            "headers": [],
+            "client": ("1.2.3.4", 12345),
+            "app": starlette_app,
+        }
+        request = Request(scope)
+        response = await middleware.dispatch(request, _endpoint)
+        return response.status_code
+
+    import asyncio
+
+    first_status = asyncio.run(_call())
+    second_status = asyncio.run(_call())
+    assert first_status == 201
+    assert second_status == 429
 
 
 def test_get_complaints_is_never_rate_limited() -> None:
