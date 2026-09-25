@@ -883,3 +883,42 @@ passed**, no flakiness observed across both runs.
 **Why disclosed this thoroughly rather than a clean summary:** the first fix looked complete and
 wasn't — writing that down plainly, including the wrong turn, is worth more at viva than
 presenting a tidy story that skips how the real cause was actually found.
+
+---
+
+## DEV-B · `fix/logging-caplog-and-orjson-cve` (continued) · starlette CVE — attempted, reverted, disclosed
+
+Fixing `orjson`'s CVE surfaced a second, previously-hidden `scan` finding: `starlette==0.46.2`
+(pulled in transitively via `fastapi==0.115.*`) has 3 HIGH CVEs — `CVE-2025-62727`,
+`CVE-2026-48818`, `CVE-2026-54283` — fixed across `0.49.1`/`1.1.0`/`1.3.1` respectively.
+
+**Attempted the same pattern as `orjson`:** added `[tool.uv] override-dependencies =
+["starlette>=1.3.1"]` (the transitive-dependency-correct mechanism, not a plain `dependencies`
+entry). `uv pip compile` resolved it cleanly — `fastapi==0.115.14` unchanged, `starlette==1.7.0`
+— no version-metadata conflict reported.
+
+**Reverted after real integration testing, not shipped on version-resolution success alone.**
+Installed the regenerated lockfile exactly the way `backend/Dockerfile` does
+(`pip install --require-hashes --no-deps -r requirements.lock`, a throwaway venv, not the usual
+`pip install -e ".[dev]"` dev-loop shortcut — that command re-resolves fresh from
+`pyproject.toml`'s loose constraints and doesn't read the lockfile or `[tool.uv]` overrides at
+all, so it would have silently hidden this). `from app.main import create_app` then raised
+immediately: `TypeError: Router.__init__() got an unexpected keyword argument 'on_startup'` —
+inside `fastapi/routing.py`, not this codebase. `fastapi==0.115.14`'s own internals still call
+Starlette's pre-1.0 `Router.__init__` signature; Starlette 1.x removed that parameter. `uv`'s
+resolver only checks declared version *constraints* (fastapi's own metadata under-declares how
+tightly it depends on starlette's exact API shape); it doesn't run the code.
+
+**Not fixed here.** A real fix needs a coordinated `fastapi` upgrade to a version whose internals
+were written against Starlette 1.x — `fastapi` has moved 26+ minor versions since `0.115.*`
+(currently `0.141.x`), and finding the right pairing, then verifying nothing else in this
+sizeable API surface broke, is real work deserving its own reviewed change, not something to
+rush through inside a CVE-fix branch. `scan`'s `HIGH,CRITICAL` gate will keep failing on this
+specific finding (3 starlette CVEs) until that happens — flagging directly for DEV-A, since it's
+his `fastapi` pin and his routes that would need re-verifying against a newer version.
+
+**Why this is worth logging even though nothing shipped:** confirms the pattern this branch
+already used for `orjson` isn't safe to apply blindly to every CVE finding — dependency
+resolution succeeding is necessary, not sufficient; only installing exactly as production does
+and actually importing the app caught this. `orjson`'s bump remains correct and shipped precisely
+because it *was* verified the same way and didn't break anything.
