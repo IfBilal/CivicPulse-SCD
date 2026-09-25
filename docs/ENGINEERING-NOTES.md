@@ -571,3 +571,32 @@ and why, before the code, not after).
    out one field to fail closed instead. The `case _` branch and its comment were removed from
    `factory.py`; `match` is now exhaustive over the `Literal`'s four values, which mypy can
    verify statically.
+
+---
+
+## DEV-B · Phase 5 · real HIGH/CRITICAL CVEs found by the new `scan` job — base images bumped
+
+Found on the first real `scan` job run once `trivy-action` itself was working (see `AI-USAGE.md`).
+Not a masking bug this time — genuine findings: **44 HIGH/CRITICAL** (40 HIGH, 4 CRITICAL) in the
+backend image, all in OS packages (`gpgv`, `libgnutls30`, `libssl3`, `openssl`, ...), every one
+with a `fixed` version already published. `python:3.12.7-slim-bookworm` was pinned back on
+2024-12-03; Docker Hub's current build of that same Python line is `3.12.14-slim-bookworm`
+(2026-09-19) — nearly two years of accumulated Debian security patches the pin never picked up.
+
+**Fixed:** bumped `backend/Dockerfile`'s two `FROM python:3.12.7-slim-bookworm` lines to
+`python:3.12.14-slim-bookworm` (same minor line, `12-DOCKER-COMPOSE.md §1`'s pinning discipline
+unchanged — still an exact tag, never `:latest`/`:slim`/floating), and
+`frontend/Dockerfile`'s runtime stage from `nginx:1.27.2-alpine-slim` to
+`nginx:1.27.5-alpine-slim` (latest patch on the same 1.27 line). Rebuilt both locally: backend
+imports clean (`python -c "import app.main"`), frontend serves `/healthz` and the
+`docker-entrypoint.d` config script runs exactly as before — no functional change, only the OS
+package versions underneath moved forward.
+
+**Not fixed here, disclosed:** the scan also found `orjson==3.10.18` (4× HIGH,
+`CVE-2025-67221`, unbounded-recursion DoS), fixed in `3.11.6`. `backend/pyproject.toml` pins
+`orjson==3.10.*`, so picking up the fix means widening that constraint to `3.11.*` and
+regenerating `requirements.lock` (`make lock`) — an actual Python dependency version change, in
+`backend/pyproject.toml`, which is backend/app territory (DEV-A's, with two open PRs already
+touching adjacent files) rather than the Dockerfile/base-image maintenance this branch owns.
+Flagging for DEV-A or a joint follow-up; `scan`'s `HIGH,CRITICAL` gate will keep failing on this
+one specific finding until then.

@@ -1,6 +1,6 @@
 # Build context: repo root (compose: `context: .`). Ignore file: backend/Dockerfile.dockerignore.
 # ── stage 1: build the virtualenv from the hash-locked requirements ─────────
-FROM python:3.12.7-slim-bookworm AS builder
+FROM python:3.12.14-slim-bookworm AS builder
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_NO_CACHE_DIR=1 PYTHONDONTWRITEBYTECODE=1
 WORKDIR /app
 # deps BEFORE source: cache-correct
@@ -9,7 +9,7 @@ RUN python -m venv /opt/venv \
  && /opt/venv/bin/pip install --require-hashes --no-deps -r requirements.lock
 
 # ── stage 2: runtime — venv + app code only, non-root ──────────────────────
-FROM python:3.12.7-slim-bookworm AS runtime
+FROM python:3.12.14-slim-bookworm AS runtime
 ENV PATH="/opt/venv/bin:$PATH" PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 RUN groupadd -g 10001 -r app && useradd -u 10001 -r -g app -s /usr/sbin/nologin app
 WORKDIR /app
