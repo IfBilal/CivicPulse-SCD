@@ -460,3 +460,101 @@ than an honest account of debugging a genuinely subtle async-ORM/pytest-collecti
   `HANDOVER-phase2-deva-to-devb.md`) using the old name unchanged — they're dated records of
   what was said at the time, not living instructions, and rewriting them would misrepresent
   history.
+
+## 2026-09-25 · feat/compose-integration · caveman skill install + Phase 3 task list
+
+- **Tool:** Claude Code + `caveman` (installed this session)
+- **Shaped/Wrote:** `caveman` and `ponytail` were not present in this Claude Code install at
+  session start (verified: absent from `~/.claude/skills/`, absent from the skill listing) even
+  though the `AI-USAGE.md` entry of 2026-09-24 recorded them as verified working. Re-fetched both
+  from their real upstream repos (`github.com/JuliusBrussee/caveman`, sub-path
+  `skills/caveman/SKILL.md`; `github.com/DietrichGebert/ponytail`, sub-path
+  `skills/ponytail/SKILL.md` — confirmed via GitHub API as the real, currently-public,
+  100k+-star repos matching the description already in this file) and installed only the base
+  skill file for each into `~/.claude/skills/<name>/SKILL.md`. Deliberately did **not** install
+  `caveman`'s separate "proxy" component (a local MITM process between agent and provider,
+  BSL-1.1) — the project only mandates the terse-communication skill, and the proxy is a larger,
+  unrelated trust surface with no requirement calling for it.
+- **I changed:** nothing about the skills' own behavior — installed as-is, MIT-licensed, plain
+  instruction files, no code execution. Ran `caveman` to produce the Phase 3 (DEV-B) stripped
+  task list below before writing any compose code, per `CLAUDE.md §6`:
+  1. Write `compose.yaml`: 2 networks, 3 volumes, 5 services, healthchecks, dev bind mount.
+  2. Write `compose.prod.yaml`: no `build:`, no `ports:` on db/cache, images pinned to `${IMAGE_TAG}`.
+  3. Wire `ollama` + `ollama-pull` split per `12-DOCKER-COMPOSE.md §4.1` (cited, not re-litigated).
+  4. Validate `docker compose config` parses both files clean.
+  5. Build all four images real (`docker compose build`).
+  6. Bring stack up, capture network-isolation evidence (frontend→database ping/nc fail+pass pair).
+  7. Capture persistence evidence (`down && up` preserves `complaints` row count).
+  8. Run pre-PR hardening review, ≥3 `file:line` findings, before opening PR.
+  9. Open `feat/compose-integration` → `dev` PR, linked issue, Gate-3 (DEV-B rows) status in body.
+- **Accepted as-is.**
+
+## 2026-09-25 · feat/compose-integration · ponytail skill install + design fork
+
+- **Tool:** Claude Code + `ponytail` (installed this session, see caveman entry above for
+  provenance/verification of both skills)
+- **Fork:** backend `/health` and `/ready` are still `raise NotImplementedError` stubs (DEV-A's
+  Phase 3 work, in progress separately, not this branch's scope). `compose.yaml`'s
+  `depends_on: service_healthy` therefore blocks `frontend` from ever starting under a plain
+  `docker compose up`, which blocks capturing the two DEV-B evidence files Gate 3 requires
+  (`network-isolation.txt`, `persistence-compose.txt`) until DEV-A merges.
+- **Alternatives considered:**
+  1. Edit `compose.yaml` to relax/remove the `depends_on` condition for testing → rejected:
+     corrupts the graded artifact itself; real risk of forgetting to revert before commit.
+  2. Stub `/health`/`/ready` myself to unblock → rejected: explicitly DEV-A's territory per the
+     handover; risks a merge conflict with DEV-A's real implementation.
+  3. Wait for DEV-A to merge before capturing evidence → rejected: needless serialization: the
+     evidence only needs `database`, `cache`, `frontend` reachable, not backend passing app-level
+     readiness, and Docker's own primitives already separate "created" from "started."
+  4. **Chosen:** `docker compose up -d` creates `frontend` (compose resolves and creates the
+     whole dependency graph before enforcing health-gated *start* order) even though it can't
+     *start* it yet; `docker start <container>` on the already-created container starts it
+     directly, bypassing only the ordering wait, not the compose file. Zero edits to
+     `compose.yaml`/`compose.prod.yaml` — closer to rung 3 of the ladder (Docker already does
+     this) than to writing a wrapper script.
+- **I changed:** nothing in the compose files to make this work — the workaround is a docker CLI
+  step outside the artifact, disclosed here and in `ENGINEERING-NOTES.md`, not baked into
+  `Makefile`/`compose.yaml`. Once DEV-A's `/health` lands, this workaround becomes unnecessary
+  and `make up`'s plain `--wait` will pass on its own.
+
+## 2026-09-25 · feat/compose-integration · pre-PR hardening review
+
+- **Tool:** Claude Code, manual review discipline (not a named skill — see `CLAUDE.md §6`'s
+  correction re: the old "grilled meat" naming; this is the plain ≥3-`file:line`-findings pass).
+- **Findings:**
+  1. **`compose.yaml:19` vs `frontend/docker-entrypoint.d/10-config.sh:14`** — `GIT_SHA` was
+     only passed as a Docker build `ARG` to the frontend build, but the entrypoint script reads
+     `GIT_SHA` from the **runtime** process environment to stamp `/config.js`'s `version` field.
+     A build arg never reaches the running container's env, so every deployment would report
+     `version: "dev"` regardless of the real commit SHA — silently breaking the version-stamping
+     half of ADR-0002's build-once-deploy-many story. **Fixed** (`compose.yaml:25`): added
+     `GIT_SHA: "${GIT_SHA:-dev}"` to `frontend`'s `environment:` block. Verified with a real
+     `docker run` against the built image: before the fix `version` defaults to `"dev"`, after
+     passing `-e GIT_SHA=abc1234` at runtime it renders `version: "abc1234"` in the emitted
+     `config.js`.
+  2. **`compose.yaml:96`** (`ollama-pull`'s `command`) — `ollama serve & sleep 3; ollama pull ...;
+     pkill ollama` returns the exit code of `pkill`, not of `ollama pull`; a failed pull (bad
+     model name, registry hiccup) still exits 0, so a broken `ollama_models` volume looks
+     healthy. **WONTFIX for this branch**: this is `12-DOCKER-COMPOSE.md §4.1`'s literal resolved
+     design, verbatim — the assignment's own reference solution for contradiction A8, not
+     something to unilaterally rewrite. Also gated behind `profiles: ["ollama"]`, so it only
+     matters if the optional Ollama path is exercised; `TRIAGE_PROVIDER` defaults to `simulated`.
+     Flagging for whoever turns on the `ollama` profile for real.
+  3. **`compose.yaml:28-29`** (`frontend`'s `depends_on: backend: {condition: service_healthy}`)
+     vs. `frontend/nginx.conf`'s comment that the variable `$backend_upstream` is resolved
+     per-request specifically *so nginx starts even if the backend isn't up yet*. The two designs
+     are in tension: the `depends_on` makes that resilience moot in Compose (though not in k8s,
+     where nginx has no such gate). **No change** — this is `12-DOCKER-COMPOSE.md §3`'s reference
+     compose file verbatim, and it's the literal mechanism Gate 3 / §8 asks us to demonstrate
+     (`service_healthy` vs plain `depends_on`). It is also, concretely, the thing currently
+     blocking a from-scratch `docker compose up --wait` until DEV-A's `/health` lands — already
+     disclosed in `ENGINEERING-NOTES.md`, not a new gap.
+  4. **`compose.prod.yaml`** (whole file) — has no `healthcheck:`/`depends_on:`/`restart:` on any
+     service. Checked this wasn't an oversight: `12-DOCKER-COMPOSE.md §7`'s reference
+     `compose.prod.yaml` is written the same minimal way, and `00-SPEC.md §3.2` scopes this file
+     to image-reference/network/volume/port shape — runtime orchestration health (probes,
+     restart policy) is Kubernetes's job from Phase 6 onward, not re-implemented in a Compose
+     file that's a CD-smoke-test artifact, not the deploy target. **No change needed.**
+- **I changed:** shipped finding 1 as a real fix in this PR; findings 2–4 are disclosed, not
+  silently accepted — 2 and 4 are explicit WONTFIX/no-change with cited reasoning, 3 is a known,
+  already-documented cross-team blocker, not new scope for this PR.

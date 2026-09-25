@@ -1,0 +1,9 @@
+$ docker compose exec frontend ping -c1 -W2 database
+ping: bad address 'database'
+
+$ docker compose exec frontend sh -c "nc -z -w2 database 5432; echo exit=$?"
+nc: bad address 'database'
+exit=1
+
+$ docker compose exec backend python -c "import socket; s=socket.create_connection((\"database\",5432),timeout=2); print(\"exit=0\"); s.close()"  (positive control — backend image ships no nc/curl by design, uses stdlib socket instead)
+exit=0

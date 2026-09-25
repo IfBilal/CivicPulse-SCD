@@ -298,3 +298,58 @@ digest instead of a description. `docs/evidence/dockerignore-context-sizes.txt` 
 re-measured for real (`docker buildx`'s own "transferring context" figure, not the earlier tar
 estimate — Docker was previously broken on this dev machine, a system-level AppArmor/user-
 namespace issue, fixed by a reboot + restarting the docker snap service, unrelated to the repo).
+
+---
+
+## DEV-B · Phase 3 · `compose.yaml`/`compose.prod.yaml`, Gate-3 evidence captured against a
+stubbed backend
+
+`backend/app/routes/ops.py` still `raise NotImplementedError` on `/health` and `/ready` (DEV-A's
+Phase 3, running in parallel on a separate branch, not this branch's scope per the handover).
+`compose.yaml`'s `depends_on: backend: {condition: service_healthy}` on `frontend` means a plain
+`docker compose up --wait` cannot complete yet — `backend` never reports healthy, so `frontend`
+is created but never started, and `make up`'s `--wait` flag would hang/fail on a clean checkout
+of this branch alone.
+
+This does not indicate a defect in the compose topology. Verified independently:
+- `docker compose config` parses both files clean.
+- `docker compose build` produces both images real.
+- `database` and `cache` reach `healthy` on their own (no dependency on backend).
+- Attached-network check: `frontend` → `edge` only, `database`/`cache` → `internal` only,
+  `backend` → both (`docker inspect ... | jq keys`), matching `12-DOCKER-COMPOSE.md §4`.
+- Both Gate-3/DEV-B evidence items were captured for real by starting the already-*created*
+  (but not yet started) `frontend`/`backend` containers directly with `docker start <name>`,
+  bypassing only the compose-level start-ordering wait — no edit to `compose.yaml` (see
+  `AI-USAGE.md`'s ponytail entry for the alternatives rejected):
+  - `docs/evidence/network-isolation.txt`: `frontend` cannot resolve or reach `database:5432`
+    (`ping: bad address`, `nc: bad address`, exit 1); `backend` can (`socket.create_connection`
+    exit 0 — used in place of `nc`, which the minimal backend image deliberately doesn't ship).
+  - `docs/evidence/persistence-compose.txt`: seeded 36 rows, `docker compose down` (volumes
+    kept) `&& docker compose up -d`, row count still 36 after. `backend` itself is `unhealthy`
+    in this capture (expected, stub-driven) — `database`/`cache`/`frontend` health confirmed
+    independently in the same file.
+
+**Once DEV-A's `/health`/`/ready` land, this workaround stops being necessary** — `make up`'s
+plain `--wait` will pass without manual intervention, and the full Gate-3 script in
+`12-DOCKER-COMPOSE.md §9` (the rows outside DEV-B's two — all ten endpoints, `/health`/`/ready`
+status codes, SIGTERM drain) is DEV-A's to close out, not re-run here.
+
+---
+
+## DEV-B · `make lint-localhost` silently passes right now regardless of match
+
+Found while running the deduction-armour targets against the new `compose.yaml`. The recipe is
+`@! grep -rnI ... backend/app compose.yaml compose.prod.yaml k8s/ || (echo FAIL; exit 1)`.
+`k8s/` doesn't exist yet (Phase 6 hasn't started), so `grep` exits **2** (path error), not 0/1.
+Bash's `!` treats any nonzero as false and negates it to true, so `! grep` evaluates to exit 0
+regardless of whether real matches were found, and the `||` FAIL branch never runs. Confirmed:
+`compose.yaml`'s two intentional `127.0.0.1` self-healthcheck lines (correct, per
+`12-DOCKER-COMPOSE.md §1`/`§3` — a container checking itself, not a service-to-service call) are
+real matches, printed to stdout, and the target still reports success either way. Not specific
+to those two correct lines — **any** real service-to-service `localhost` violation introduced
+between now and Phase 6 would be masked the same way, silently, until `k8s/` is scaffolded.
+
+Not fixed here — shared `Makefile` territory (like the `check_submission.py` pytest-cov note
+above), and the fix is a judgment call (create `k8s/.gitkeep` now vs. loop per-path so a missing
+directory can't swallow a real hit vs. `mkdir -p` guard in the recipe). Flagging for whoever
+touches `Makefile` next, ideally before Phase 6 lands anything under `k8s/` for real.
