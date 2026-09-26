@@ -143,6 +143,18 @@ jobs:
   scan:
     runs-on: ubuntu-24.04
     needs: build
+    # Job-level override, not widened at the workflow level: `upload-sarif` (below) needs
+    # `security-events: write` to publish results to the Security tab. The workflow-level
+    # `permissions: contents: read` (top of this file) is correct least-privilege for every
+    # other job — this is the one job that genuinely needs more, so it gets its own grant
+    # rather than loosening everything. Without this, `push`-triggered runs (to `dev`) fail
+    # this step with "Resource not accessible by integration" even though the scan itself
+    # succeeds — `pull_request`-triggered runs on this repo happened to have a token with
+    # enough access already, which is why this went unnoticed until a direct `push` run
+    # surfaced it (docs/AI-USAGE.md, 2026-09-26).
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
