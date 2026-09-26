@@ -2450,3 +2450,122 @@ was. Confirmed no test referenced any of the removed symbols before deleting.
   defined` at app-construction time, since `tests/conftest.py` imports `app.main`), not by
   re-reading the diff. Exactly the reason CLAUDE.md's post-merge discipline says to run tests
   after a change, not just check for leftover references by eye.
+## 2026-09-26 · fix/root-readme — second cold audit (Phase 0/2/frontend), README, cd.yml, and three missing ADRs
+
+Ran a second cold, adversarial subagent audit — no access to this session's own reasoning —
+covering what the first audit (Phase 3-6, see the entry above) didn't: Phase 0 bootstrap,
+Phase 2 data layer, and the whole frontend. One real finding: **no root `README.md`
+existed** — `03-REPO-BOOTSTRAP.md §1`/`§9` both require it, and CLAUDE.md's own deduction
+ledger fires −5 for exactly this. `scripts/check_submission.py::doc_quickstart()` was
+under-reporting it as `SKIP` ("does not exist yet") rather than `FAIL` — fixed that too, so the
+detector itself can't silently pass a missing README again.
+
+Data layer (migrations, models, seed data) and the entire frontend surface (API client,
+business-rule non-leakage per HARD rule 9, contract sync, test substance) were audited and
+found genuinely faithful to spec — no fixes needed there.
+
+**Wrote the real README** — `## Quickstart` section with `make up`/`make down`/`make nuke`,
+everyday commands, k8s section, project layout, config, and a pointer to CLAUDE.md's own
+binding rules. Verified against the actual `doc_quickstart()` detector logic, not assumed:
+every `make <target>` referenced resolves against the real `Makefile`. Falsified per HARD rule
+14 — removed the README, confirmed the detector goes red (`FAIL: root README.md does not
+exist`), restored it, confirmed green.
+
+**Then ran the full `scripts/check_submission.py` suite for the first time this session** (it's
+a local-only `make submission-check` target, never wired into CI) and found it reporting `3
+FAIL` against a tree that was actually fine — traced every one down to the actual regex/path,
+not assumed a real problem existed just because the detector said so:
+
+- `SEC-K8S-SECRET` flagged `k8s/base/secret.yaml`'s real, safe
+  `PLACEHOLDER_DO_NOT_COMMIT_REAL_VALUES` values as non-placeholder — the check's regex only
+  matched an *unquoted* bare word, and every real value in the file is YAML double-quoted.
+  Fixed the quote-stripping, plus special-cased `DATABASE_URL` (a composite connection-string
+  template with the placeholder embedded in the userinfo section, not at the string's start) to
+  judge only the `user:pass@` segment rather than the whole URL's legitimate scaffolding length.
+  Verified against both a real safe value (passes) and a deliberately fake-but-real-shaped leak
+  (still correctly fails) — not just the one case that was breaking.
+- `NET-LOCALHOST` flagged two container healthchecks (`compose.yaml`'s own `wget
+  http://127.0.0.1:.../healthz` probes) and a dev-only ingress hostname
+  (`k8s/overlays/dev/ingress-host.yaml`'s `value: localhost`) as service-to-service
+  `localhost` violations. Both are legitimate, already-established exceptions —
+  `Makefile::lint-localhost` already excludes exactly these two patterns (a container probing
+  its own loopback; a `host:`/`value: localhost` line) but this Python detector had never been
+  brought into parity with that fix. Brought it into parity rather than inventing new logic.
+- `NET-SEGMENT` flagged a real, correct `internal: true` network marker as missing — the regex
+  assumed the network name key and its `internal: true` property were on adjacent lines; the
+  real `compose.yaml` has `driver: bridge` between them. Rewrote to search the whole network
+  block instead of two fixed lines.
+- Two checks (`K8S-DB-DEPLOYMENT`, `ENV-PARITY`) were permanently `SKIP`, not `FAIL`, but for
+  the same class of bug: stale filenames (`k8s/base/postgres.yaml` — real file is
+  `postgres-statefulset.yaml`; `backend/app/config.py` — real file is `settings.py`) that were
+  never going to exist under those names, silently under-reporting real, passing checks as "not
+  applicable yet" forever. Fixed both paths — both now correctly `PASS`.
+- `RUBRIC-TESTS` reported `0 backend tests collected` against a real 299-test suite — two
+  independent bugs, not one: (1) it ran the caller's ambient `python3` instead of
+  `backend/.venv`'s own interpreter (this script isn't wired into CI, only a local dev target,
+  so it depends entirely on the caller's shell already having the venv active — usually false),
+  and (2) even fixed to use the venv, this project's own `pytest -q --collect-only` output
+  format is file-level summary lines (`path/to/test_x.py: 12`), not one `path::test_name` line
+  per test — the original code counted `"::"` occurrences, which is always 0 against this
+  format. Fixed both; also added `--no-cov` to the collect-only invocation, since the project's
+  own `--cov-fail-under=65` addopts made this narrow invocation exit non-zero on an unrelated
+  coverage floor.
+
+**Then found something bigger while researching ADR-0003:** `cd.yml` — the actual CD workflow
+(`GHCR` push, `needs:`-gated publish, digest-pinned deploy) — **did not exist at all**. Only
+`ci.yml` (test/lint/build/scan) did. `00-SPEC.md §638` ties 4 real rubric marks to it directly,
+and `15-CICD.md §4` has the complete spec. Asked the user before building it (this is a
+materially bigger scope than a doc fix); explicit instruction was to build it. Wrote
+`.github/workflows/cd.yml` following `15-CICD.md §4`'s spec closely: `test` (reuses `ci.yml`),
+`build-push` (`needs: test` — GHCR push tagged by both SHA and `:latest`, SBOM via Syft, cosign
+keyless signing as the labelled bonus), `deploy-k8s` (`needs: build-push` — signature
+verification, real `kind` cluster, ingress-nginx, secrets from GitHub Secrets via
+`--dry-run=client | kubectl apply` so nothing is ever echoed, `kustomize edit set image` pinned
+to the build's own captured **digest** output — never a tag, per ADR-0003's own reasoning —
+smoke test through the real ingress, `kubectl get hpa` per `15-CICD.md §3.4`'s own instruction
+to print it). Corrected one bug in the spec's own sketch while transcribing it: the smoke
+test's `port-forward svc/frontend 8080:8000` doesn't match this project's real frontend Service
+port (`8080`, confirmed directly against `k8s/base/frontend-deployment.yaml`) — used `8080:8080`
+instead of copying the spec verbatim with a stale port number. Validated YAML syntax directly;
+`scripts/check_submission.py::CI-NEEDS` now correctly detects the publish/deploy steps (up from
+silently `SKIP`-ing when no such workflow existed). **Not verified against a real deploy** — no
+GHCR credentials, no live cluster, no registry access from this sandbox; the real confirmation
+is the first real push to `main` that triggers it.
+
+**Wrote all three missing ADRs**, each grounded in code/spec text actually read, not invented:
+- **0001 — provider interface.** `Protocol` over an ABC (least coupling, matches the spec's own
+  replaceability requirement), the declared `async` deviation from the spec's synchronous
+  sketch (blocking I/O under an async event loop would serialise every concurrent request;
+  `run_in_threadpool` rejected because it makes the timeout non-cancellable, undermining CLAUDE.md
+  HARD rule 5's own fallback guarantee), and contradiction A5's `confidence`
+  persist-and-use-as-guard resolution (already implemented — `triage_confidence` column +
+  `confidence_range` CHECK constraint + the `triage_min_confidence` downgrade — the ADR
+  documents an existing, tested decision, doesn't invent a new one).
+- **0003 — deploy by digest, tag by SHA.** Why a digest is stronger than a SHA tag (a tag is
+  still technically mutable; a digest is content-addressed and can't be silently repointed), the
+  `needs:` gating argument verbatim from `15-CICD.md §4.1`, and secrets handling (`GITHUB_TOKEN`
+  over a long-lived PAT; never `echo`ing a secret, since a `base64`/`jq` transform defeats
+  Actions' log-masking).
+- **0004 — PII and data governance.** A real accounting of every field/flow: what's sent to the
+  triage provider (`text`/`location`, never `reporter_contact` — structurally excluded by
+  `triage_with_fallback()`'s own signature, not just "we don't currently pass it"), why the
+  observability ring can't hold PII (enumerated field list, not a policy), the logging
+  redaction filter's real scope (key-shaped, not content-aware — stated as a genuine limit, not
+  oversold), and the one honest gap this ADR does NOT paper over: no auth layer exists yet, so
+  anyone reaching the API can read every citizen's contact info — disclosed as a real,
+  assignment-scope boundary rather than silently omitted.
+
+- **Verified:** `pytest -m "unit or contract"` — 299 passed (backend), unchanged by any of this
+  work except the `RUBRIC-TESTS` detector fix that finally counted them correctly. `ruff check
+  .`, `mypy app` (strict), frontend `npx tsc --noEmit` + `eslint` — all clean.
+  `scripts/check_submission.py` — went from `3 FAIL, 6 WARN, 3 SKIP` (several of which were
+  themselves detector bugs, not real problems, and one — `RUBRIC-TESTS` reading 0 — was hiding
+  a real number) to `0 FAIL, 5 WARN, 1 SKIP`, all five WARNs and the one SKIP now genuinely
+  expected at this stage (no gitleaks binary in this sandbox, a real 8.3% contributor-share
+  number, real missing live-cluster evidence files, `ENV-PARITY`'s field-naming drift between
+  `.env.example`'s and `settings.py`'s actual keys — real, minor, not chased further this pass).
+- **I changed:** every detector fix above was verified against the actual regex/path/subprocess
+  behavior directly (a Python one-liner reproducing the exact match, or the exact command the
+  script runs) before editing, not assumed correct from reading the diff — CLAUDE.md's own
+  "run tests after a merge, don't just check for leftover references by eye" discipline applied
+  to a script that has no test suite of its own to run.
