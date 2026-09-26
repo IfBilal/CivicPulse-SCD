@@ -1,0 +1,31 @@
+C7 evidence — backend unit+contract test suite, run 3 times independently to demonstrate
+determinism (CLAUDE.md HARD rule 15: no flaky tests). Command:
+
+  cd backend && python -m pytest -m "unit or contract" -q
+  (venv: fresh `pip install -e ".[dev]"` from backend/pyproject.toml, Python 3.12)
+
+Result, identical across all 3 independent runs on 2026-09-26:
+  275 tests collected, all passed (dot-progress output: 72+72+72+59 = 275 dots, zero
+  F/E markers, pytest exit code 0 on every run)
+  Coverage: 90.11% (floor in pyproject.toml is --cov-fail-under=65)
+  "Required test coverage of 65% reached. Total coverage: 90.11%" — printed identically
+  on all 3 runs.
+
+Per-module coverage highlights (from the coverage report):
+  app/domain/transitions.py     100%
+  app/domain/enums.py           100%
+  app/schemas/*.py              100% (all schema files)
+  app/services/triage_service.py 95%
+  app/providers/triage/simulated.py 99%
+  app/repositories/complaint_repo.py 25%  <- lowest; this file's uncovered lines are
+    almost entirely exercised only by `integration`-marked tests (real Postgres via
+    testcontainers), not `unit`/`contract` — expected, not a gap in this test tier.
+
+This 275-test, 90.11%-coverage result EXCEEDS the rubric row C7's claim of "≥14 backend
+tests... coverage ≥65%" (and also exceeds 20-RUBRIC-TRACEABILITY.md's own stated "121
+tests" — the real count is higher, likely because more tests were added after that line
+was last written).
+
+NOT run in this evidence pass: `pytest -m integration` (needs real Postgres/Redis via
+testcontainers, which needs a working Docker daemon — unavailable in this sandbox; see
+handover for the exact command to run this live).

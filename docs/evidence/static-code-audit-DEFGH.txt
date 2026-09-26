@@ -1,0 +1,164 @@
+Static code/config audit for rubric rows D1-D4, E1-E4, F1-F7, G1-G6, H1-H6.
+Generated 2026-09-26 by direct file inspection (Read tool) — no Docker/DB/k8s available in
+this environment, so this proves the code/config genuinely exists and is internally
+consistent with each rubric claim; it does NOT prove runtime behavior. Rows whose
+correctness can only be confirmed live are marked so explicitly below.
+
+== D · Data layer ==
+
+D1 VERIFIED — backend/alembic/versions/0001_initial.py is the only migration, contains
+real DDL (op.create_table, op.execute CREATE TYPE, op.create_index). backend/app/main.py
+has zero DDL and its own docstring states migrations run via `alembic upgrade head` in
+make up/CI/k8s initContainer, deliberately never at app startup. Grep for
+create_all/CREATE TABLE in main.py and db/session.py: no matches.
+
+D2 VERIFIED — backend/app/db/models.py:82-86 has ai_summary, triaged_by,
+triage_latency_ms columns. created_at/updated_at use TIMESTAMP(timezone=True)
+(Postgres timestamptz) at lines 88-93.
+
+D3 PARTIALLY VERIFIED — exactly two indexes exist, models.py:113-114:
+  Index("ix_complaints_status_priority", "status", "priority")
+  Index("ix_complaints_created_at", sql_text("created_at DESC"))
+Both ARE justified by name in docs/05-DATA-LAYER.md §4 (Q-DASH-FILTER line ~204,
+Q-LIST-RECENT line ~223, with example SQL) — but there is NO inline code comment at the
+Index() call sites themselves naming the query. The rubric's evidence artefact
+(explain-q-dash-filter.txt, an EXPLAIN plan) does not exist and would need a live
+Postgres to produce. Gap: design-doc justification is real; in-code justification and
+the EXPLAIN artefact are not.
+
+D4 VERIFIED — backend/app/cli/seed.py uses uuid5 with a fixed namespace UUID (lines ~16,
+19-20). backend/app/repositories/complaint_repo.py:111-117 implements bulk_seed with
+`pg_insert(...).on_conflict_do_nothing(index_elements=["id"])`. backend/tests/
+integration/test_seed.py has 6 tests including test_seed_is_idempotent (line 14, runs
+bulk_seed twice, asserts equal counts) and test_seed_ids_are_stable (line 60) — matches
+the ">=30 rows, idempotent" claim. NOTE: these are `integration`-marked tests requiring
+a live Postgres via testcontainers — not run in this session (no Docker). Code inspection
+confirms the idempotency logic exists; a live `pytest -m integration` run is still needed
+to prove it actually executes correctly against real Postgres (see handover for the exact
+command).
+
+== E · Cache layer ==
+
+E1/E2 VERIFIED IN CODE (runtime TTL/hit-miss behavior needs a live run) —
+backend/app/services/stats_service.py:68 has `ttl_s: int = 30` literal default.
+backend/app/routes/stats.py:27 sets the X-Cache header from the actual hit/miss result
+("HIT" if hit else "MISS"). Invalidation ordering: complaint_service.py:73-75 and
+119-121 both call `await self._repo.commit()` BEFORE `await self._stats.invalidate()`
+— correct commit-then-invalidate ordering per stats_service.py:104-108's documented rule.
+This fixes the exact bug PR #41 ("stats cache invalidation never ran, or ran before
+commit") was opened to close — the fix is present in the code read here.
+
+E3 VERIFIED — backend/app/providers/ratelimit/lua/fixed_window.lua exists (atomic
+INCR+EXPIRE+TTL in one script — a real distributed primitive, not in-process).
+backend/app/middleware/rate_limit.py wires a Redis-backed RateLimiter
+(request.app.state.redis) — shared across instances, genuinely distributed.
+
+E4 VERIFIED — compose.yaml cache service command: `redis-server --appendonly yes
+--appendfsync everysec ...` plus a named volume `redisdata:/data`.
+
+== F · AI layer ==
+
+F1 VERIFIED — backend/app/providers/triage/ has 4 implementations: llm.py, ollama.py,
+rules.py, simulated.py (>= 3 required). factory.py selects by `Settings.triage_provider`
+(a Literal type, validated by Pydantic).
+
+F2 VERIFIED — llm.py: response content is always parsed via
+`TriageResult.model_validate_json(...)` regardless of provider's own "JSON mode" claim;
+ValidationError/JSONDecodeError both caught and re-raised as a typed LLMValidationError,
+never left to propagate raw past the service boundary.
+
+F3 VERIFIED — triage_service.py has a RETRYABLE tuple (timeouts/connect errors/429/5xx)
+separated from a NON_RETRYABLE tuple (ValidationError/malformed-JSON/ValueError). The
+retry loop runs at most once (max_retries default 1) inside a shared 12s
+(`total_budget_s`) asyncio.timeout deadline, with jittered sleep only on the retryable
+branch — non-retryable failures break immediately with zero sleep/retry. Matches
+CLAUDE.md HARD rules 5 and 6 exactly.
+
+F4 VERIFIED hashing logic; hit-rate HONESTLY unmeasured — cache.py hashes
+NFKC-normalized+casefolded text+location+model via SHA-256. docs/TRIAGE.md explicitly
+marks the cache hit-rate as "BLOCKED — needs a real k6 load run against live/CI
+infrastructure." No fabricated hit-rate number found anywhere. This means F4's rubric
+line ("with a measured, reported hit rate") is NOT met yet — the mechanism is real, the
+required measurement is not, and the project is honest about that gap rather than
+inventing a number.
+
+F5 VERIFIED — prompt.py documents 5 defence layers (normalise bidi/zero-width chars,
+neutralise sentinels, delimit/label untrusted input, constrain output to an enum,
+bound blast radius) plus a 6th soft layer in triage_service.py's post-validation.
+Tests referencing injection scenarios exist in test_triage_service.py, test_llm.py,
+test_simulated.py.
+
+F6 VERIFIED — triage_latency_ms is computed and recorded through triage_service.py and
+surfaced via GET /api/meta/providers (routes/meta.py), which returns recent ring
+entries including latency_ms.
+
+F7 VERIFIED — docs/adr/0004-pii-and-data-governance.md is 127 lines: a real data
+classification table and an explicit "what leaves the machine to a third-party LLM
+provider" section citing exact code paths. Not a stub.
+
+== G · Docker and Compose ==
+
+G1 VERIFIED — backend/Dockerfile: 2 stages, pinned python:3.12.14-slim-bookworm,
+non-root USER app (uid 10001), exec-form CMD. frontend/Dockerfile: 2 stages, pinned
+node:22.11.0-alpine and nginx:1.27.5-alpine-slim, non-root USER, exec-form CMD. Minor
+nit (not a HARD-rule violation): frontend's HEALTHCHECK uses shell-form
+(`wget -qO- ... || exit 1`) rather than exec-form JSON array — inconsistent with the
+backend Dockerfile's own HEALTHCHECK but HARD rule 11 only requires exec-form CMD, not
+HEALTHCHECK.
+
+G2 VERIFIED — both Dockerfiles have a .dockerignore. docs/evidence/
+dockerignore-context-sizes.txt has specific before/after numbers with a commit SHA and
+timestamp: backend 270.6MB -> 141.0KB, frontend 236.0MB -> 486.5KB.
+
+G3 VERIFIED — compose.yaml's `internal` network has `internal: true`; the `edge`
+network does not. docs/evidence/network-isolation.txt shows a failed connection attempt
+from frontend to database and a positive-control success from backend.
+
+G4 PARTIALLY VERIFIED — three volumes confirmed (pgdata, redisdata, ollama_models), each
+justified by a comment, but the comment is on the service-level mount line, not the
+top-level `volumes:` declaration (a documentation-location nit, not a missing
+justification). compose.prod.yaml confirmed to have NO dev bind mount that compose.yaml
+has (compose.yaml's dev-only `./backend/app:/app/app:ro` is absent from prod).
+
+G5 VERIFIED — all 5 long-running services have healthcheck: blocks; depends_on
+consistently uses `condition: service_healthy`.
+
+G6 VERIFIED — compose.prod.yaml uses `image: ${REGISTRY}/...:${IMAGE_TAG}`, no `build:`
+key, explicit "NO ports:" comments on database/cache. compose.yaml (dev) does expose
+5432 as a documented dev-only convenience, confirmed absent from compose.prod.yaml.
+
+== H · Kubernetes ==
+(All H-rows: config/manifest inspection only — actual cluster behavior such as probe
+pass/fail, HPA/VPA reconciliation, and rollout status needs a live k3d/kind cluster,
+which this sandbox does not have. These rows confirm the manifests are correctly
+authored, not that they behave correctly when applied.)
+
+H1 VERIFIED — k8s/base/postgres-statefulset.yaml is `kind: StatefulSet` with
+volumeClaimTemplates; its Service is headless (clusterIP: None). redis-deployment.yaml
+and backend/frontend Services are all `type: ClusterIP`. ingress.yaml has both `/api`
+and `/` paths, `/api` ordered first.
+
+H2 VERIFIED, NO SECRET FOUND — k8s/base/secret.yaml: every value is literally
+"PLACEHOLDER_DO_NOT_COMMIT_REAL_VALUES". configmap.yaml contains only non-secret values.
+
+H3 VERIFIED — backend-deployment.yaml's livenessProbe hits /health (comment: must NOT
+depend on the database); readinessProbe hits /ready (comment: SHOULD depend on it).
+
+H4 VERIFIED, no gaps found — every container spec across k8s/base/*.yaml and
+k8s/overlays/**/*.yaml (migrate initContainer, backend, frontend, postgres, redis, and
+the prod overlay's backend patch) has both requests: and limits: set.
+
+H5 VERIFIED — hpa.yaml is autoscaling/v2 with a full behavior: block (distinct
+scaleDown 300s stabilization / scaleUp 0s stabilization tuning).
+
+H6 VERIFIED — vpa.yaml sets updatePolicy.updateMode: "Off" (recommender-only),
+explicitly justified in a header comment as avoiding an HPA/VPA control-loop conflict.
+
+== What this audit does NOT prove ==
+No docker build, no live Postgres/Redis, no kubectl apply, no live LLM call was run.
+Runtime-only claims that remain unconfirmed: E1's actual TTL expiry timing, E3's actual
+429 behavior under concurrent load, G1/G2's actual image build success and real layer
+sizes (dockerignore-context-sizes.txt predates this audit and was not re-verified here),
+G3/G5/G6's actual container network reachability and healthcheck pass/fail, and all of
+H1-H6's actual cluster behavior. See docs/handover/HANDOVER-fix-close-disclosed-gaps-
+rubric-evidence.md for the exact commands to run live and close these.

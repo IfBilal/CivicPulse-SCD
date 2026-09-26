@@ -1,0 +1,34 @@
+B5 evidence — frontend component test suite, run for real 2026-09-26.
+(Node v20.20.2 / npm 10.8.2 locally — CI pins Node 22, but the suite ran identically;
+noted as a minor environment difference, not a result difference.)
+
+Command: cd frontend && npm ci --no-audit --no-fund && npx vitest run --coverage
+
+Result:
+  Test Files  11 passed (11)
+  Tests       14 passed (14)
+  Duration    10.47s
+
+This clears rubric B5's "≥5 meaningful component tests passing" floor (14 actual,
+across 11 files — matches ci.yml's own assertion `[ "$n" -ge 5 ]` in the
+test-frontend job). Test files covering real user-facing behavior (not trivial
+smoke tests): Submit.errors.test.tsx (server error envelope surfaced verbatim),
+Submit.loading.test.tsx (honest loading-state escalation), Submit.result.test.tsx
+(fallback-triage badge shown when triage degraded to rules), plus schema-bound
+validation tests.
+
+Also re-ran, statically, the two grep guards ci.yml's test-frontend job enforces
+(HARD rule 9 — no business rules in the frontend; no secrets in browser-reachable code):
+
+  grep -rnE "in_progress.*resolved|TRANSITIONS|allowedNext" src --include=*.ts \
+    --include=*.tsx --exclude=schema.d.ts
+  -> no matches (exit 1, i.e. the negated `!` guard in ci.yml would pass)
+
+  grep -rniE "gsk_|AIza|password|secret|token" src public --exclude=mockServiceWorker.js
+  -> no matches (exit 1, same)
+
+Coverage overall is 55.47% statement / 74.1% branch — driven down by 0%-covered
+decorative/animation files (CityScene.tsx, App.tsx, main.tsx, CursorGlow.tsx) that
+aren't exercised by these component tests; the rubric line for B5 only requires ≥5
+tests, not a frontend coverage floor, so this is not itself a gap against B5 — noted
+here for completeness only.
