@@ -1,0 +1,29 @@
+C2 evidence — layer discipline (routes -> services -> repositories -> providers,
+no SQL outside repositories/, no upward imports), run for real 2026-09-26.
+
+Command: make lint-layers
+Output: (empty — every `@!` guard passed silently; make prints nothing on success)
+Exit code: 0
+
+The three guards inside lint-layers (Makefile):
+  1. grep -rnE "select\(|session|execute\(|text\(" backend/app/routes/   -> no matches
+  2. grep -rnE "HTTPException|status_code|Response" backend/app/repositories/ -> no matches
+  3. grep -rn "from app.routes" backend/app/services backend/app/repositories
+     backend/app/providers -> no matches (no upward imports)
+
+Command: make lint-localhost
+Output: (empty — no localhost/127.0.0.1 hits outside healthchecks/comments)
+Exit code: 0
+
+Command: cd backend && python -m mypy app  (strict = true in pyproject.toml)
+Output: "Success: no issues found in 57 source files"
+
+Command: cd backend && python -m ruff check .
+Output: "All checks passed!"
+
+Command: cd backend && python -m ruff format --check .
+Output: "106 files already formatted"
+
+All four commands were run directly in this sandbox (no Docker needed — pure Python/
+grep static analysis) against a freshly created backend/.venv
+(pip install -e ".[dev]"). This is real, reproducible evidence, not copied from a CI log.

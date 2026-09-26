@@ -1,0 +1,73 @@
+A3 evidence — audit of review substance on every merged PR (35 PRs, via `gh pr list
+--state merged --json number,reviews`, IfBilal/CivicPulse-SCD, run live against GitHub's
+API on 2026-09-26). This is a FAILING result for the rubric line "each with a
+substantive partner review" — recorded honestly rather than hidden.
+
+Per-PR review/comment counts (n = PR number, reviewCount = number of formal GitHub
+reviews, nonEmptyBodies = how many of those reviews had non-empty text):
+
+  PR   reviews  non-empty-body reviews
+  47   0        0
+  46   0        0
+  45   1        0
+  44   1        0
+  43   1        0
+  42   2        0
+  41   0        0
+  40   0        0
+  38   0        0
+  36   0        0
+  34   1        0
+  33   1        0
+  32   0        0
+  31   1        0
+  30   0        0
+  28   0        0
+  27   1        0
+  26   0        0
+  24   0        0
+  23   1        1
+  21   1        0
+  20   0        0
+  19   1        1
+  18   0        0
+  17   0        0
+  16   2        1
+  14   1        1
+  11   1        1
+  9    0        0
+  8    0        0
+  7    0        0
+  6    0        0
+  5    2        2
+  4    0        0
+  3    0        0
+  2    0        0
+
+Totals: 35 merged PRs. 12 have ZERO formal reviews despite being merged (#2,3,4,6,7,8,9,
+17,18,20,24,26,28,30,32,36,38,40,41,46,47 — several of these are major feature PRs, e.g.
+#38 "feat(k8s): Phase 6 — Kubernetes manifests", #36 "feat(ci): Phase 5 — full ci.yml
+pipeline", #30 "feat(compose): Phase 3 — compose.yaml + compose.prod.yaml"). Of the 23
+PRs that DO have a review, every review body is an empty string (`state: APPROVED,
+body: ""`) except six from the earliest Phase-0 PRs (#5, #11, #14, #16, #19, #23), which
+have short substantive bodies.
+
+PR #31 (`feat(be): Phase 3 backend API`) does have a substantive PR COMMENT (not a
+formal review) at https://github.com/IfBilal/CivicPulse-SCD/pull/31#issuecomment-5831511251
+explaining a known red check — but it is authored by the PR's own author (T361), not a
+partner review, so it does not satisfy "partner review" either.
+
+Conclusion: Rubric A3 ("≥5 merged PRs, each Issue-linked, each with a substantive
+partner review") is NOT met on the "substantive partner review" clause for the large
+majority of PRs, including several of the biggest feature PRs. The PR-count (35, well
+above 5) and merge-via-PR discipline are real and fine; the review-substance half is not.
+CLAUDE.md §6 rule 5 explicitly names this failure mode ("PR review is run by the partner,
+never by you on your own PR... rubber-stamp reviews") as something the project's own
+rules require avoiding — this audit shows it was not avoided in practice for most PRs.
+
+This row is left UNPROVEN (☐) in docs/20-RUBRIC-TRACEABILITY.md rather than marked done,
+per this task's instruction to be skeptical, not generous.
+
+Raw command used:
+  gh pr list --repo IfBilal/CivicPulse-SCD --state merged --limit 40 --json number,reviews \
+    --jq '.[] | {n: .number, reviewCount: (.reviews|length), nonEmptyBodies: [.reviews[] | select(.body != "")] | length}'

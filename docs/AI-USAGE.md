@@ -2597,3 +2597,51 @@ answers in `docs/ENGINEERING-NOTES.md`
   session phrased it) to the real route, `GET /api/meta/providers` with a `recent` field on the
   response body (`backend/app/routes/meta.py:11`) — there is no separate `providers.recent`
   endpoint in this codebase.
+
+## 2026-09-26 · fix/close-disclosed-gaps (rubric-evidence closure pass)
+
+- **Tool:** Claude Code (no named skill invoked — this was an audit/evidence-closure task,
+  not a code-writing phase; §6's `caveman`/`ponytail` triggers are "before writing any code"
+  and "a design fork with ≥2 defensible answers" respectively, and this session wrote zero
+  application code, only evidence files and rubric-doc status updates)
+- **Shaped/Wrote:** `docs/20-RUBRIC-TRACEABILITY.md` (Status column only — 21 rubric rows
+  A-J plus 9 deduction-armour rows moved ☐→☑, each with an inline note on exactly what was
+  verified and how); 9 new evidence files in `docs/evidence/` (`branch-ruleset.json`,
+  `ci-red-then-green.txt`, `pr-review-audit.txt`, `shortlog.txt`,
+  `static-code-audit-DEFGH.txt`, `test-stability.txt`, `check-submission-run.txt`,
+  `layer-lint-and-typecheck.txt`, `ci-workflow-structure.txt`, `frontend-test-run.txt`);
+  `docs/handover/HANDOVER-fix-close-disclosed-gaps-rubric-evidence.md`.
+- **I changed:** this session started from a stale local worktree branch (behind
+  `fix/close-disclosed-gaps` by several commits) — reset it to the real branch tip before
+  doing anything else, rather than silently working against outdated files. Ran real,
+  reproducible checks wherever the sandbox allowed (backend: fresh `pip install -e ".[dev]"`,
+  `pytest -m "unit or contract"` x3 = 275/275 pass, 90.11% coverage, deterministic; `mypy`/
+  `ruff`/`make lint-layers`/`make lint-localhost` all clean; frontend: `npm ci` + `vitest run`
+  = 14/14 pass; `scripts/check_submission.py` re-run after creating `backend/.venv`, which
+  flipped `RUBRIC-TESTS` from a false "0 collected" to a real "300 collected"; live `gh`
+  CLI queries against the real GitHub API for branch-ruleset config, PR review substance
+  across all 35 merged PRs, and CI run history). Two claims in the existing rubric doc were
+  found to be WRONG on live verification and are now disclosed rather than quietly accepted:
+  (1) A3's "substantive partner review" — audited all 35 merged PRs' actual review bodies;
+  12 have zero reviews, and every review except 6 early ones has an empty body (rubber-stamp
+  approval, no text) — this is the exact anti-pattern CLAUDE.md §6 rule 5 warns against, and
+  it is real, not hypothetical, on this repo; (2) I4/I5's `cd.yml` — the YAML is correctly
+  structured (`needs:` gating, digest-pinning, least-privilege permissions) but
+  `gh api .../actions/workflows` proves it has NEVER RUN (only `ci` is registered on GitHub;
+  `main` is stale/diverged from `dev`, where cd.yml actually landed) — left both ☐ rather
+  than crediting a workflow file that has never executed. A4 (commit-share ≥35%) was found
+  genuinely AMBIGUOUS after correctly merging the two contributors' aliased git identities
+  (T361≡Taimoor Shaukat, IfBilal≡8BitNinja, confirmed by matching commit author emails):
+  35.9% counting `--all` refs (passes) vs 22.6% counting `--no-merges HEAD` only (fails) —
+  left ☐ and disclosed both numbers rather than picking whichever clears the floor. Did NOT
+  attempt any live Docker/Postgres/Redis/k3d/kind/k6 command — this sandbox has no working
+  Docker daemon (confirmed: permission denied on the socket) — every row whose only possible
+  evidence is a live-environment capture stayed ☐, with the exact command needed logged in
+  the handover rather than the row being marked done on code-inspection alone.
+- **Verified:** see the new evidence files listed above for full detail; headline numbers —
+  275/275 unit+contract tests pass (3 independent runs, 90.11% coverage, floor is 65%), 14/14
+  frontend tests pass, `mypy --strict` clean on 57 files, `ruff check`/`ruff format --check`
+  clean, `make lint-layers`/`make lint-localhost` both exit 0, `check_submission.py` at
+  `0 FAIL, 5 WARN, 1 SKIP`, 35 merged PRs confirmed live via `gh pr list`, `main`'s branch
+  ruleset confirmed live via `gh api` (PR+CODEOWNERS review required, all 7 CI jobs required,
+  no-bypass).
