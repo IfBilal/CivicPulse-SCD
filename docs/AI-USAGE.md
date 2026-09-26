@@ -2240,4 +2240,19 @@ fix's already-expanded scope. Flagged here rather than silently left for a futur
 rediscover independently.
 - **Verified real CVE closure, not just pip-level:** confirmed via the actual CI `scan` job's
   Trivy output after pushing — not re-asserted from local checks alone, given the prior entry's
-  local-only check already turned out to be incomplete once.
+  local-only check already turned out to be incomplete once. Result: `orjson-3.11.9` and
+  `starlette-1.7.0` both show **0** vulnerabilities in the Python-package scan — all 3 original
+  CVEs (CVE-2025-62727, CVE-2026-48818, CVE-2026-54283) are genuinely closed now, not just the
+  first one.
+
+**New, separate, unrelated finding from the same scan:** `scan` still fails — not from anything
+this PR touched, but from **19 real OS-level CVEs (17 HIGH, 2 CRITICAL)** in
+`python:3.12.14-slim-bookworm`'s own base packages: `libcrypto3`/`libssl3` (OpenSSL —
+CVE-2026-31789 CRITICAL heap buffer overflow, plus 6 more), `musl` (CVE-2026-40200), `zlib`
+(CVE-2026-22184). This base image tag was never touched by this PR — it's a genuinely separate
+problem (the Debian base image's own package CVE disclosures accumulating since the tag was
+last pinned), not a Python dependency issue, and not something to fold into a PR titled "bump
+fastapi/starlette/pydantic." Would need its own `chore/bump-base-image` pass: pin a newer
+`python:3.12.*-slim-bookworm` digest (or the next Debian point release) and re-verify the
+Docker build + full suite against it. Flagged here rather than silently left once discovered,
+even though fixing it wasn't this PR's job.
