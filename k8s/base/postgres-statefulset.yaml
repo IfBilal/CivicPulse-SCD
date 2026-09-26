@@ -1,0 +1,62 @@
+# A Deployment here is a marked error (13-KUBERNETES.md §3): its pods have no stable identity
+# and a ReadWriteOnce PVC can't be shared across replicas. A StatefulSet gives postgres-0 a
+# stable name, a stable DNS name, and a PVC that re-attaches to its replacement on delete —
+# exactly what Gate 6's persistence proof demonstrates.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: civicpulse
+  labels: { app: postgres }
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector: { matchLabels: { app: postgres } }
+  template:
+    metadata:
+      labels: { app: postgres }
+    spec:
+      terminationGracePeriodSeconds: 60
+      securityContext: { fsGroup: 999, runAsUser: 999, runAsNonRoot: true }
+      containers:
+        - name: postgres
+          image: postgres:16.4-alpine
+          env:
+            - name: POSTGRES_USER
+              valueFrom: { secretKeyRef: { name: app-secrets, key: POSTGRES_USER } }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: app-secrets, key: POSTGRES_PASSWORD } }
+            - name: POSTGRES_DB
+              valueFrom: { configMapKeyRef: { name: app-config, key: POSTGRES_DB } }
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata   # subdir — the mount root may hold lost+found
+          ports: [{ name: pg, containerPort: 5432 }]
+          volumeMounts: [{ name: pgdata, mountPath: /var/lib/postgresql/data }]
+          readinessProbe:
+            exec: { command: ["sh", "-c", "pg_isready -U $(POSTGRES_USER) -d $(POSTGRES_DB)"] }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec: { command: ["pg_isready", "-U", "postgres"] }
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 250m, memory: 256Mi }
+            limits: { cpu: "1", memory: 1Gi }
+  volumeClaimTemplates:
+    - metadata: { name: pgdata }
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: { requests: { storage: 2Gi } }
+---
+# Headless — required by the StatefulSet for stable per-pod DNS (postgres-0.postgres...).
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: civicpulse
+  labels: { app: postgres }
+spec:
+  clusterIP: None
+  selector: { app: postgres }
+  ports: [{ name: pg, port: 5432 }]

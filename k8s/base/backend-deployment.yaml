@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: civicpulse
+  labels: { app: backend }
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }   # capacity never dips during a roll
+  selector: { matchLabels: { app: backend } }
+  template:
+    metadata:
+      labels: { app: backend }
+    spec:
+      terminationGracePeriodSeconds: 30   # must exceed preStop (5s) + drain (5s) + margin
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway   # not DoNotSchedule — a small local cluster would strand pods Pending
+          labelSelector: { matchLabels: { app: backend } }
+      initContainers:
+        - name: migrate   # 05-DATA-LAYER.md §3.3 — migrations here, never in app startup code
+          image: ghcr.io/ifbilal/civicpulse-backend:PLACEHOLDER_SHA
+          command: ["alembic", "upgrade", "head"]
+          envFrom:
+            - configMapRef: { name: app-config }
+            - secretRef: { name: app-secrets }
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+      containers:
+        - name: backend
+          image: ghcr.io/ifbilal/civicpulse-backend:PLACEHOLDER_SHA
+          ports: [{ name: http, containerPort: 8000 }]
+          envFrom:
+            - configMapRef: { name: app-config }
+            - secretRef: { name: app-secrets }
+          resources:
+            requests: { cpu: 200m, memory: 256Mi }   # mandatory — HPA reads <unknown> without this
+            limits: { cpu: "1", memory: 512Mi }
+          startupProbe:
+            httpGet: { path: /health, port: http }
+            failureThreshold: 30
+            periodSeconds: 2       # 60s boot budget: image pull, python import, pool, migration wait
+          livenessProbe:
+            httpGet: { path: /health, port: http }   # must NOT depend on the database
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: { path: /ready, port: http }    # SHOULD depend on it
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
+            successThreshold: 1
+          lifecycle:
+            preStop: { exec: { command: ["sh", "-c", "sleep 5"] } }   # lets endpoint removal propagate
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts: [{ name: tmp, mountPath: /tmp }]
+      volumes: [{ name: tmp, emptyDir: {} }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: civicpulse
+  labels: { app: backend }
+spec:
+  type: ClusterIP   # every service — NodePort/LoadBalancer on the DB is §5.3 −8, applies here too
+  selector: { app: backend }
+  ports: [{ name: http, port: 8000, targetPort: http }]

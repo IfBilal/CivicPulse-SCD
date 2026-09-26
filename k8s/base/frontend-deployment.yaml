@@ -1,0 +1,86 @@
+# Probes hit /healthz (nginx's own `return 200`), not `/` — a broken SPA bundle then doesn't
+# mark the pod unready, since nginx being up is exactly what "frontend liveness" means
+# (13-KUBERNETES.md §5). BACKEND_UPSTREAM is left unset deliberately: its default
+# (frontend/docker-entrypoint.d/10-config.sh) is `backend:8000`, which is exactly this
+# manifest's backend Service name and port — no override needed, one fewer place to typo it.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: civicpulse
+  labels: { app: frontend }
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
+  selector: { matchLabels: { app: frontend } }
+  template:
+    metadata:
+      labels: { app: frontend }
+    spec:
+      terminationGracePeriodSeconds: 15
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector: { matchLabels: { app: frontend } }
+      containers:
+        - name: frontend
+          image: ghcr.io/ifbilal/civicpulse-frontend:PLACEHOLDER_SHA
+          ports: [{ name: http, containerPort: 8080 }]
+          env:
+            - name: APP_ENV
+              valueFrom: { configMapKeyRef: { name: app-config, key: APP_ENV } }
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { cpu: "0.5", memory: 128Mi }
+          startupProbe:
+            httpGet: { path: /healthz, port: http }
+            failureThreshold: 15
+            periodSeconds: 2
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 2
+            successThreshold: 1
+          securityContext:
+            allowPrivilegeEscalation: false
+            # NOT readOnlyRootFilesystem — docker-entrypoint.d/10-config.sh writes config.js into
+            # the image's own static directory at container start (ADR-0002: one image, per-env
+            # config). A subPath emptyDir mount at that exact file was tried first and rejected:
+            # kubelet's subPath bind-mount needs a pre-existing file of the right type at that
+            # path in the image layer, and config.js is deliberately never baked in at build time
+            # (found by actually deploying this to a real cluster — `mount ...: not a directory`).
+            # Making that work would mean adding a placeholder file to frontend/Dockerfile, out of
+            # scope for a k8s-manifest-only PR. Still non-root, still no privilege escalation,
+            # still every capability dropped.
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: tmp-nginx, mountPath: /tmp/nginx }
+            - { name: cache-nginx, mountPath: /var/cache/nginx }
+      volumes:
+        - { name: tmp-nginx, emptyDir: {} }
+        - { name: cache-nginx, emptyDir: {} }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: civicpulse
+  labels: { app: frontend }
+spec:
+  type: ClusterIP
+  selector: { app: frontend }
+  ports: [{ name: http, port: 8080, targetPort: http }]

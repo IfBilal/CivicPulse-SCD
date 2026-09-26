@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  APP_ENV: prod
+  TRUSTED_PROXY_HOPS: "2"   # ingress-nginx AND the frontend's own nginx both append to X-Forwarded-For
+  LOG_LEVEL: INFO

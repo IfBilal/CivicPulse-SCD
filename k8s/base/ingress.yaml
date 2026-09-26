@@ -1,0 +1,23 @@
+# /api listed first: more specific, so ingress-nginx matches it before the catch-all `/`.
+# /metrics is deliberately absent — reachable only on the ClusterIP Service, scraped in-cluster.
+# Exposing it publicly leaks internal topology, traffic volume and provider mix.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: civicpulse
+  namespace: civicpulse
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "30"   # > the 12s triage budget
+    nginx.ingress.kubernetes.io/enable-real-ip: "true"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: civicpulse.localhost
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend: { service: { name: backend, port: { name: http } } }
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: frontend, port: { name: http } } }

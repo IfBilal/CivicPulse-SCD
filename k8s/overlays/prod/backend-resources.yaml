@@ -1,0 +1,15 @@
+# Placeholder — same as base/backend-deployment.yaml's defaults. Phase 7 (Load + Autoscaling)
+# replaces these with the real VPA recommendation, in its own commit citing the numbers
+# (02-CRITICAL-PATH.md Gate 7). Not fabricated here since no VPA run has happened yet.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+spec:
+  template:
+    spec:
+      containers:
+        - name: backend
+          resources:
+            requests: { cpu: 200m, memory: 256Mi }
+            limits: { cpu: "1", memory: 512Mi }

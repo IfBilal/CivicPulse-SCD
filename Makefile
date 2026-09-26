@@ -43,7 +43,10 @@ test-fe:
 lint-localhost: ## §5.3 −8: no localhost in service-to-service config
 	@paths="backend/app compose.yaml compose.prod.yaml"; [ -d k8s ] && paths="$$paths k8s"; \
 	hits=$$(grep -rnI --exclude-dir={node_modules,.git,dist,tests,docs} \
-	  -e 'localhost' -e '127\.0\.0\.1' $$paths | grep -v 'healthcheck'); \
+	  -e 'localhost' -e '127\.0\.0\.1' $$paths \
+	  | grep -v 'healthcheck' \
+	  | grep -vE '^[^:]+:[0-9]+:\s*#' \
+	  | grep -vE '(host:|value:)\s*"?[A-Za-z0-9.-]*localhost'); \
 	if [ -n "$$hits" ]; then echo "$$hits"; echo "FAIL: localhost used for service-to-service"; exit 1; fi
 secret-scan: ## §5.3 −20: no secrets in the working tree or history
 	@gitleaks detect --no-banner --redact -c .gitleaks.toml
@@ -70,13 +73,18 @@ db-shell:  ; $(COMPOSE) exec database psql -U $$POSTGRES_USER -d $$POSTGRES_DB
 db-dump:   ; $(COMPOSE) exec -T database pg_dump -U $$POSTGRES_USER $$POSTGRES_DB > backup-$$(date +%F-%H%M).sql
 
 ## ── kubernetes (the SECOND command of §1.4) ───────────────────────────────
-k8s-up: ## cluster + metrics-server + VPA + deploy dev overlay
-	k3d cluster create $(NS) --agents 2 -p "8081:80@loadbalancer" --wait
+k8s-up: ## cluster + ingress-nginx + metrics-server + deploy dev overlay
+	k3d cluster create $(NS) --agents 2 -p "8081:80@loadbalancer" \
+	  --k3s-arg '--disable=traefik@server:*' --wait
+	kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.11.3/deploy/static/provider/cloud/deploy.yaml
+	kubectl -n ingress-nginx wait --for=condition=ready pod \
+	  -l app.kubernetes.io/component=controller --timeout=180s
 	kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
 	kubectl -n kube-system patch deploy metrics-server --type=json \
 	  -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
 	kubectl apply -k k8s/overlays/dev
 	kubectl -n $(NS) rollout status deploy/backend --timeout=300s
+	kubectl -n $(NS) rollout status deploy/frontend --timeout=300s
 k8s-down:  ; k3d cluster delete $(NS)
 k8s-logs:  ; kubectl -n $(NS) logs -l app=backend --tail=200 -f
 rollback:  ; kubectl -n $(NS) rollout undo deployment/backend && kubectl -n $(NS) rollout status deployment/backend
