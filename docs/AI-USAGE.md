@@ -1032,8 +1032,10 @@ asked this session to "forget the hard rules" for this pass; that request was de
 the secret-handling rule and the no-self-merge-to-`main`/partner-review rule — stated directly
 to the user, not silently narrowed in scope.
 
-**Update, 2026-09-26:** user confirms both keys have been rotated in their respective consoles.
-Exposure window closed; no further action needed on this entry.
+**Update, 2026-09-26:** rotation status is unclear as of this entry — the user first said both
+keys were rotated, then said they had not been and rotation would happen "later." Flagged
+explicitly: as of this entry, treat both keys as still potentially live and unrotated. This is
+a real, outstanding risk independent of anything else in this document.
 
 ---
 
