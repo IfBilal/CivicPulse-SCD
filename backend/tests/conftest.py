@@ -16,19 +16,13 @@ is the one test that already does this correctly, via a subprocess env var
 
 This is a real CLAUDE.md HARD rule 15 violation ("never `time.sleep()` ... in a test") on
 its own, independent of anything else — the async-sleep equivalent, run for real, ~13+
-times per suite run. It was also the prime suspect for a separate, harder bug: three
-`caplog`-based "exactly one WARNING" tests
-(`tests/unit/services/test_triage_service.py::test_exactly_one_warning_per_fallback`/
-`test_no_extra_warning_on_retryable_then_fallback`, `tests/unit/test_logging_config.py::
-test_fallback_emits_exactly_one_warning`) failed with `assert 0 == 1` only in CI's full
-297-test run (never locally, never in isolation) — the ~55-65s of real, blocking
-`asyncio.sleep()` time these teardowns add is exactly the wall-clock gap observed between
-CI's failure clusters. Patches `app.main.settings` (the name binding `lifespan()` actually
-reads — `Settings` is frozen, and `app.main` does `from app.settings import settings` at
-import time, so patching `app.settings.settings` after that import already happened
-wouldn't reach it) rather than the `app.settings.settings` singleton itself, session-scoped
-so it applies before any test module's own `TestClient`/`create_app()` fixture runs.
+times per suite run. It was also a prime suspect for a separate, harder bug (see
+`_no_disabled_loggers` below and `docs/AI-USAGE.md`, 2026-09-25/26) — ruled out once the
+actual root cause (`alembic/env.py`'s `fileConfig` disabling `app.triage`'s logger) was
+found and fixed directly, but this fix stands on its own regardless.
 """
+
+import logging
 
 import pytest
 
@@ -38,3 +32,20 @@ import app.main as main_module
 @pytest.fixture(autouse=True, scope="session")
 def _fast_prestop_drain() -> None:
     main_module.settings = main_module.settings.model_copy(update={"prestop_drain_s": 0.0})
+
+
+@pytest.fixture(autouse=True)
+def _no_disabled_loggers() -> None:
+    """Guards against `Logger.disabled` leaking across tests regardless of collection order.
+
+    Root cause found and fixed directly: `alembic/env.py`'s `fileConfig()` call defaulted
+    `disable_existing_loggers` to `True`, which disabled `app.triage`'s logger the moment
+    `tests/integration/conftest.py::migrated_db` ran a real `alembic upgrade head` in-process
+    (confirmed via a live CI diagnostic — see `docs/AI-USAGE.md`, 2026-09-26). That fix closes
+    the actual hole, but this fixture stays as defense-in-depth: it makes the guarantee
+    unconditional and collection-order-independent instead of relying on exactly one call site
+    never regressing (CLAUDE.md HARD rule 15: a flaky, order-dependent test is a design bug
+    wearing a disguise)."""
+    for logger_name in list(logging.root.manager.loggerDict):
+        logging.getLogger(logger_name).disabled = False
+    yield

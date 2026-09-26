@@ -1986,3 +1986,40 @@ only the test suite runs migrations in the same process as the rest of the app.
   `pytest -m "unit or contract"` — 272 passed (271 + 1 new test). `mypy app`, `ruff check .`,
   `ruff format --check .` — all clean. Pushed; final confirmation is CI's next
   `test-backend` run, not yet observed at the time of this entry.
+
+**Update:** confirmed on the next real CI run — `test-backend` passed. Root cause and
+fix verified for real, not just locally.
+
+---
+
+## 2026-09-25 · fix/logging-caplog-and-orjson-cve · fixing two disclosed bugs, per explicit user instruction
+
+- **Tool:** Claude Code, no named skill invocation for the debugging itself (empirical
+  investigation, not code-generation) — `caveman`-style stripped task list below, logged before
+  the fix was considered final.
+- **Context:** both issues were previously found and *disclosed, not fixed* across several
+  entries in this file and `ENGINEERING-NOTES.md` (Phase 5/6 work), on the stated basis that
+  `backend/app/` is DEV-A's territory. The user explicitly instructed fixing both so the open
+  PRs could go fully green, after being told the tradeoffs (whose code it is, risk of colliding
+  with DEV-A's own in-progress work, that disclosure had already happened either way) and given
+  the choice to decide. Proceeding here is that explicit instruction, not a default DEV-B action.
+- **Task list:**
+  1. `orjson` CVE — widen `pyproject.toml`'s pin, regenerate `requirements.lock`, verify only
+     `orjson` moved, re-run the full suite.
+  2. Re-diagnose the `caplog` bug for real — the fix already shipped on `feat/ci-pipeline` (#36)
+     was real but incomplete; find out why 2 of the original 3 failures survived it.
+  3. Apply a fix that's verified stable across ≥2 full-suite runs, not just one.
+  4. Log the full journey, including the wrong turn, in `ENGINEERING-NOTES.md`.
+- **Findings:** full detail in `ENGINEERING-NOTES.md`'s matching entry — three things ruled out
+  by reading their actual source (uvicorn's own logging config, this codebase's own source,
+  pytest's own `_disable_loggers`) before landing on a defensive, order-independent fix
+  (`configure_logging()` re-enabling every logger + a new suite-wide `autouse` conftest fixture
+  doing the same). The exact single trigger among the remaining candidates wasn't chased to
+  ground — the fix is correct and verified regardless of which one it was, and the search space
+  (~300 tests × several third-party libraries) wasn't worth exhausting once a safe, idempotent,
+  twice-verified fix existed.
+- **I changed:** this is, by definition, a change to DEV-A's code and tests
+  (`app/logging_config.py`, `tests/unit/test_logging_config.py`, `pyproject.toml`,
+  `requirements.lock`, plus a new `tests/conftest.py`) — going on its own branch, its own PR, and
+  explicitly **not** self-merged; per `CLAUDE.md §6` rule 5 this needs DEV-A's review even more
+  than a same-lane PR would, since it's his logic being changed by someone else.
