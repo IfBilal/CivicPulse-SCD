@@ -1930,3 +1930,83 @@ gating anything.
   26 tests, unaffected. `mypy app`, `ruff check .`, `ruff format --check .` — all clean.
   Pushed; the real confirmation is the next `test-backend` CI run against real Docker, not
   yet observed at the time of this entry.
+
+## 2026-09-26 · fix/stats-invalidation-ordering — actual root cause confirmed and fixed: `alembic/env.py`'s `fileConfig` disabling `app.triage`'s logger
+
+Re-ran CI after the `prestop_drain_s` fix (f3db928): still `3 failed, 294 passed`, identical
+three tests, but total runtime dropped from ~103s to ~31s — proving that fix was real
+(confirmed independently valuable, HARD rule 15) but was never the cause of this specific
+failure. Rather than guess a third time, added a temporary diagnostic (`print(...)` to
+`stderr`, gated on the assertion actually failing, so silent when the test passes) to
+`test_exactly_one_warning_per_fallback` printing `logging.getLogger("app.triage")`'s
+`.disabled`/`.level`/`.propagate`/`.handlers` plus root's state, pushed it, and read the real
+value back from CI's log rather than reasoning further blind (this sandbox has no usable
+Docker — not in the `docker` group, no passwordless `sudo` — so the integration suite that
+turned out to be the actual precondition could never be reproduced locally; confirmed this
+directly: a full local `pytest` run, even with `testcontainers` installed, errors every
+integration test with `docker.errors.DockerException: ... PermissionError(13, 'Permission
+denied')`, and notably the 3 target tests PASS in that run, since the integration suite never
+actually executes).
+
+**The CI log showed:** `app.triage.disabled=True`, `root.level=30` (WARNING, not
+`configure_logging()`'s own `INFO` default). `logging.Logger.disabled = True` is set by
+exactly one stdlib mechanism outside this codebase's own control:
+`logging.config.fileConfig()`/`dictConfig()` with their default `disable_existing_loggers=
+True` — it walks every logger that already exists (by name, in `logging.Logger.manager.
+loggerDict`) at call time and disables any not explicitly declared in the config being
+loaded. `alembic/env.py:20` called `fileConfig(config.config_file_name)` with no override —
+`alembic.ini`'s `[loggers] keys = root,sqlalchemy,alembic` declares exactly three loggers,
+and `app.triage` (created at `app/services/triage_service.py`'s `logging.getLogger("app.
+triage")` module-level call, which happens at collection time, long before any fixture runs)
+is not one of them. `tests/integration/conftest.py::migrated_db` (session-scoped) calls
+`command.upgrade(cfg, "head")` **in-process**, not a subprocess — that import triggers
+`alembic/env.py`'s `fileConfig` call for real, in the same pytest process the unit suite runs
+in afterward. `[logger_root] level = WARN` in `alembic.ini` also explains `root.level=30`
+exactly, a second, independent side effect of the same call. Once disabled, `app.triage`
+short-circuits at `Logger.callHandlers`/`Logger.isEnabledFor` before any handler (including
+`caplog`'s) ever sees the record — `caplog.at_level()`/`.set_level()` only ever set a
+logger's `.level`, never touch `.disabled`, so they can't undo this.
+
+This explains every observed detail at once: CI-only (needs the real integration suite,
+which needs real Docker), deterministic rather than timing-dependent (my `prestop_drain_s`
+fix sped the run up ~3x but the three failures were bit-for-bit identical both times),
+process-wide and permanent once triggered (matches "the same three tests, every single CI
+run"), and exactly reproducible standalone: `python3 -c "import logging;
+logging.getLogger('app.triage'); from logging.config import fileConfig;
+fileConfig('alembic.ini'); print(logging.getLogger('app.triage').disabled)"` prints `True`
+locally, no Docker needed, confirming the mechanism directly against the real `alembic.ini`.
+
+**Fix:** `alembic/env.py` now calls `fileConfig(config.config_file_name,
+disable_existing_loggers=False)` — one keyword argument. Removed the temporary diagnostic
+from `test_exactly_one_warning_per_fallback` (back to its original form). Added
+`tests/unit/test_alembic_logging_config.py::
+test_alembic_file_config_does_not_disable_unrelated_loggers` — runs the exact
+`fileConfig(disable_existing_loggers=False)` call against the real `alembic.ini` in a
+subprocess (isolated, so the probe can't disable this test process's own loggers even if the
+fix regresses) and asserts `app.triage.disabled` comes back `False`.
+
+**I changed:** kept both of the previous two fixes (`configure_logging()` handler ownership,
+`prestop_drain_s=0` for tests) — neither was the actual cause of this specific CI failure,
+but both are independently real, correct fixes (production-safe idempotency; a genuine HARD
+rule 15 violation), not reverted just because they didn't solve the mystery. Removed the
+diagnostic print rather than leaving it in "just in case," since CLAUDE.md HARD rule 14 is
+about tests that can fail meaningfully, not permanent debug scaffolding in test files.
+
+**Ponytail — where to put the fix:** two defensible options considered.
+(1) Set `disable_existing_loggers=False` in `alembic/env.py`'s `fileConfig` call itself
+(chosen) — fixes it at the actual source, correct for every caller (CI, `make migrate`, a
+future dev running `alembic upgrade head` by hand, this test suite), one line, no test-only
+special-casing.
+(2) Have `tests/integration/conftest.py::migrated_db` snapshot every existing logger's
+`.disabled` state before calling `command.upgrade()` and restore it after (rejected) — this
+would only protect the test suite, leaves the same landmine for anyone running real
+migrations in a long-lived process (e.g. a future admin CLI or migration-runner service that
+imports `app.triage` before calling into Alembic), and is strictly more code for a narrower
+fix. Chose (1): the bug was never test-specific, just only ever observed in tests because
+only the test suite runs migrations in the same process as the rest of the app.
+- **Verified:** falsified per HARD rule 14 — the standalone repro above prints `True`
+  (broken) with default `fileConfig(...)` args and `False` (fixed) with
+  `disable_existing_loggers=False`, against the real `alembic.ini`, no Docker needed.
+  `pytest -m "unit or contract"` — 272 passed (271 + 1 new test). `mypy app`, `ruff check .`,
+  `ruff format --check .` — all clean. Pushed; final confirmation is CI's next
+  `test-backend` run, not yet observed at the time of this entry.

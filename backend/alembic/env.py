@@ -17,7 +17,20 @@ from app.settings import settings
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # `disable_existing_loggers` defaults to True in stdlib `fileConfig` — it walks every
+    # logger that already exists at this moment (e.g. `app.triage`, `logging.getLogger("app.
+    # triage")` at `triage_service.py` import time, long before this module runs) and sets
+    # `.disabled = True` on any of them not explicitly named in alembic.ini's `[loggers]`
+    # section. In-process (this module runs via `command.upgrade()`, called directly by
+    # `tests/integration/conftest.py::migrated_db`, not a subprocess), that disables `app.
+    # triage` for the rest of the test PROCESS — real root cause of a CI-only failure where
+    # `tests/unit/services/test_triage_service.py`'s and `tests/unit/test_logging_config.py`'s
+    # "exactly one WARNING" tests asserted 0 captured records only when the integration suite
+    # (which needs real Docker/Postgres, unreproducible in a sandbox without it) ran alembic
+    # migrations earlier in the same unfiltered `pytest` process (confirmed via a temporary
+    # diagnostic printing `logging.getLogger("app.triage").disabled` — True — in CI; see
+    # docs/AI-USAGE.md, 2026-09-26).
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 config.set_main_option("sqlalchemy.url", settings.database_url)
 

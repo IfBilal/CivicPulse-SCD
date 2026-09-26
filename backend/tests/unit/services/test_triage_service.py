@@ -562,26 +562,9 @@ def test_ring_shared_across_service_instances_when_passed_explicitly() -> None:
 def test_exactly_one_warning_per_fallback(caplog: pytest.LogCaptureFixture) -> None:
     provider = _AlwaysRaises()
     service = _service(provider)
-    triage_logger = logging.getLogger("app.triage")
     with caplog.at_level(logging.WARNING, logger="app.triage"):
         asyncio.run(service.triage_with_fallback(text="warning count case", location="x"))
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
-    if len(warnings) != 1:  # TEMP diagnostic — CI-only failure, unreproducible locally
-        import sys
-
-        print(  # temporary CI diagnostic, removed once root cause is confirmed
-            "DIAG test_exactly_one_warning_per_fallback:"
-            f" disabled={logging.getLogger().manager.disable}"
-            f" app.triage.level={triage_logger.level}"
-            f" app.triage.disabled={triage_logger.disabled}"
-            f" app.triage.propagate={triage_logger.propagate}"
-            f" app.triage.handlers={triage_logger.handlers}"
-            f" root.handlers={logging.getLogger().handlers}"
-            f" root.level={logging.getLogger().level}"
-            f" caplog.handler.level={caplog.handler.level}"
-            f" all_records={[(r.name, r.levelno, r.message) for r in caplog.records]}",
-            file=sys.stderr,
-        )
     assert len(warnings) == 1
     assert warnings[0].message == "triage.fallback"
 
