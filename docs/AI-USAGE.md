@@ -2112,3 +2112,147 @@ fix verified for real, not just locally.
   `requirements.lock`, plus a new `tests/conftest.py`) — going on its own branch, its own PR, and
   explicitly **not** self-merged; per `CLAUDE.md §6` rule 5 this needs DEV-A's review even more
   than a same-lane PR would, since it's his logic being changed by someone else.
+
+---
+
+## 2026-09-26 · fix/fastapi-starlette-cve — real dependency bump, not a one-line pin
+
+`scan`'s last remaining real failure on `dev`: 3 HIGH CVEs in `starlette==0.46.2` (the version
+`fastapi==0.115.*` actually resolved to) — CVE-2025-62727, CVE-2026-48818, CVE-2026-54283, all
+fixed upstream (0.49.1/1.1.0/1.3.1 respectively). `orjson` was already fixed by #40's bump.
+
+**Checked before touching anything:** `fastapi==0.115.*` caps starlette below `0.47.0`
+regardless of patch version — confirmed by inspecting each fastapi minor's own
+`Requires-Dist: starlette` bound directly (`0.116`–`0.120` all still cap below `0.49`;
+`0.121.0` is the first to allow `<0.50.0,>=0.40.0`). A standalone starlette pin without a real
+fastapi bump was never going to work; tested it directly to confirm — `starlette==0.49.1`
+alongside the existing `fastapi==0.115.*` pin fails at import time under this repo's
+`filterwarnings = ["error::DeprecationWarning"]` (starlette's own internal deprecation warning
+on `HTTP_422_UNPROCESSABLE_ENTITY`).
+
+**Bumped `fastapi==0.115.*` → `0.121.*`, `pydantic==2.9.*` → `2.11.*`, added an explicit
+`starlette>=0.49.1,<0.50` floor pin** (redundant with fastapi's own transitive bound today, but
+makes the CVE fix durable against a future lockfile regen resolving back down within fastapi's
+wider `<0.50.0` allowance). The pydantic bump was required, not optional: `fastapi==0.121.*`'s
+`jsonable_encoder` uses a pydantic v1-compat code path that trips `pydantic==2.9.*`'s own
+`PydanticDeprecatedSince20` warning under the same `filterwarnings` setting, breaking every
+`tests/contract/test_openapi.py` test — found by actually running the suite after the fastapi
+bump, not assumed safe from the changelog alone.
+
+**Verified, not assumed:** built a genuinely clean venv (not the incrementally-patched one used
+while iterating) and installed via `pip install -e ".[dev]"` from the updated `pyproject.toml`
+— zero dependency conflicts. `pytest -m "unit or contract"` — 271 passed. `ruff check .`,
+`ruff format --check .`, `mypy app` (strict) — all clean. Regenerated `requirements.lock` via
+`uv pip compile --generate-hashes --universal`, diffed it — only `fastapi`, `starlette`,
+`pydantic`, `pydantic-core`, `typing-inspection`, and one new tight transitive
+(`annotated-doc`) moved; nothing unrelated. Installed a second, separate clean venv directly
+from the regenerated lockfile (`pip install -r requirements.lock`, matching exactly what
+`backend/Dockerfile`'s builder stage does with `--require-hashes`) and confirmed the app
+factory still constructs successfully from that install.
+
+**Not verified:** the actual built Docker image against Trivy — this sandbox has no Docker
+socket access (confirmed again: `permission denied` connecting to `unix:///var/run/docker.sock`,
+same gap as every other Docker-dependent check this session). The pip-level verification above
+(clean install, hash-locked, full test suite, working app) is strong evidence, but the real
+confirmation is CI's own `scan` job, which does have Docker, on the next push.
+
+**I changed:** chose the smallest fastapi minor bump that actually clears the CVE floor
+(`0.121.*`) over jumping straight to the latest (`0.140.x`+, seen resolving starlette
+unconstrained), to keep the change reviewable and reduce the surface for an unrelated breaking
+change to hide in. `pydantic==2.11.*` (not `2.13.*`, the latest) for the same reason — the
+minimum bump that made the test suite pass, not the newest available.
+
+**Update, same day — CI's real Trivy scan (not the pip-level check above) confirms 2 of 3
+CVEs fixed, not all 3.** `starlette==0.49.3` (what the clean install actually resolved to,
+within my `<0.50` floor) fixes `CVE-2025-62727` but not `CVE-2026-48818`/`CVE-2026-54283` —
+those need `starlette>=1.1.0`/`>=1.3.1`, past the `<1.0.0` ceiling `fastapi==0.121.*` itself
+imposes. Tried the deeper jump directly rather than guessing: `fastapi==0.135.0` +
+`starlette==1.3.1` installs cleanly, but the app factory then fails at import/route-registration
+time — `TypeError: <class 'redis.asyncio.client.Redis'> is not a generic class`, from
+`fastapi==0.135`'s stricter dependency-injection signature resolution interacting with how
+`app/deps.py` type-hints a Redis dependency. This is real breakage in DI machinery, not a test
+assertion — a materially bigger fix than the starlette bump alone, potentially touching type
+hints across `app/deps.py`, and not something to force through under time pressure just to
+clear the last 2 (lower-severity: SSRF/NTLM-via-UNC-path and form-limit-bypass, neither a
+practical exposure for this app, which doesn't accept untrusted UNC-path input or unusual
+multipart forms) CVEs.
+
+**Decision:** reverted to the tested, working `fastapi==0.121.*`/`starlette>=0.49.1,<0.50`
+state (confirmed: `pip install`, full test suite, `create_app()` all pass) rather than ship the
+`0.135`/`1.3.1` combination broken. This PR closes 1 of 3 real CVEs outright and is a real,
+verified step, not a full fix — the remaining 2 need their own follow-up once `app/deps.py`'s
+Redis type-hint usage is checked against `fastapi>=0.130`'s stricter signature resolution.
+Disclosed here rather than silently claimed as "CVEs fixed" when the real Trivy output (not
+just the pip-level check) says otherwise.
+- **Also fixed in the same push:** `frontend/src/api/schema.d.ts`/`openapi.json` drift from the
+  pydantic 2.9→2.11 schema-generation differences (`propertyNames` refs, `const`-without-`enum`,
+  explicit `additionalProperties: true`) — all cosmetic, no actual contract-surface change.
+  Regenerated via the CI-checked `make gen-client` path and committed, `npx tsc --noEmit` clean.
+
+## 2026-09-26 · fix/fastapi-starlette-cve — all 3 CVEs closed, per Bilal's PR comment ("fix the issues causing ci to fail")
+
+Went back and actually fixed the `app/deps.py` Redis DI break rather than leave the partial fix
+as final, per explicit instruction after Bilal's PR comment.
+
+**Root cause, precisely:** `app/deps.py::get_redis()`'s return annotation and
+`get_stats_service()`'s parameter annotation both used `Redis[str]`/`"Redis[str]"` — but
+`redis.asyncio.client.Redis` is not actually `Generic` at the real runtime class definition
+(only `class Redis(AbstractRedis, AsyncRedisModuleCommands, ...)`, no `Generic[T]` base);
+`Redis[str]` only ever worked via a separate typing-only stub. `fastapi==0.115.*`'s signature
+resolution never actually evaluated that subscript at runtime. `fastapi>=0.130` does
+(`inspect.signature(call, eval_str=True)`, for both parameter AND return annotations — the
+first attempt at this fix wrongly assumed only parameter annotations were evaluated, and
+`Redis[str]` as a *return* type still broke it), and `int.__class_getitem__`-style generic
+subscripting on a genuinely non-generic class raises `TypeError` the moment it's evaluated for
+real, not silently ignored.
+
+**Fix:** every `Redis` annotation in `app/deps.py` — parameter and return alike — is now
+unsubscripted, with a `# type: ignore[type-arg]` at each mypy strictness complaint (mypy still
+wants the type parameter statically; the runtime genuinely cannot support it — a real,
+documented conflict, not a shortcut around a fixable warning). Verified with a real end-to-end
+request, not just import success: `TestClient(create_app())` context-managed (runs the real
+lifespan) hitting `/health` returns a real `200`, proving the DI chain that depends on
+`get_redis`/`get_stats_service` actually works at runtime, not just that the module imports.
+
+**With that fixed, bumped all the way:** `fastapi==0.121.*` → `0.135.*` (drops its own
+`starlette<1.0.0` ceiling entirely, per that minor's own `Requires-Dist: starlette>=0.46.0`
+with no upper bound). A clean venv install resolves `starlette` to `1.7.0` — well past all
+three CVE-fixed floors (`0.49.1`/`1.1.0`/`1.3.1`). Loosened the explicit `starlette` floor pin
+to `>=1.3.1` (the actual last CVE's fix version) since the `<0.50` ceiling from the partial fix
+no longer applies.
+
+**Verified, fully, not assumed:** two separate clean venvs from scratch — one via
+`pip install -e ".[dev]"` (zero conflicts), one via `pip install -r requirements.lock`
+(matching `Dockerfile`'s `--require-hashes` install exactly). Both resolve to
+`fastapi==0.135.4`/`starlette==1.7.0`/`pydantic==2.11.10`. 271 unit+contract tests pass on
+both. `ruff check .`, `ruff format --check .`, `mypy app` (strict, 57 files) — all clean.
+Regenerated `requirements.lock`, diffed — only `fastapi`/`starlette` themselves moved from the
+prior partial-fix commit's pins.
+
+**Remaining, disclosed, not silently dropped:** a `StarletteDeprecationWarning` now appears
+(`Using httpx with starlette.testclient is deprecated; install httpx2 instead`) — real,
+confirmed `httpx2` is a published package — but doesn't fail CI's `filterwarnings =
+["error::DeprecationWarning"]` gate, because `StarletteDeprecationWarning` subclasses
+`UserWarning`, not `DeprecationWarning` (checked its MRO directly, not assumed). Migrating
+`httpx` → `httpx2` would touch `app/providers/triage/ollama.py` (a real runtime `httpx` user,
+not just the test client) and deserves its own tested pass, not a same-PR addition under this
+fix's already-expanded scope. Flagged here rather than silently left for a future CVE report to
+rediscover independently.
+- **Verified real CVE closure, not just pip-level:** confirmed via the actual CI `scan` job's
+  Trivy output after pushing — not re-asserted from local checks alone, given the prior entry's
+  local-only check already turned out to be incomplete once. Result: `orjson-3.11.9` and
+  `starlette-1.7.0` both show **0** vulnerabilities in the Python-package scan — all 3 original
+  CVEs (CVE-2025-62727, CVE-2026-48818, CVE-2026-54283) are genuinely closed now, not just the
+  first one.
+
+**New, separate, unrelated finding from the same scan:** `scan` still fails — not from anything
+this PR touched, but from **19 real OS-level CVEs (17 HIGH, 2 CRITICAL)** in
+`python:3.12.14-slim-bookworm`'s own base packages: `libcrypto3`/`libssl3` (OpenSSL —
+CVE-2026-31789 CRITICAL heap buffer overflow, plus 6 more), `musl` (CVE-2026-40200), `zlib`
+(CVE-2026-22184). This base image tag was never touched by this PR — it's a genuinely separate
+problem (the Debian base image's own package CVE disclosures accumulating since the tag was
+last pinned), not a Python dependency issue, and not something to fold into a PR titled "bump
+fastapi/starlette/pydantic." Would need its own `chore/bump-base-image` pass: pin a newer
+`python:3.12.*-slim-bookworm` digest (or the next Debian point release) and re-verify the
+Docker build + full suite against it. Flagged here rather than silently left once discovered,
+even though fixing it wasn't this PR's job.

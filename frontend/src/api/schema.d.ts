@@ -207,7 +207,9 @@ export interface components {
             /** Code */
             code: string;
             /** Details */
-            details?: Record<string, unknown> | null;
+            details?: {
+                [key: string]: unknown;
+            } | null;
             /** Fields */
             fields?: components["schemas"]["FieldError"][] | null;
             /** Message */
@@ -224,7 +226,9 @@ export interface components {
             /** Code */
             code: string;
             /** Constraint */
-            constraint?: Record<string, unknown> | null;
+            constraint?: {
+                [key: string]: unknown;
+            } | null;
             /** Field */
             field: string;
             /** Message */
@@ -237,7 +241,6 @@ export interface components {
             /**
              * Status
              * @constant
-             * @enum {string}
              */
             status: "ok";
             /** Uptime Seconds */
@@ -273,7 +276,6 @@ export interface components {
             /**
              * Status
              * @constant
-             * @enum {string}
              */
             status: "ok";
         };

@@ -221,6 +221,7 @@
           "details": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -281,6 +282,7 @@
           "constraint": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -314,9 +316,6 @@
           },
           "status": {
             "const": "ok",
-            "enum": [
-              "ok"
-            ],
             "title": "Status",
             "type": "string"
           },
@@ -407,9 +406,6 @@
           },
           "status": {
             "const": "ok",
-            "enum": [
-              "ok"
-            ],
             "title": "Status",
             "type": "string"
           }
@@ -427,6 +423,9 @@
             "additionalProperties": {
               "type": "integer"
             },
+            "propertyNames": {
+              "$ref": "#/components/schemas/Category"
+            },
             "title": "By Category",
             "type": "object"
           },
@@ -434,12 +433,18 @@
             "additionalProperties": {
               "type": "integer"
             },
+            "propertyNames": {
+              "$ref": "#/components/schemas/Priority"
+            },
             "title": "By Priority",
             "type": "object"
           },
           "by_status": {
             "additionalProperties": {
               "type": "integer"
+            },
+            "propertyNames": {
+              "$ref": "#/components/schemas/Status"
             },
             "title": "By Status",
             "type": "object"

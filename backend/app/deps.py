@@ -31,8 +31,18 @@ async def get_session() -> AsyncIterator[AsyncSession]:
             raise
 
 
-def get_redis(request: Request) -> "Redis[str]":
-    redis: Redis[str] = request.app.state.redis
+def get_redis(request: Request) -> Redis:  # type: ignore[type-arg]
+    # Unsubscripted everywhere in this file, deliberately: `redis.asyncio.client.Redis` isn't
+    # actually `Generic` at runtime (only accepts `Redis[str]`-style subscripts under a
+    # `TYPE_CHECKING`-only stub). A quoted `"Redis[str]"` annotation worked under
+    # fastapi==0.115.*'s signature resolution, but fastapi>=0.130 evaluates string annotations
+    # for real — for BOTH parameter and return annotations (`inspect.signature(...,
+    # eval_str=True)`) — and `Redis[str]` raises `TypeError: ... is not a generic class` the
+    # moment it's actually evaluated. Found while bumping fastapi/starlette for a CVE fix; the
+    # `type: ignore[type-arg]` here and at every other `Redis` annotation in this file is mypy
+    # strictness genuinely conflicting with a runtime constraint, not a shortcut (docs/AI-USAGE.md,
+    # 2026-09-26).
+    redis: Redis = request.app.state.redis  # type: ignore[type-arg]
     return redis
 
 
@@ -66,7 +76,7 @@ def get_complaint_service(
 
 def get_stats_service(
     session: Annotated[AsyncSession, Depends(get_session)],
-    redis: Annotated["Redis[str]", Depends(get_redis)],
+    redis: Annotated[Redis, Depends(get_redis)],  # type: ignore[type-arg]
 ) -> StatsService:
     return StatsService(
         cast("_CacheRedis", redis),
