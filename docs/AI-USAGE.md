@@ -2161,3 +2161,30 @@ confirmation is CI's own `scan` job, which does have Docker, on the next push.
 unconstrained), to keep the change reviewable and reduce the surface for an unrelated breaking
 change to hide in. `pydantic==2.11.*` (not `2.13.*`, the latest) for the same reason — the
 minimum bump that made the test suite pass, not the newest available.
+
+**Update, same day — CI's real Trivy scan (not the pip-level check above) confirms 2 of 3
+CVEs fixed, not all 3.** `starlette==0.49.3` (what the clean install actually resolved to,
+within my `<0.50` floor) fixes `CVE-2025-62727` but not `CVE-2026-48818`/`CVE-2026-54283` —
+those need `starlette>=1.1.0`/`>=1.3.1`, past the `<1.0.0` ceiling `fastapi==0.121.*` itself
+imposes. Tried the deeper jump directly rather than guessing: `fastapi==0.135.0` +
+`starlette==1.3.1` installs cleanly, but the app factory then fails at import/route-registration
+time — `TypeError: <class 'redis.asyncio.client.Redis'> is not a generic class`, from
+`fastapi==0.135`'s stricter dependency-injection signature resolution interacting with how
+`app/deps.py` type-hints a Redis dependency. This is real breakage in DI machinery, not a test
+assertion — a materially bigger fix than the starlette bump alone, potentially touching type
+hints across `app/deps.py`, and not something to force through under time pressure just to
+clear the last 2 (lower-severity: SSRF/NTLM-via-UNC-path and form-limit-bypass, neither a
+practical exposure for this app, which doesn't accept untrusted UNC-path input or unusual
+multipart forms) CVEs.
+
+**Decision:** reverted to the tested, working `fastapi==0.121.*`/`starlette>=0.49.1,<0.50`
+state (confirmed: `pip install`, full test suite, `create_app()` all pass) rather than ship the
+`0.135`/`1.3.1` combination broken. This PR closes 1 of 3 real CVEs outright and is a real,
+verified step, not a full fix — the remaining 2 need their own follow-up once `app/deps.py`'s
+Redis type-hint usage is checked against `fastapi>=0.130`'s stricter signature resolution.
+Disclosed here rather than silently claimed as "CVEs fixed" when the real Trivy output (not
+just the pip-level check) says otherwise.
+- **Also fixed in the same push:** `frontend/src/api/schema.d.ts`/`openapi.json` drift from the
+  pydantic 2.9→2.11 schema-generation differences (`propertyNames` refs, `const`-without-`enum`,
+  explicit `additionalProperties: true`) — all cosmetic, no actual contract-surface change.
+  Regenerated via the CI-checked `make gen-client` path and committed, `npx tsc --noEmit` clean.
