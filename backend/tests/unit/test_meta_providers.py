@@ -64,6 +64,40 @@ def test_meta_providers_configured_matches_settings(client: TestClient) -> None:
     assert r.json()["configured"] == "simulated"
 
 
+async def test_meta_providers_cache_stats_reflect_real_counter(client: TestClient) -> None:
+    """`08-AI-TRIAGE.md §6`'s own worked example: hits/misses/hit_rate must be REAL counts, not
+    a hardcoded zero (closed 2026-09-26 -- see docs/AI-USAGE.md). Drives the same
+    `TRIAGE_CACHE_RESULT` Prometheus counter `TriageService.triage_with_fallback()` increments
+    on every real call, then asserts the route's response reflects the delta -- proving the
+    route reads the same process-global counter, not a per-request stand-in."""
+    from app.providers.triage.cache import InMemoryTriageCache
+    from app.providers.triage.simulated import SimulatedTriage
+    from app.services.triage_service import TriageService
+
+    before = client.get("/api/meta/providers").json()["cache"]
+
+    class _Settings:
+        triage_timeout_s = 1.0
+        triage_total_budget_ms = 2000
+        triage_max_retries = 0
+        triage_retry_jitter_ms = 10
+        triage_cache_ttl_s = 60
+        triage_min_confidence = 0.0
+        triage_ring_size = 20
+
+    ts = TriageService(SimulatedTriage(), InMemoryTriageCache(), _Settings())
+    await ts.triage_with_fallback(
+        text="cache stats probe unique text", location="probe-loc"
+    )  # miss
+    await ts.triage_with_fallback(text="cache stats probe unique text", location="probe-loc")  # hit
+
+    after = client.get("/api/meta/providers").json()["cache"]
+    assert after["misses"] == before["misses"] + 1
+    assert after["hits"] == before["hits"] + 1
+    total = after["hits"] + after["misses"]
+    assert after["hit_rate"] == pytest.approx(after["hits"] / total)
+
+
 def test_meta_providers_recent_is_newest_first() -> None:
     """A stub-level check that the route reverses the ring (oldest-appended-first deque ->
     newest-first response) rather than assuming callers want raw append order."""
