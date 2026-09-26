@@ -1,0 +1,11 @@
+=== AOF persistence config ===
+appendonly
+yes
+
+=== keys before restart ===
+2
+
+=== restart cache container ===
+
+=== keys after restart (AOF should have preserved them) ===
+2

@@ -1,0 +1,2 @@
+=== network segmentation: frontend must NOT reach the database ===
+OK: frontend cannot reach the database (expected)

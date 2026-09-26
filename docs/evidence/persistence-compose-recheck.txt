@@ -1,0 +1,6 @@
+=== row count before down/up ===
+46
+=== docker compose down (no -v, volumes persist) ===
+=== docker compose up -d --wait ===
+=== row count after down/up ===
+46

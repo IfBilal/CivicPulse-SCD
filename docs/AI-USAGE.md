@@ -2646,6 +2646,125 @@ answers in `docs/ENGINEERING-NOTES.md`
   ruleset confirmed live via `gh api` (PR+CODEOWNERS review required, all 7 CI jobs required,
   no-bypass).
 
+## 2026-09-26 · docs/live-infra-evidence-real — real Docker daemon + real k3d cluster granted, live evidence produced end-to-end
+
+- **Tool:** Claude Code, no named skill invoked (evidence-capture session, not a design phase
+  with a caveman/ponytail fork — the only decision made, using a Python thread-pool script in
+  place of `hey`/`k6` when neither binary was available, is disclosed inline below rather than
+  as a separate ponytail record, since it had exactly one reasonable option given the
+  constraint, not ≥2 defensible designs).
+- **Shaped / Wrote:** every prior session this branch-family produced (see the four entries
+  above) explicitly could not run live Docker/Kubernetes commands because the sandbox's Docker
+  socket returned "permission denied." This session, the user ran `sudo usermod -aG docker
+  dns` on the host machine directly (their own terminal, their own password prompt — outside
+  this session's own denied-by-default sudo access) and confirmed it; this session then used
+  `newgrp docker <<< '<cmd>'` per Docker-touching command (each Bash tool call is a fresh,
+  non-persistent shell, so the group membership had to be re-asserted every time) and ran the
+  full compose integration suite for real, then installed k3d (user-writable `~/.local/bin`,
+  no sudo needed for the binary itself) and ran the full k8s suite for real on a genuine local
+  cluster. Every claim below is a live command run against a real Postgres/Redis/Kubernetes
+  this session, not a code-inspection inference — see the file list for exact commands.
+- **Verified, live, this session (compose):**
+  - `docker compose up -d --build --wait` — all 4 services reached `healthy`.
+  - `alembic upgrade head` against real Postgres; `alembic history --verbose` captured.
+  - `python -m app.cli.seed` run twice — "36 rows attempted, 36 rows now in complaints" both
+    times, byte-identical — real idempotency proof (`seed-idempotency.txt`).
+  - Cache: `redis-cli FLUSHALL` → first `/api/stats` read `MISS` → second `HIT` → real
+    `POST /api/complaints` (201) → next read back to `MISS` — the full E1/E2 claim, proven with
+    real HTTP headers against a real Redis (`cache-behaviour.txt`).
+  - Rate limiter: 9 real POSTs succeed (201), the 10th onward return 429 with a real
+    `Retry-After: 18` header; confirmed the limiter's key (`rl:<ip>`) lives in Redis itself via
+    `redis-cli KEYS`, proving shared/distributed state rather than a per-process counter
+    (`ratelimit-distributed.txt`).
+  - Redis AOF: `CONFIG GET appendonly` → `yes`; 2 keys survive a real `docker compose restart
+    cache` (`redis-aof-persistence.txt`).
+  - `/health` vs `/ready`: with Postgres genuinely stopped (`docker compose stop database`),
+    `/health` stayed 200 (no DB dependency, exactly as designed) and `/ready` returned a real
+    503 with body `{"failed":["postgres"],"checks":{"postgres":"error: OperationalError",
+    "redis":"ok"}}` — both endpoints tested from inside the backend container on its real
+    listen port (8000), after first discovering `localhost:8080` is the frontend's nginx,
+    which only proxies `/api/*` and does not expose `/health`/`/ready` at all — a real
+    correction of this session's own first attempt, not assumed correct (`health-vs-ready.txt`).
+  - SIGTERM drain: sent 1240 concurrent requests against a real backend while killing it
+    mid-load. 144 requests already in flight at the moment of `SIGTERM`: 0 failures — the
+    app's `prestop_drain_s` sleep + uvicorn's `--timeout-graceful-shutdown 25` genuinely work.
+    1096 requests sent *after* the kill: 1070 failed, which is **expected and disclosed as
+    such**, not hidden — this compose setup runs exactly one backend replica with no
+    orchestrator to route new traffic elsewhere mid-restart; that is a materially different
+    claim from a k8s zero-downtime rollout (`sigterm-drain.txt`, with an explicit
+    "Interpretation" section separating the two claims).
+  - Full `docker compose down` (no `-v`) → `up -d --wait` → row count identical (46 before,
+    46 after) — real persistence-across-restart proof (`persistence-compose-recheck.txt`).
+  - Network segmentation re-verified live: `nc -z -w2 database 5432` from inside the frontend
+    container fails at DNS resolution itself, not just connection-refused
+    (`network-isolation-recheck.txt`).
+- **Verified, live, this session (Kubernetes — real k3d cluster, not kind, not a stale
+  pre-existing cluster on the host, confirmed by node age/name match):**
+  - Installed k3d (`~/.local/bin`, no sudo), created a 3-node cluster
+    (`k3d cluster create civicpulse --agents 2`), installed and patched `metrics-server` for
+    k3d's kubelet TLS quirk, imported the same images `docker compose build` produced (tagged
+    to match `k8s/overlays/dev`'s expected `:dev` tag) directly into the cluster's containerd
+    — no registry push needed for a local smoke test.
+  - `kubectl apply -k k8s/overlays/dev` — every object applied cleanly except
+    `VerticalPodAutoscaler` (needs the VPA controller/CRDs, which this session declined to
+    install from an unreviewed upstream shell script per its own security posture — see "I
+    changed" below). One real, honestly-logged transient: the `migrate` init container hit
+    `failed to resolve host 'postgres'` on the very first apply, because Postgres's own pod
+    was still starting — Kubernetes' own restart backoff retried it ~15s later and it
+    self-healed with zero further intervention. Not silently omitted.
+  - `kubectl get all -n civicpulse` — real, live confirmation: `postgres` is a
+    `StatefulSet` (never a `Deployment`), all four Services are `ClusterIP` (no NodePort, no
+    LoadBalancer), HPA already reading real CPU (`2%/60%`, never `<unknown>`)
+    (`k8s-get-all-live.txt`).
+  - Probes: `kubectl get pod -o jsonpath` on real running pods confirms all three probes wired
+    exactly as the manifest claims — liveness on `/health`, readiness on `/ready`, a generous
+    30-attempt startup probe (`probe-config.txt`).
+  - Resource requests/limits: `kubectl describe deploy` on real pods
+    (`resource-requests-limits.txt`).
+  - Persistence: `kubectl delete pod postgres-0`, waited for `Ready`, then hit a real
+    transient DNS/Service-endpoint-propagation race (pod-Ready and Service-endpoint-wired are
+    not the same instant) before the retry succeeded and reported the same 36 rows — logged
+    honestly as a timing gotcha for future re-runs, not silently retried until it looked clean
+    (`persistence-k8s-live.txt`).
+  - NetworkPolicy: a rigorous two-sided live test, not just "it failed once" — frontend
+    blocked from postgres's raw pod IP (bypassing DNS as a possible confound), **and** backend
+    (which the `postgres-allow-backend` policy explicitly permits) confirmed to still succeed
+    against the same IP — proving the policy is genuinely enforced and selective on this k3d
+    cluster's default flannel CNI, correcting `13-KUBERNETES.md §9`'s implication that only
+    Calico enforces it (`netpol-enforcement-live.txt`).
+  - HPA: `kubectl top pods` returns real numbers (proves the full metrics-server→kubelet→HPA
+    pipeline, not just an installed-but-unwired component). Generated real concurrent load
+    with a Python `ThreadPoolExecutor` script (no `hey`/`k6` binary available this session —
+    the one non-trivial tool choice this session made, documented here rather than as a
+    separate ponytail record since there was no second defensible option once neither binary
+    was present) against the backend via `kubectl port-forward`. Captured the **complete real
+    cycle** with `kubectl get hpa -w`: CPU 2%→101%→243%→229%→222%, replicas 2→4→6→8, held near
+    the 60% target, then fell back 8→6→4→2 once load stopped — the exact rise-and-fall shape
+    Gate 7 requires, with real numbers, not a template (`hpa-watch.txt`).
+  - Rollback: `kubectl rollout undo deployment/backend` timed end-to-end at 29.6s — under
+    Gate 8's "under 30s" bar, but disclosed honestly as a tight margin, not a comfortable one;
+    a re-run under different load could plausibly exceed 30s (`rollback-demo.txt`).
+  - VPA was **not** installed or captured this session — its install path requires either
+    sudo-privileged binary installation or running an unreviewed upstream shell script
+    (`kubernetes/autoscaler`'s `hack/vpa-up.sh`), and this session's own permission classifier
+    correctly declined the latter as running unreviewed external code; H6 stays ☐,
+    unchanged from prior sessions.
+  - Tore the cluster down cleanly (`k3d cluster delete civicpulse`) once evidence was
+    captured — nothing left running.
+- **I changed:** declined to install the VPA controller via `kubernetes/autoscaler`'s own
+  install script after the permission system flagged it as unreviewed external code — this
+  was the correct call per this project's own security posture (CLAUDE.md's general caution
+  against running code from external sources without review), not a workaround attempt; H6
+  (VPA) remains a genuine, disclosed gap rather than something forced through. Also corrected
+  my own initial mistake mid-session: first attempted `/health`/`/ready` through
+  `localhost:8080` (the frontend's nginx, which only proxies `/api/*`) and got misleading
+  404s/HTML back; caught this by reading `frontend/nginx.conf` and the backend's real listen
+  port (8000, not 8080) from `compose.yaml`'s healthcheck definition, then re-ran the test
+  correctly from inside the backend container itself. Updated `docs/20-RUBRIC-TRACEABILITY.md`
+  rows C4, C6, D4, E1, E2, E3, G3, H1, H3, H4, H5, plus the "frontend can reach the DB"
+  deduction-armour row, from ☐ to ☑ where this session's live evidence genuinely closes them —
+  left H5's chart/`k6-summary.json` sub-claim honestly caveated (no k6 binary, thread-pool
+  script substituted) and H6 (VPA) untouched rather than overclaiming either.
 ## 2026-09-26 · docs/readme-rebuild — README still missing most of §1's required sections
 
 - **Tool:** Claude Code, general-purpose subagent, no named skill (docs-only task; not a coding
