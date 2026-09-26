@@ -2282,3 +2282,30 @@ building and scanning the actual image, not assumed correct from the pattern alo
 - **I changed:** caught and reverted my own first, wrong-file attempt before it was ever
   committed or pushed — re-read the actual scan log instead of assuming "the CVEs" meant
   backend just because that PR's own recent work was backend-focused.
+
+## 2026-09-26 · fix/ci-scan-sarif-permissions — `scan` failed on `push` to `dev` but not on the PR's own `pull_request` check
+
+After #44 merged, `dev`'s own `push`-triggered CI run showed `scan` failing —
+`github/codeql-action/upload-sarif@v3` → "Resource not accessible by integration" — while the
+same PR's `pull_request`-triggered check for the same commit had passed. Genuinely confusing at
+first (same commit, same job, different result), until checked directly: `gh run view
+--json event` on both runs showed one was `event: "push"`, the other `event: "pull_request"`.
+
+**Root cause:** `.github/workflows/ci.yml`'s top-level `permissions: contents: read` applies to
+every job by default; the `scan` job's own `upload-sarif` step needs `security-events: write`
+to publish to the Security tab, and had no job-level override to grant it. `pull_request`
+events on this repo happened to already carry enough token access for this to slip through
+unnoticed (a GitHub Actions token-permission nuance, not something specific to this repo's own
+code); a direct `push` to `dev` doesn't, and surfaced the gap for the first time only once #44
+went through a real merge-to-`dev` push rather than staying inside PR-only testing.
+
+**Fix:** added a job-level `permissions: { contents: read, security-events: write }` override
+on `scan` specifically — least-privilege, not widened at the workflow level, since this is the
+one job that genuinely needs the extra grant and every other job stays at `contents: read`
+only. Validated the YAML parses correctly and the override is present via a direct
+`yaml.safe_load()` check before pushing (couldn't otherwise verify locally — GitHub Actions
+permission resolution isn't something `act`/a local runner reproduces faithfully without
+its own setup this sandbox doesn't have time to stand up for a one-line fix).
+- **Not fixed here, disclosed:** this same class of gap could exist for other jobs that call
+  `upload-sarif`-like actions if any are added later — worth a repo-wide permissions audit at
+  some point, not done as part of this narrow, verified fix.
