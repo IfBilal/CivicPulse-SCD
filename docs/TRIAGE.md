@@ -114,21 +114,33 @@ against `rules` (`RuleBasedTriage`) on every CI run.
 |---|---|
 | `rules` | 20/20 by construction — the golden set is written to validate `rules`' own term tables (see the falsifiability test `test_golden_set_is_falsifiable_against_empty_term_table`, which proves the assertion isn't tautological) |
 | `llm:groq` | **BLOCKED for the full 20-item table — one real call was made (§5/§7), not twenty, so a genuine agreement score isn't computable yet.** That one call did correctly classify its input (`water`/`high`, matching the golden-set's own labelling convention for a similar burst-water-main case) — a single anecdotal data point, not evidence of a rate. |
-| `llm:ollama` | **BLOCKED — no Docker/Ollama daemon in this sandbox.** |
+| `llm:ollama` | **10/10 valid JSON, 0/10 crashed.** But 10/10 came back `priority: low`, including a burst-water-main case the golden set's own convention marks `high` — see §5's real numbers below. Not "blocked" anymore; a genuine, run result, just not a favorable one. |
 
-The buy-vs-host agreement comparison (`rules` vs `llm:groq` vs `llm:ollama` on the same 30-item
-corpus, per `08-AI-TRIAGE.md §3.4`) needs the full corpus run through `llm:groq` (only the key
-is provisioned, not the full run — this session made one manual call, not thirty) and a working
-Docker daemon for `llm:ollama`, neither completed this session — see ADR-0001 and the
-Engineering Notes entry for this phase.
+**2026-09-26, real run, `llama3.2:1b`, local Ollama daemon (systemd service, not Docker — this
+sandbox never got Docker socket access all session; Ollama turned out to already be running
+natively).** 10 items from the golden set (not the full 20/30 — see §7 for why), each a real
+`POST /api/chat` through the actual `OllamaTriage` code path, not a mock. 10/10 returned valid,
+schema-conformant JSON — zero parse failures, zero retries needed. But every single response
+picked `priority: "low"`, including inputs the golden set's own convention (water/electricity +
+escalation language → `high`) clearly calls for something higher — e.g. "Water pipe burst near
+the market, flooding the street" came back `low`, confidence 0.80. This is a real accuracy
+finding, not a blocked measurement: `llama3.2:1b` produces syntactically correct, schema-valid
+output but its actual triage *judgment* at this parameter size is poor — it isn't doing the
+priority-escalation reasoning the system prompt asks for, just defaulting low regardless of
+content. A 20-item agreement score wasn't computed (would show ~0% on the `high`-labelled rows
+by construction, which is a real number but not more informative than this qualitative result
+already is) — see §7 for the honest reason the full run wasn't done.
+
+The buy-vs-host agreement comparison (`rules` vs `llm:groq` vs `llm:ollama` on the same corpus,
+per `08-AI-TRIAGE.md §3.4`) is now real for `rules` and `llm:ollama`; `llm:groq`'s full-corpus
+run remains the one open gap (only one manual call was ever made — see §4's row above and §7).
 
 ---
 
 ## 5. Latency
 
-**p50/p95/p99 remain BLOCKED — a real histogram needs many calls under load (e.g. the k6 run),
-not one manual request.** What exists instead is a single, real, one-shot measurement, useful as
-a sanity check but explicitly not a percentile:
+**`llm:groq` p50/p95/p99 remain BLOCKED** — the reasoning below is unchanged for Groq: a real
+histogram needs many calls under load, not one manual request.
 
 ```
 2026-09-25 · manual smoke test, one request, model=openai/gpt-oss-20b
@@ -148,6 +160,23 @@ most of the wall-clock time was network/TLS/queueing overhead between this sandb
 edge, not model inference itself. A real p50/p95/p99 run should capture both figures separately
 — `08-AI-TRIAGE.md §3.3`'s instruction to record "the observed model name alongside the observed
 latency percentiles" implicitly assumes the model-side number, not just wall clock.
+
+**`llm:ollama` — real percentiles, 2026-09-26, `llama3.2:1b`, local Ollama daemon (systemd
+service, CPU inference, not Docker):**
+
+```
+n=10, all client-side wall-clock (this machine's CPU, no GPU — not representative of a
+  properly resourced host)
+p50=6712.4ms  p95=7309.3ms  p99=14465.5ms  min=6028.7ms  max=14465.5ms
+```
+
+Every call succeeded (10/10, zero timeouts, zero malformed responses) but latency is 6-14.5
+seconds per call — two to three orders of magnitude slower than Groq's ~1s wall-clock figure
+above, and this is on a 1B-parameter model, the smallest realistic option. This is the real
+cost side of the buy-vs-host tradeoff `08-AI-TRIAGE.md §3.4` asks for: self-hosting is free
+per-call but, on CPU-only hardware, too slow for `triage_timeout_s`'s default budget to
+comfortably absorb under load (the one 14.5s outlier alone would eat most of a 12s total
+retry budget on its own).
 
 ---
 

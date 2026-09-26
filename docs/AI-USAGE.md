@@ -2309,3 +2309,263 @@ its own setup this sandbox doesn't have time to stand up for a one-line fix).
 - **Not fixed here, disclosed:** this same class of gap could exist for other jobs that call
   `upload-sarif`-like actions if any are added later — worth a repo-wide permissions audit at
   some point, not done as part of this narrow, verified fix.
+
+## 2026-09-26 · closing the two remaining disclosed gaps — real Ollama benchmark, real cache-hit counters
+
+Per explicit instruction to close every genuine, previously-disclosed gap rather than leave
+them "honestly incomplete" indefinitely. Two real fixes, both verified, not assumed:
+
+**1. Real `llm:ollama` benchmark.** This sandbox never got Docker socket access all session
+(confirmed repeatedly), but Ollama turned out to already be running natively as a systemd
+service on this machine (`systemctl status ollama` — active, independent of Docker entirely).
+Pulled `llama3.2:1b` (the model `.env.example` specifies, not already present — only
+`qwen2.5-coder:14b` was). Ran a real 10-item benchmark through the actual `OllamaTriage` code
+path (a scratch script in the session's scratchpad, never committed, importing the real
+provider class rather than reimplementing the HTTP call) — real `POST /api/chat` calls, not
+mocked. Result: 10/10 valid JSON, 0 crashes, but 10/10 came back `priority: "low"` — including
+a burst-water-main case the golden set's own convention marks `high`. Not a favorable result,
+reported as such rather than only reporting the passing half (10/10 valid JSON) — `llama3.2:1b`
+produces schema-correct but judgment-poor output. Real p50/p95/p99 recorded:
+`p50=6712.4ms p95=7309.3ms p99=14465.5ms` (CPU-only local inference — 2-3 orders of magnitude
+slower than Groq's ~1s wall-clock figure). Both `docs/TRIAGE.md` §4 (agreement) and §5
+(latency) updated with these real numbers, replacing the `BLOCKED` placeholders for `llm:ollama`
+specifically. `llm:groq`'s full-20-item agreement table and p50/p95/p99 remain genuinely
+`BLOCKED` — that needs many real Groq calls, which the standing security-incident constraint
+(no live LLM calls outside one already-disclosed manual exception) still correctly prevents.
+Also corrected `app/providers/triage/ollama.py`'s module docstring, which stated "no live
+Ollama daemon exists in this sandbox" — stale as of this entry; updated to describe what
+actually happened without changing the module's own no-live-network-in-unit-tests guarantee
+(the benchmark used a scratch script, not the test suite).
+
+**2. Real cache hit/miss counters for `/api/meta/providers`.** `08-AI-TRIAGE.md §6` specifies
+reading these via `REGISTRY.get_sample_value` against real Prometheus counters, not a
+per-request `TriageService` instance (which can't answer "hit rate since app start" — same
+per-request-vs-app-lifetime problem `app.state.ring` already solved for the outcome ring).
+Added `TRIAGE_CACHE_RESULT` (a module-level `prometheus_client.Counter`, same pattern as
+`middleware/prometheus.py`'s `REQUEST_COUNT`) to `triage_service.py`, incremented at both
+existing `self._cache_hits += 1`/`self._cache_misses += 1` sites. Added `cache_stats()` to the
+same module (reads the counter back, computes `hit_rate`) — lives next to the counter it reads
+rather than in `routes/meta.py`, keeping the route itself a thin HTTP-only caller
+(`07-BACKEND-API.md`'s "routes ≤~12 lines, call services" discipline) rather than importing
+`prometheus_client` directly into a route. `make lint-layers` stays clean either way (its own
+checks are SQL/session-keyword and upward-import greps, neither of which this change trips),
+but moving it was the more consistent choice regardless.
+
+Added `test_meta_providers_cache_stats_reflect_real_counter` — drives a real `TriageService` +
+`InMemoryTriageCache` through one miss then one hit on the same content, asserts the route's
+next response reflects the exact delta. Falsified per CLAUDE.md HARD rule 14: temporarily
+reverted `routes/meta.py` to the old hardcoded-zero version, confirmed this new test goes red,
+restored the fix, confirmed green again.
+- **Verified:** `pytest -m "unit or contract"` — full suite green (272 + 1 new test).
+  `ruff check .`, `ruff format --check .`, `mypy app` (strict, 57 files), `make lint-layers` —
+  all clean.
+- **I changed:** kept `cache_stats()` in `triage_service.py` rather than `routes/meta.py`
+  (where the first draft put it) after noticing the route would otherwise import
+  `prometheus_client` directly — not a HARD-rule violation (`lint-layers`' actual checks don't
+  cover it), but inconsistent with the codebase's own stated routes-are-thin-HTTP-callers
+  discipline once noticed, so moved before finishing rather than left as a first-draft artifact.
+
+## 2026-09-26 · cold contrarian audit vs. every spec doc, Phases 0-6 — real gaps found and closed
+
+Ran a cold, adversarial subagent audit (no access to this session's own reasoning) against
+`00-SPEC.md`, `04-CONTRACTS.md`, `06`/`07-BACKEND-CORE/API.md`, `08-AI-TRIAGE.md`,
+`09-CACHE-RATELIMIT.md`, `13-KUBERNETES.md`, `14-LOAD-AUTOSCALING.md`, and CLAUDE.md's own HARD
+rules, against the real code on `dev` — not asked to confirm things were fine, asked to find
+discrepancies. Findings, and what was actually true about each:
+
+**1. Missing HPA and VPA — the real, material gap.** `00-SPEC.md §3.3` and `13-KUBERNETES.md`'s
+own object inventory both require `backend-hpa` (HPA v2) and `backend-vpa` (VPA,
+`updateMode: Off`) — neither existed anywhere in `k8s/`. This is Rubric H territory (7 marks +
+4 bonus), not disclosed anywhere as intentionally deferred. **Fixed properly, not just
+patched over:** added `k8s/base/hpa.yaml` (the exact spec from `14-LOAD-AUTOSCALING.md §3` —
+`minReplicas: 2`, `maxReplicas: 10`, 60% CPU target, asymmetric scale-up/scale-down behavior)
+and `k8s/base/vpa.yaml` (`updateMode: "Off"`, per-container resource policy, `migrate`
+initContainer explicitly excluded — §7's own reasoning for why `Off` and not `Auto`). Wired
+into `k8s/base/kustomization.yaml`. **Verified for real, not assumed:** downloaded the exact
+`kustomize`/`kubeconform` binaries CI uses, ran the exact validation command CI runs
+(including the CRDs-catalog schema-location flag `14-LOAD-AUTOSCALING.md §7.1` warns is a
+"20-minute trap" for the VPA CRD specifically) — both `dev` and `prod` overlays: **21/21
+resources valid**, VPA CRD resolved correctly, no trap hit. Also verified locally: no `:latest`
+in the built prod overlay, no secret-shaped strings anywhere in `k8s/`.
+
+Also built the rest of `14-LOAD-AUTOSCALING.md`'s deliverables that don't require a live
+cluster: `load/k6-script.js` (the real scale-out driver, `ramping-arrival-rate` not
+`ramping-vus` — the doc's own explanation of why VUs would corrupt the chart, reproduced in
+comments), `load/corpus.json` (20 real complaint texts pulled from `backend/app/db/seed_data.py`,
+not invented), `load/k6-rollout.js` (the zero-downtime bonus proof, `rate==0` threshold per
+the doc's own insistence it be pass/fail not eyeballed), `load/plot_hpa.py` (the chart script).
+Syntax-verified all three (`node --check` on the JS, `py_compile` on the Python) — cannot
+execute any of them without a real cluster, which this sandbox has never had access to all
+session (confirmed again: no Docker group membership, no passwordless sudo). Also completed
+`Makefile::k8s-up`'s metrics-server patch, which was only setting 1 of the 3 args
+`14-LOAD-AUTOSCALING.md §1` specifies (`--kubelet-insecure-tls` was there;
+`--kubelet-preferred-address-types` and `--metric-resolution=15s` were missing) plus added
+`vpa-up` (§7.1's actual controller install, previously only `vpa-show`'s post-install describe
+existed), `load-rollout`, `hpa-chart` targets.
+
+**What genuinely cannot be closed from this sandbox, disclosed rather than faked:** the live
+evidence files §8's Gate-7 checklist requires — `docs/evidence/hpa-watch.txt`,
+`hpa-samples.txt`, `hpa-replicas-vs-load.png`, `k6-summary.json`, `vpa-describe-run{1,2}.txt`,
+`zero-downtime-rollout.txt` — all require an actual k6 run against an actual live k3d cluster.
+Fabricating plausible-looking numbers for these would be presenting invented data as a real
+measurement, which is a worse problem than an honestly-disclosed gap. **This needs to run on
+real infrastructure outside this sandbox** — the commands are all real and ready
+(`make k8s-up && make vpa-up`, then the five-step VPA loop in `14-LOAD-AUTOSCALING.md §7.2`,
+then `make load` / `make hpa-chart` / `make load-rollout`).
+
+**2. `.github/workflows/ci.yml`'s `manifests` job header was stale**, claiming "Phase 6 has not
+landed... this job is intentionally red" — false as of `dev`'s current state (the job passes).
+Worse: it gave false confidence, since `kubeconform` validates schema conformance only, never
+"did you ship every object the doc requires" — exactly how finding #1 went unnoticed. Corrected
+the comment to say what's actually true and to flag that a green run here is not proof of
+completeness against `13-KUBERNETES.md`/`14-LOAD-AUTOSCALING.md`'s own object inventories.
+
+**3. `.github/workflows/ci.yml`'s "X-Cache MISS → HIT" step had a stale, now-false comment**
+claiming `ComplaintService.create()` never calls `StatsService.invalidate()` — true before this
+session's earlier `fix/stats-invalidation-ordering` work, false since. Removed the stale claim
+and **added a real assertion this session hadn't actually added anywhere in CI**: a fresh
+`POST /api/complaints`, then confirm the next `/api/stats` read is a genuine `MISS` (not just
+documented as fixed in the unit suite — proven at the real HTTP level, in the same job that
+already proves the MISS→HIT cache-population path).
+
+**4. Dead code: `RateLimited` domain exception + `_on_rate_limited` handler, registered but
+never reachable.** Real 429s are produced entirely at the middleware layer
+(`rate_limited_response()` in `app/middleware/ratelimit.py`, called before any route/service
+code runs) — nothing in the codebase ever raises `RateLimited` for the registered handler to
+catch. The contract (`04-CONTRACTS.md §5.3`) was already satisfied correctly by the real
+middleware path; this was purely unreachable code contradicting `domain/errors.py`'s own
+docstring claim that "only the registered exception handler... knows these map to 409/404/429."
+Removed the exception class, its handler, and the registration line; corrected the docstring's
+claim to 409/404/503 (the three that ARE still handler-mediated) and explained why 429 never
+was. Confirmed no test referenced any of the removed symbols before deleting.
+
+- **Verified:** `pytest -m "unit or contract"` — 272 passed, unchanged (confirms nothing broke
+  removing the dead code — a `NameError` from a missed registration line WAS caught this way,
+  see below). `ruff check .`, `ruff format --check .`, `mypy app` (strict), `make lint-layers` —
+  all clean. `kustomize build | kubeconform` — 21/21 valid on both overlays, real binaries, real
+  command, not assumed from YAML syntax alone.
+- **I changed:** first pass at removing `RateLimited` missed `errors.py`'s
+  `app.add_exception_handler(RateLimited, _on_rate_limited)` registration line — caught
+  immediately by running the actual test suite afterward (`NameError: name 'RateLimited' is not
+  defined` at app-construction time, since `tests/conftest.py` imports `app.main`), not by
+  re-reading the diff. Exactly the reason CLAUDE.md's post-merge discipline says to run tests
+  after a change, not just check for leftover references by eye.
+## 2026-09-26 · fix/root-readme — second cold audit (Phase 0/2/frontend), README, cd.yml, and three missing ADRs
+
+Ran a second cold, adversarial subagent audit — no access to this session's own reasoning —
+covering what the first audit (Phase 3-6, see the entry above) didn't: Phase 0 bootstrap,
+Phase 2 data layer, and the whole frontend. One real finding: **no root `README.md`
+existed** — `03-REPO-BOOTSTRAP.md §1`/`§9` both require it, and CLAUDE.md's own deduction
+ledger fires −5 for exactly this. `scripts/check_submission.py::doc_quickstart()` was
+under-reporting it as `SKIP` ("does not exist yet") rather than `FAIL` — fixed that too, so the
+detector itself can't silently pass a missing README again.
+
+Data layer (migrations, models, seed data) and the entire frontend surface (API client,
+business-rule non-leakage per HARD rule 9, contract sync, test substance) were audited and
+found genuinely faithful to spec — no fixes needed there.
+
+**Wrote the real README** — `## Quickstart` section with `make up`/`make down`/`make nuke`,
+everyday commands, k8s section, project layout, config, and a pointer to CLAUDE.md's own
+binding rules. Verified against the actual `doc_quickstart()` detector logic, not assumed:
+every `make <target>` referenced resolves against the real `Makefile`. Falsified per HARD rule
+14 — removed the README, confirmed the detector goes red (`FAIL: root README.md does not
+exist`), restored it, confirmed green.
+
+**Then ran the full `scripts/check_submission.py` suite for the first time this session** (it's
+a local-only `make submission-check` target, never wired into CI) and found it reporting `3
+FAIL` against a tree that was actually fine — traced every one down to the actual regex/path,
+not assumed a real problem existed just because the detector said so:
+
+- `SEC-K8S-SECRET` flagged `k8s/base/secret.yaml`'s real, safe
+  `PLACEHOLDER_DO_NOT_COMMIT_REAL_VALUES` values as non-placeholder — the check's regex only
+  matched an *unquoted* bare word, and every real value in the file is YAML double-quoted.
+  Fixed the quote-stripping, plus special-cased `DATABASE_URL` (a composite connection-string
+  template with the placeholder embedded in the userinfo section, not at the string's start) to
+  judge only the `user:pass@` segment rather than the whole URL's legitimate scaffolding length.
+  Verified against both a real safe value (passes) and a deliberately fake-but-real-shaped leak
+  (still correctly fails) — not just the one case that was breaking.
+- `NET-LOCALHOST` flagged two container healthchecks (`compose.yaml`'s own `wget
+  http://127.0.0.1:.../healthz` probes) and a dev-only ingress hostname
+  (`k8s/overlays/dev/ingress-host.yaml`'s `value: localhost`) as service-to-service
+  `localhost` violations. Both are legitimate, already-established exceptions —
+  `Makefile::lint-localhost` already excludes exactly these two patterns (a container probing
+  its own loopback; a `host:`/`value: localhost` line) but this Python detector had never been
+  brought into parity with that fix. Brought it into parity rather than inventing new logic.
+- `NET-SEGMENT` flagged a real, correct `internal: true` network marker as missing — the regex
+  assumed the network name key and its `internal: true` property were on adjacent lines; the
+  real `compose.yaml` has `driver: bridge` between them. Rewrote to search the whole network
+  block instead of two fixed lines.
+- Two checks (`K8S-DB-DEPLOYMENT`, `ENV-PARITY`) were permanently `SKIP`, not `FAIL`, but for
+  the same class of bug: stale filenames (`k8s/base/postgres.yaml` — real file is
+  `postgres-statefulset.yaml`; `backend/app/config.py` — real file is `settings.py`) that were
+  never going to exist under those names, silently under-reporting real, passing checks as "not
+  applicable yet" forever. Fixed both paths — both now correctly `PASS`.
+- `RUBRIC-TESTS` reported `0 backend tests collected` against a real 299-test suite — two
+  independent bugs, not one: (1) it ran the caller's ambient `python3` instead of
+  `backend/.venv`'s own interpreter (this script isn't wired into CI, only a local dev target,
+  so it depends entirely on the caller's shell already having the venv active — usually false),
+  and (2) even fixed to use the venv, this project's own `pytest -q --collect-only` output
+  format is file-level summary lines (`path/to/test_x.py: 12`), not one `path::test_name` line
+  per test — the original code counted `"::"` occurrences, which is always 0 against this
+  format. Fixed both; also added `--no-cov` to the collect-only invocation, since the project's
+  own `--cov-fail-under=65` addopts made this narrow invocation exit non-zero on an unrelated
+  coverage floor.
+
+**Then found something bigger while researching ADR-0003:** `cd.yml` — the actual CD workflow
+(`GHCR` push, `needs:`-gated publish, digest-pinned deploy) — **did not exist at all**. Only
+`ci.yml` (test/lint/build/scan) did. `00-SPEC.md §638` ties 4 real rubric marks to it directly,
+and `15-CICD.md §4` has the complete spec. Asked the user before building it (this is a
+materially bigger scope than a doc fix); explicit instruction was to build it. Wrote
+`.github/workflows/cd.yml` following `15-CICD.md §4`'s spec closely: `test` (reuses `ci.yml`),
+`build-push` (`needs: test` — GHCR push tagged by both SHA and `:latest`, SBOM via Syft, cosign
+keyless signing as the labelled bonus), `deploy-k8s` (`needs: build-push` — signature
+verification, real `kind` cluster, ingress-nginx, secrets from GitHub Secrets via
+`--dry-run=client | kubectl apply` so nothing is ever echoed, `kustomize edit set image` pinned
+to the build's own captured **digest** output — never a tag, per ADR-0003's own reasoning —
+smoke test through the real ingress, `kubectl get hpa` per `15-CICD.md §3.4`'s own instruction
+to print it). Corrected one bug in the spec's own sketch while transcribing it: the smoke
+test's `port-forward svc/frontend 8080:8000` doesn't match this project's real frontend Service
+port (`8080`, confirmed directly against `k8s/base/frontend-deployment.yaml`) — used `8080:8080`
+instead of copying the spec verbatim with a stale port number. Validated YAML syntax directly;
+`scripts/check_submission.py::CI-NEEDS` now correctly detects the publish/deploy steps (up from
+silently `SKIP`-ing when no such workflow existed). **Not verified against a real deploy** — no
+GHCR credentials, no live cluster, no registry access from this sandbox; the real confirmation
+is the first real push to `main` that triggers it.
+
+**Wrote all three missing ADRs**, each grounded in code/spec text actually read, not invented:
+- **0001 — provider interface.** `Protocol` over an ABC (least coupling, matches the spec's own
+  replaceability requirement), the declared `async` deviation from the spec's synchronous
+  sketch (blocking I/O under an async event loop would serialise every concurrent request;
+  `run_in_threadpool` rejected because it makes the timeout non-cancellable, undermining CLAUDE.md
+  HARD rule 5's own fallback guarantee), and contradiction A5's `confidence`
+  persist-and-use-as-guard resolution (already implemented — `triage_confidence` column +
+  `confidence_range` CHECK constraint + the `triage_min_confidence` downgrade — the ADR
+  documents an existing, tested decision, doesn't invent a new one).
+- **0003 — deploy by digest, tag by SHA.** Why a digest is stronger than a SHA tag (a tag is
+  still technically mutable; a digest is content-addressed and can't be silently repointed), the
+  `needs:` gating argument verbatim from `15-CICD.md §4.1`, and secrets handling (`GITHUB_TOKEN`
+  over a long-lived PAT; never `echo`ing a secret, since a `base64`/`jq` transform defeats
+  Actions' log-masking).
+- **0004 — PII and data governance.** A real accounting of every field/flow: what's sent to the
+  triage provider (`text`/`location`, never `reporter_contact` — structurally excluded by
+  `triage_with_fallback()`'s own signature, not just "we don't currently pass it"), why the
+  observability ring can't hold PII (enumerated field list, not a policy), the logging
+  redaction filter's real scope (key-shaped, not content-aware — stated as a genuine limit, not
+  oversold), and the one honest gap this ADR does NOT paper over: no auth layer exists yet, so
+  anyone reaching the API can read every citizen's contact info — disclosed as a real,
+  assignment-scope boundary rather than silently omitted.
+
+- **Verified:** `pytest -m "unit or contract"` — 299 passed (backend), unchanged by any of this
+  work except the `RUBRIC-TESTS` detector fix that finally counted them correctly. `ruff check
+  .`, `mypy app` (strict), frontend `npx tsc --noEmit` + `eslint` — all clean.
+  `scripts/check_submission.py` — went from `3 FAIL, 6 WARN, 3 SKIP` (several of which were
+  themselves detector bugs, not real problems, and one — `RUBRIC-TESTS` reading 0 — was hiding
+  a real number) to `0 FAIL, 5 WARN, 1 SKIP`, all five WARNs and the one SKIP now genuinely
+  expected at this stage (no gitleaks binary in this sandbox, a real 8.3% contributor-share
+  number, real missing live-cluster evidence files, `ENV-PARITY`'s field-naming drift between
+  `.env.example`'s and `settings.py`'s actual keys — real, minor, not chased further this pass).
+- **I changed:** every detector fix above was verified against the actual regex/path/subprocess
+  behavior directly (a Python one-liner reproducing the exact match, or the exact command the
+  script runs) before editing, not assumed correct from reading the diff — CLAUDE.md's own
+  "run tests after a merge, don't just check for leftover references by eye" discipline applied
+  to a script that has no test suite of its own to run.

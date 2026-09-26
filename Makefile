@@ -80,17 +80,29 @@ k8s-up: ## cluster + ingress-nginx + metrics-server + deploy dev overlay
 	kubectl -n ingress-nginx wait --for=condition=ready pod \
 	  -l app.kubernetes.io/component=controller --timeout=180s
 	kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
-	kubectl -n kube-system patch deploy metrics-server --type=json \
-	  -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
+	kubectl -n kube-system patch deploy metrics-server --type=json -p='[ \
+	  {"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}, \
+	  {"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-preferred-address-types=InternalIP,Hostname,ExternalIP"}, \
+	  {"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--metric-resolution=15s"} \
+	  ]'
+	kubectl -n kube-system rollout status deploy/metrics-server --timeout=180s
 	kubectl apply -k k8s/overlays/dev
 	kubectl -n $(NS) rollout status deploy/backend --timeout=300s
 	kubectl -n $(NS) rollout status deploy/frontend --timeout=300s
 k8s-down:  ; k3d cluster delete $(NS)
 k8s-logs:  ; kubectl -n $(NS) logs -l app=backend --tail=200 -f
 rollback:  ; kubectl -n $(NS) rollout undo deployment/backend && kubectl -n $(NS) rollout status deployment/backend
+vpa-up: ## install the VPA controller itself (14-LOAD-AUTOSCALING.md §7.1) — recommender/updater/admission-controller
+	rm -rf /tmp/autoscaler
+	git clone --depth 1 https://github.com/kubernetes/autoscaler.git /tmp/autoscaler
+	cd /tmp/autoscaler/vertical-pod-autoscaler && ./hack/vpa-up.sh
+	kubectl -n kube-system get pods | grep vpa
 
 ## ── load ──────────────────────────────────────────────────────────────────
 load:      ; k6 run load/k6-script.js
+load-rollout: ## 14-LOAD-AUTOSCALING.md §6 — zero-downtime rollout proof (bonus +4)
+	k6 run load/k6-rollout.js | tee docs/evidence/zero-downtime-rollout.txt
+hpa-chart: ; python3 load/plot_hpa.py
 hpa-watch: ; kubectl -n $(NS) get hpa backend-hpa -w | tee docs/evidence/hpa-watch.txt
 vpa-show:  ; kubectl -n $(NS) describe vpa backend-vpa | tee docs/evidence/vpa-describe-$${RUN:-run1}.txt
 
