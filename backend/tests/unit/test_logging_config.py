@@ -8,6 +8,7 @@ from logging import FileHandler
 
 import pytest
 
+import app.logging_config as logging_config
 from app.logging_config import _redact, configure_logging
 from app.providers.triage.cache import InMemoryTriageCache
 from app.providers.triage.simulated import FailureMode, SimulatedTriage
@@ -18,17 +19,21 @@ pytestmark = pytest.mark.unit
 
 
 def test_no_file_handlers_after_configure() -> None:
+    # Scoped to the handler configure_logging() itself installs, not every handler present on
+    # the shared root logger — pytest's own internal log-capture machinery keeps a real
+    # `logging.FileHandler` subclass there for the whole session (writing to /dev/null), which
+    # is no longer wiped now that configure_logging() only ever removes its own prior handler
+    # (see logging_config.py's module docstring / _our_handler). That handler isn't ours to
+    # police; asserting on it was never this test's real intent.
     configure_logging(Settings())
-    root = logging.getLogger()
-    assert not any(isinstance(h, FileHandler) for h in root.handlers)
+    assert logging_config._our_handler is not None
+    assert not isinstance(logging_config._our_handler, FileHandler)
 
 
 def test_handler_writes_to_stdout() -> None:
     configure_logging(Settings())
-    root = logging.getLogger()
-    stream_handlers = [h for h in root.handlers if isinstance(h, logging.StreamHandler)]
-    assert stream_handlers
-    assert all(h.stream is sys.stdout for h in stream_handlers)
+    assert logging_config._our_handler is not None
+    assert logging_config._our_handler.stream is sys.stdout
 
 
 def test_log_output_is_valid_json(capsys: pytest.CaptureFixture) -> None:

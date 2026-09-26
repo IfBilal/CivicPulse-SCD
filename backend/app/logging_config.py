@@ -60,14 +60,26 @@ class _SecretRedactingFilter(logging.Filter):
         return True
 
 
+# The one handler this module has installed on the root logger, if any — tracked so a second
+# `configure_logging()` call (e.g. a test constructing `create_app()` more than once in the same
+# process) removes only *this* handler, never anything else already on the root logger. Wiping
+# every existing handler unconditionally used to also strip pytest's own `caplog` handler,
+# silently breaking any test asserting on `caplog.records` that ran after the first app-factory
+# call in the same process (found via a real CI run — see docs/ENGINEERING-NOTES.md).
+_our_handler: logging.Handler | None = None
+
+
 def configure_logging(settings: Settings) -> None:
+    global _our_handler
     root = logging.getLogger()
     root.setLevel(settings.log_level)
 
-    # Never a FileHandler / RotatingFileHandler — stdout only.
-    for existing in list(root.handlers):
-        root.removeHandler(existing)
+    # Remove only the handler *we* previously installed, not every handler on the root logger —
+    # a caller (pytest's caplog, an embedding host, ...) may have its own for good reason.
+    if _our_handler is not None and _our_handler in root.handlers:
+        root.removeHandler(_our_handler)
 
+    # Never a FileHandler / RotatingFileHandler — stdout only.
     handler = logging.StreamHandler(sys.stdout)
     handler.addFilter(_SecretRedactingFilter())
     if settings.log_format == "json":
@@ -75,6 +87,7 @@ def configure_logging(settings: Settings) -> None:
     else:
         handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
     root.addHandler(handler)
+    _our_handler = handler
 
     # Hijack uvicorn's own loggers so everything goes through one JSON formatter — otherwise
     # uvicorn.access emits its own plain-text lines and the "JSON to stdout" claim is false.
@@ -82,3 +95,15 @@ def configure_logging(settings: Settings) -> None:
         uv_logger = logging.getLogger(uvicorn_logger_name)
         uv_logger.handlers = []
         uv_logger.propagate = True
+
+    # Defensive: re-enable every logger that already exists. Found via a real full-suite CI run
+    # (not assumed): app.services.triage_service's "app.triage" logger has `.disabled == True`
+    # by the time later tests run, silently dropping every record regardless of level/handlers/
+    # propagation (Logger.disabled short-circuits isEnabledFor entirely). Nothing in this
+    # codebase's own source sets it, and the one place in pytest's own logging plugin that does
+    # (`_pytest/logging.py::_disable_loggers`) is gated behind the unused `--logger-disable`
+    # option in this repo — so whatever's doing it, this neutralizes it unconditionally rather
+    # than chasing the exact trigger across every test/plugin interaction. Idempotent, and there
+    # is no scenario where this app wants one of its own loggers left disabled.
+    for logger_name in list(logging.root.manager.loggerDict):
+        logging.getLogger(logger_name).disabled = False
