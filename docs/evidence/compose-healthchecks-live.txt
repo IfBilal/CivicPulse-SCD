@@ -1,0 +1,5 @@
+SERVICE    <no value>   STATUS
+backend    healthy      Up 2 minutes (healthy)
+cache      healthy      Up 14 minutes (healthy)
+database   healthy      Up 14 minutes (healthy)
+frontend   healthy      Up 14 minutes (healthy)

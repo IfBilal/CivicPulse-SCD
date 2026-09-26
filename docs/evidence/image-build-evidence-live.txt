@@ -1,0 +1,22 @@
+=== real image build evidence ===
+
+=== confirm non-root user inside running containers ===
+uid=10001(app) gid=10001(app) groups=10001(app)
+uid=10001(app) gid=10001(app) groups=10001(app)
+
+=== confirm exec-form CMD (no shell wrapper) ===
+["uvicorn","app.main:app","--host","0.0.0.0","--port","8000","--workers","1","--timeout-graceful-shutdown","25","--no-access-log"]
+["nginx","-g","daemon off;"]
+
+=== confirm multi-stage (check image history for build stages) ===
+ENV GPG_KEY=7169605F62C751356D054A26A821E680…
+RUN /bin/sh -c set -eux;  apt-get update;  a…
+ENV LANG=C.UTF-8
+ENV PATH=/usr/local/bin:/usr/local/sbin:/usr…
+# debian.sh --arch 'amd64' out/ 'bookworm' '…
+civicpulse-backend:dev  333MB  About an hour ago
+ghcr.io/ifbilal/civicpulse-backend:dev  333MB  About an hour ago
+ghcr.io/ifbilal/civicpulse-backend:local-test  333MB  About an hour ago
+civicpulse-frontend:dev  34.2MB  About an hour ago
+ghcr.io/ifbilal/civicpulse-frontend:dev  34.2MB  About an hour ago
+ghcr.io/ifbilal/civicpulse-frontend:local-test  34.2MB  About an hour ago

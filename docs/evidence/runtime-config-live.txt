@@ -1,0 +1,1 @@
+window.__CIVICPULSE__ = { env: "dev", version: "dev", statsPollMs: 15000, showCacheBadge: true };
