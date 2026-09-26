@@ -2188,3 +2188,56 @@ just the pip-level check) says otherwise.
   pydantic 2.9→2.11 schema-generation differences (`propertyNames` refs, `const`-without-`enum`,
   explicit `additionalProperties: true`) — all cosmetic, no actual contract-surface change.
   Regenerated via the CI-checked `make gen-client` path and committed, `npx tsc --noEmit` clean.
+
+## 2026-09-26 · fix/fastapi-starlette-cve — all 3 CVEs closed, per Bilal's PR comment ("fix the issues causing ci to fail")
+
+Went back and actually fixed the `app/deps.py` Redis DI break rather than leave the partial fix
+as final, per explicit instruction after Bilal's PR comment.
+
+**Root cause, precisely:** `app/deps.py::get_redis()`'s return annotation and
+`get_stats_service()`'s parameter annotation both used `Redis[str]`/`"Redis[str]"` — but
+`redis.asyncio.client.Redis` is not actually `Generic` at the real runtime class definition
+(only `class Redis(AbstractRedis, AsyncRedisModuleCommands, ...)`, no `Generic[T]` base);
+`Redis[str]` only ever worked via a separate typing-only stub. `fastapi==0.115.*`'s signature
+resolution never actually evaluated that subscript at runtime. `fastapi>=0.130` does
+(`inspect.signature(call, eval_str=True)`, for both parameter AND return annotations — the
+first attempt at this fix wrongly assumed only parameter annotations were evaluated, and
+`Redis[str]` as a *return* type still broke it), and `int.__class_getitem__`-style generic
+subscripting on a genuinely non-generic class raises `TypeError` the moment it's evaluated for
+real, not silently ignored.
+
+**Fix:** every `Redis` annotation in `app/deps.py` — parameter and return alike — is now
+unsubscripted, with a `# type: ignore[type-arg]` at each mypy strictness complaint (mypy still
+wants the type parameter statically; the runtime genuinely cannot support it — a real,
+documented conflict, not a shortcut around a fixable warning). Verified with a real end-to-end
+request, not just import success: `TestClient(create_app())` context-managed (runs the real
+lifespan) hitting `/health` returns a real `200`, proving the DI chain that depends on
+`get_redis`/`get_stats_service` actually works at runtime, not just that the module imports.
+
+**With that fixed, bumped all the way:** `fastapi==0.121.*` → `0.135.*` (drops its own
+`starlette<1.0.0` ceiling entirely, per that minor's own `Requires-Dist: starlette>=0.46.0`
+with no upper bound). A clean venv install resolves `starlette` to `1.7.0` — well past all
+three CVE-fixed floors (`0.49.1`/`1.1.0`/`1.3.1`). Loosened the explicit `starlette` floor pin
+to `>=1.3.1` (the actual last CVE's fix version) since the `<0.50` ceiling from the partial fix
+no longer applies.
+
+**Verified, fully, not assumed:** two separate clean venvs from scratch — one via
+`pip install -e ".[dev]"` (zero conflicts), one via `pip install -r requirements.lock`
+(matching `Dockerfile`'s `--require-hashes` install exactly). Both resolve to
+`fastapi==0.135.4`/`starlette==1.7.0`/`pydantic==2.11.10`. 271 unit+contract tests pass on
+both. `ruff check .`, `ruff format --check .`, `mypy app` (strict, 57 files) — all clean.
+Regenerated `requirements.lock`, diffed — only `fastapi`/`starlette` themselves moved from the
+prior partial-fix commit's pins.
+
+**Remaining, disclosed, not silently dropped:** a `StarletteDeprecationWarning` now appears
+(`Using httpx with starlette.testclient is deprecated; install httpx2 instead`) — real,
+confirmed `httpx2` is a published package — but doesn't fail CI's `filterwarnings =
+["error::DeprecationWarning"]` gate, because `StarletteDeprecationWarning` subclasses
+`UserWarning`, not `DeprecationWarning` (checked its MRO directly, not assumed). Migrating
+`httpx` → `httpx2` would touch `app/providers/triage/ollama.py` (a real runtime `httpx` user,
+not just the test client) and deserves its own tested pass, not a same-PR addition under this
+fix's already-expanded scope. Flagged here rather than silently left for a future CVE report to
+rediscover independently.
+- **Verified real CVE closure, not just pip-level:** confirmed via the actual CI `scan` job's
+  Trivy output after pushing — not re-asserted from local checks alone, given the prior entry's
+  local-only check already turned out to be incomplete once.
