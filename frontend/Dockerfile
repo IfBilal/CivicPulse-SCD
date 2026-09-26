@@ -13,7 +13,13 @@ RUN npm run build                                           # → /app/dist (no 
 # never loads, which otherwise add ~37 MB the app gets no benefit from (12-DOCKER-COMPOSE.md §1:
 # "runtime 45-55 MB"; the non-slim tag alone is 80 MB before any app content is even added).
 FROM nginx:1.27.5-alpine-slim AS runtime
-RUN addgroup -g 10001 -S app && adduser -u 10001 -S app -G app \
+# `apk upgrade` patches OS-level packages (libcrypto3/libssl3/musl/zlib, ...) that pick up CVE
+# fixes disclosed after this image tag's own last build — the tag itself doesn't get rebuilt on
+# every upstream Alpine security patch, so pinning a tag alone isn't enough (found via a real CI
+# Trivy scan: 19 real OS-package CVEs, 2 CRITICAL, none from anything this repo's own code/deps
+# touch — docs/AI-USAGE.md, 2026-09-26). `--no-cache` avoids leaving an apk index in the image.
+RUN apk upgrade --no-cache \
+ && addgroup -g 10001 -S app && adduser -u 10001 -S app -G app \
  && rm -f /etc/nginx/conf.d/default.conf \
       /docker-entrypoint.d/10-listen-on-ipv6-by-default.sh \
       /docker-entrypoint.d/20-envsubst-on-templates.sh \
