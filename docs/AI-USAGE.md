@@ -1875,3 +1875,58 @@ real CI run's `test-backend` job rather than claim certainty I don't have.
   sees a non-stdout stream), then restored the fix and confirmed both pass again. Full CI
   re-run against real Docker is the only way to confirm the original 3-test failure is
   actually resolved — not yet observed at the time of this entry.
+
+## 2026-09-25 · fix/stats-invalidation-ordering — real root cause found: `prestop_drain_s` sleeping for real in every `TestClient` teardown
+
+The `configure_logging()` fix above was pushed as a good-faith best-evidence fix but was
+**wrong** — confirmed by re-running CI (`gh pr checks 41` after the push): identical failure,
+same 3 tests, same `assert 0 == 1`, `3 failed, 294 passed`. Went back to first principles
+instead of guessing further blind.
+
+**Actual root cause:** `pytest --durations=15` locally surfaced ~13 test teardowns at almost
+exactly 5.01s each, all in files that build a real `TestClient(app)`/`create_app()`
+(`test_ready_route.py`, `test_meta_providers.py`, `test_unmatched_route_envelope.py`,
+`test_request_id_middleware.py`, etc.). `app/main.py`'s `lifespan()` shutdown path does
+`await asyncio.sleep(settings.prestop_drain_s)` — real production drain-before-shutdown logic
+(`06-BACKEND-CORE.md §6`), correct for a real pod's SIGTERM, but `settings.prestop_drain_s`
+defaults to `5.0` (`app/settings.py`) and **no test file overrode it** except
+`test_sigterm_drain.py` (a subprocess test, correctly setting `PRESTOP_DRAIN_S=0.3` via env).
+Every other `TestClient` context-manager teardown across the suite was paying a real,
+uninterrupted 5-second `asyncio.sleep()` — a direct CLAUDE.md HARD rule 15 violation
+("never `time.sleep()` ... in a test") that had been silently there long before this branch,
+just never noticed because no one had looked at `--durations` output.
+
+This also explains the CI-only 297-test failure exactly: locally (`-m "unit or contract"`,
+271 tests, no integration) these 5s teardowns still ran but never landed adjacent to the
+three `caplog`-based tests in a way that mattered; in CI's fuller, unfiltered `pytest` run,
+~13 of these real 5-second sleeps (~65s of wall-clock time) sit in the same process, between
+test clusters, at exactly the two points (72%→96% progress) where the three failures were
+observed both times CI ran. The precise thread/event-loop interleaving mechanism connecting
+"many real async sleeps in TestClient-portal background threads" to "caplog captures zero
+records for an unrelated logger" wasn't nailed down further once the actual fix (below)
+independently eliminated the sleeps entirely and there was no more bug left to chase.
+
+**Fix:** added `tests/conftest.py` — one session-scoped, autouse fixture that patches
+`app.main.settings` (the specific name-binding `lifespan()` reads; `Settings` is frozen and
+`app.main` does `from app.settings import settings` at import time, so patching
+`app.settings.settings` itself wouldn't reach code that already imported the old binding —
+same lesson `tests/integration/conftest.py`'s `migrated_db` fixture already encodes for the
+DB URL) to `prestop_drain_s=0.0` before any test module's own `TestClient` fixture can run.
+No individual test file touched.
+
+**I changed:** the previous entry's `configure_logging()` ownership-tracking fix is kept (it
+is independently correct — production-safe idempotency, and the two rewritten assertions in
+`test_logging_config.py` are more accurate regardless) but is no longer claimed as *the* fix
+for the CI failure, since it demonstrably wasn't. Falsified the new fix per CLAUDE.md HARD
+rule 14: removed `tests/conftest.py` and reran `test_ready_route.py` alone — the 5.01s
+teardowns came back exactly as before; restored the fixture and reran — gone, all tests still
+pass. `mypy app` stays clean (57 files); `tests/conftest.py` itself hits the same
+"`app.main` does not explicitly export `settings`" mypy note `tests/contract/
+test_error_envelopes.py` already has for the identical pattern — pre-existing, not a
+regression, and CI's `mypy` job only runs `mypy app`, never `mypy tests`, so it was never
+gating anything.
+- **Verified:** `pytest -m "unit or contract"` — 271 passed, same count, now measurably
+  faster (all ~13 five-second teardowns gone). `pytest -m integration --collect-only` — still
+  26 tests, unaffected. `mypy app`, `ruff check .`, `ruff format --check .` — all clean.
+  Pushed; the real confirmation is the next `test-backend` CI run against real Docker, not
+  yet observed at the time of this entry.
