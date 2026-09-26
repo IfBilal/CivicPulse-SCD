@@ -1,0 +1,53 @@
+{
+    "active": "simulated",
+    "configured": "simulated",
+    "available": [
+        "llm",
+        "ollama",
+        "rules",
+        "simulated"
+    ],
+    "cache": {
+        "hits": 2,
+        "misses": 2,
+        "hit_rate": 0.5
+    },
+    "recent": [
+        {
+            "complaint_id": "068e4953-a316-4a76-9bd7-8ca8a94ee3ac",
+            "provider": "simulated",
+            "latency_ms": 0,
+            "fallback": false,
+            "cached": true,
+            "error_class": null,
+            "at": "2026-09-26T14:36:39.491542Z"
+        },
+        {
+            "complaint_id": "888025bb-4c64-428b-907c-7c949914515b",
+            "provider": "simulated",
+            "latency_ms": 0,
+            "fallback": false,
+            "cached": true,
+            "error_class": null,
+            "at": "2026-09-26T14:36:33.957883Z"
+        },
+        {
+            "complaint_id": "1f4b70af-c905-4106-b9ed-f756dc7b8c8e",
+            "provider": "simulated",
+            "latency_ms": 0,
+            "fallback": false,
+            "cached": false,
+            "error_class": null,
+            "at": "2026-09-26T14:36:00.921739Z"
+        },
+        {
+            "complaint_id": "30c409c1-d63a-45d8-baa8-e302902467d0",
+            "provider": "simulated",
+            "latency_ms": 0,
+            "fallback": false,
+            "cached": false,
+            "error_class": null,
+            "at": "2026-09-26T14:35:28.970419Z"
+        }
+    ]
+}

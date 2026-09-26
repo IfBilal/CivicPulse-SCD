@@ -1,0 +1,13 @@
+HTTP/1.1 409 Conflict
+Server: nginx
+Date: Sat, 26 Sep 2026 14:41:15 GMT
+Content-Type: application/json
+Content-Length: 257
+Connection: keep-alive
+x-request-id: 5a699f54-11f2-4845-a898-fc64a1417464
+vary: Origin
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+Referrer-Policy: no-referrer
+
+{"error":{"code":"invalid_transition","message":"Cannot transition from 'open' to 'resolved'.","request_id":"5a699f54-11f2-4845-a898-fc64a1417464","details":{"from":"open","to":"resolved","allowed_from_current":["in_progress","rejected"],"terminal":false}}}

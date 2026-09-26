@@ -1,0 +1,22 @@
+=== backend requests/limits ===
+    Limits:
+      cpu:     500m
+      memory:  256Mi
+    Requests:
+      cpu:     50m
+      memory:  128Mi
+--
+    Limits:
+      cpu:     1
+      memory:  512Mi
+    Requests:
+      cpu:      200m
+      memory:   256Mi
+
+=== frontend requests/limits ===
+    Limits:
+      cpu:     500m
+      memory:  128Mi
+    Requests:
+      cpu:      50m
+      memory:   64Mi

@@ -1,0 +1,14 @@
+=== FLUSHALL to guarantee a clean start ===
+OK
+
+=== first read, expect MISS ===
+x-cache: MISS
+
+=== second read, expect HIT ===
+x-cache: HIT
+
+=== POST a new complaint ===
+status=201
+{"id":"d289e354-141b-4c21-8851-8bb1e4033632","text":"live cache-invalidation evidence probe, phase 5 rubric row E2","location":"evidence capture session","reporter_contact":null,"category":"water","priority":"high","status":"open","ai_summary":"Civic for civic about about the a","triaged_by":"simulated","triage_latency_ms":0,"triage_confidence":0.81,"created_at":"2026-09-26T13:39:36.387279Z","updated_at":"2026-09-26T13:39:36.387279Z"}
+=== third read after POST, expect MISS again (invalidated) ===
+x-cache: MISS

@@ -1,0 +1,37 @@
+=== kubectl -n civicpulse get all (real k3d cluster) ===
+NAME                            READY   STATUS    RESTARTS   AGE
+pod/backend-774f468ff4-cr7dk    1/1     Running   0          98s
+pod/backend-774f468ff4-tjqz4    1/1     Running   0          98s
+pod/frontend-7f8bf7878f-7mc8p   1/1     Running   0          98s
+pod/frontend-7f8bf7878f-sskch   1/1     Running   0          98s
+pod/postgres-0                  1/1     Running   0          97s
+pod/redis-67dfb5f589-9jds7      1/1     Running   0          98s
+
+NAME               TYPE        CLUSTER-IP     EXTERNAL-IP   PORT(S)    AGE
+service/backend    ClusterIP   10.43.124.29   <none>        8000/TCP   98s
+service/frontend   ClusterIP   10.43.4.47     <none>        8080/TCP   98s
+service/postgres   ClusterIP   None           <none>        5432/TCP   98s
+service/redis      ClusterIP   10.43.4.217    <none>        6379/TCP   98s
+
+NAME                       READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/backend    2/2     2            2           99s
+deployment.apps/frontend   2/2     2            2           99s
+deployment.apps/redis      1/1     1            1           99s
+
+NAME                                  DESIRED   CURRENT   READY   AGE
+replicaset.apps/backend-774f468ff4    2         2         2       99s
+replicaset.apps/frontend-7f8bf7878f   2         2         2       99s
+replicaset.apps/redis-67dfb5f589      1         1         1       99s
+
+NAME                        READY   AGE
+statefulset.apps/postgres   1/1     99s
+
+NAME                                              REFERENCE            TARGETS       MINPODS   MAXPODS   REPLICAS   AGE
+horizontalpodautoscaler.autoscaling/backend-hpa   Deployment/backend   cpu: 2%/60%   2         10        2          98s
+
+=== kubectl -n civicpulse get svc -o wide (confirm ClusterIP only) ===
+NAME       TYPE        CLUSTER-IP     EXTERNAL-IP   PORT(S)    AGE   SELECTOR
+backend    ClusterIP   10.43.124.29   <none>        8000/TCP   99s   app=backend
+frontend   ClusterIP   10.43.4.47     <none>        8080/TCP   99s   app=frontend
+postgres   ClusterIP   None           <none>        5432/TCP   99s   app=postgres
+redis      ClusterIP   10.43.4.217    <none>        6379/TCP   99s   app=redis

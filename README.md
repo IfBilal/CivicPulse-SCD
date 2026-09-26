@@ -1,23 +1,79 @@
 # CivicPulse
 
-Citizen submits a free-text complaint → an LLM (or a keyword-rule fallback) classifies it into
-category/priority/summary → persisted → shown on an operator dashboard. The classifier is
-replaceable and the system never falls over when it is rate-limited, slow, or wrong — every
-provider failure ends in `201` with `triaged_by="rules:fallback"`, never a 500.
+[![ci](https://github.com/IfBilal/CivicPulse-SCD/actions/workflows/ci.yml/badge.svg)](https://github.com/IfBilal/CivicPulse-SCD/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-see%20LICENSE-blue)](LICENSE)
+[![Docs](https://img.shields.io/badge/docs-00--SPEC.md-informational)](docs/00-SPEC.md)
 
-Two-developer assignment build. Full design docs live in [`docs/`](docs/) — `docs/00-SPEC.md`
-is the source of truth; this file is the entry point, not a substitute for it.
+> Municipal complaint intake, AI triage and operations platform.
+> Built so the reader is replaceable: keyword rule today, LLM tomorrow, classifier next year.
+
+## The problem
+
+Every municipality runs the same broken process: a citizen's free-text complaint ("burst water
+main flooding Street 12 since fajr") lands in an undifferentiated queue, sorted by nothing, and
+by the time a human reads it a street is flooded. A dropdown category picker doesn't fix this —
+citizens pick wrong, pick "Other" to finish the form faster, and can't judge urgency. The
+information is in the text; somebody (or something) has to read it. The engineering problem this
+system solves is not "read the text" — it's that **the reader must be replaceable**: a keyword
+rule today, an LLM tomorrow, a fine-tuned classifier next year, and the surrounding system must
+not fall over when the clever reader is rate-limited, slow, or simply wrong.
+
+## Architecture
+
+```mermaid
+graph TB
+    citizen["👤 Citizen<br/>submits a complaint"]
+    operator["👤 Municipal operator<br/>triages and resolves"]
+
+    subgraph civicpulse["CivicPulse"]
+        fe["Frontend<br/>React 18 + Vite + TS<br/>served by nginx"]
+        be["Backend API<br/>FastAPI + Pydantic v2<br/>routes → services → repos → providers"]
+        pg[("PostgreSQL 16<br/>complaints<br/>Alembic-managed")]
+        rd[("Redis 7<br/>① stats cache<br/>② rate limiter<br/>③ triage cache")]
+    end
+
+    llm["🌐 Hosted LLM<br/>Groq / Gemini free tier<br/>JSON mode"]
+    ol["Ollama<br/>llama3.2:1b<br/>local, zero egress"]
+    rules["RuleBasedTriage<br/>keyword fallback<br/>cannot fail"]
+
+    citizen -->|"POST /api/complaints"| fe
+    operator -->|"dashboard, PATCH status"| fe
+    fe -->|"/api proxied, same-origin"| be
+    be --> pg
+    be --> rd
+    be -.->|"TRIAGE_PROVIDER=llm<br/>10s timeout, 1 retry"| llm
+    be -.->|"TRIAGE_PROVIDER=ollama"| ol
+    be ==>|"on timeout / 429 / 5xx / bad JSON"| rules
+
+    classDef ext fill:#4a4a4a,stroke:#222,color:#fff
+    classDef core fill:#1f6feb,stroke:#0d419d,color:#fff
+    classDef data fill:#238636,stroke:#116329,color:#fff
+    classDef fb fill:#9e6a03,stroke:#7d4e00,color:#fff
+    class llm,ol ext
+    class fe,be core
+    class pg,rd data
+    class rules fb
+```
+
+The thick arrow (`==>`) is the thesis: every provider failure — timeout, rate limit, malformed
+JSON, the provider being entirely down — degrades to `RuleBasedTriage`, never to a 500. See
+`docs/21-ARCHITECTURE-DIAGRAMS.md` for the network-boundary, layering, sequence, fallback-ladder,
+state-machine, Kubernetes and CI/CD diagrams this one summarizes.
+
+Full design docs live in [`docs/`](docs/) — [`docs/00-SPEC.md`](docs/00-SPEC.md) is the source of
+truth; this file is the entry point, not a substitute for it.
 
 ## Quickstart
 
-Requires Docker and Docker Compose.
+Requires Docker and Docker Compose. No API key needed — the default triage provider
+(`TRIAGE_PROVIDER=simulated`) is a deterministic local simulation with no network calls.
 
 ```bash
 make up
 ```
 
-This builds every image, starts the stack, runs migrations, seeds the database, and waits for
-the app to report ready. Once it prints the URL, open it:
+This builds every image, starts the stack, runs migrations, seeds ≥30 realistic complaints, and
+waits for every healthcheck before returning. Once it prints the URL, open it:
 
 ```bash
 # http://localhost:8080
@@ -35,7 +91,11 @@ Stop it and destroy all data:
 make nuke
 ```
 
-## Everyday commands
+To use a real LLM instead of the simulation: copy `.env.example` to `.env` (done automatically by
+`make up` if `.env` doesn't exist), set `TRIAGE_PROVIDER=llm` and the matching API key, then
+`make up` again.
+
+### Everyday commands
 
 ```bash
 make check      # full local gate: lint, type-check, tests, layer/secret checks
@@ -49,16 +109,195 @@ make db-shell   # psql into the running database
 
 Run `make help` for the full target list.
 
-## Kubernetes (local k3d)
+## Second command — Kubernetes
 
 ```bash
 make k8s-up     # cluster + ingress-nginx + metrics-server + deploy the dev overlay
 make k8s-down   # tear the cluster down
 ```
 
-See [`docs/13-KUBERNETES.md`](docs/13-KUBERNETES.md) and
-[`docs/14-LOAD-AUTOSCALING.md`](docs/14-LOAD-AUTOSCALING.md) for the full manifest set, HPA/VPA,
-and load-test runbook.
+`make k8s-up` stands up a local k3d cluster, installs `ingress-nginx` and `metrics-server`, and
+applies the `overlays/dev` Kustomize stack — namespace `civicpulse`, a `StatefulSet` for Postgres
+with `volumeClaimTemplates`, `Deployment`s for backend/frontend/redis, an `HPA` on the backend,
+and `ClusterIP` Services routed through one `Ingress`. See
+[`docs/13-KUBERNETES.md`](docs/13-KUBERNETES.md) and
+[`docs/14-LOAD-AUTOSCALING.md`](docs/14-LOAD-AUTOSCALING.md) for the full manifest set, HPA/VPA
+behaviour, and the load-test runbook.
+
+## API
+
+Ten endpoints (`docs/04-CONTRACTS.md §6` — the spec's own endpoint table lists nine; the tenth,
+the OpenAPI surface, is required implicitly by the typed client and shipped deliberately —
+contradiction A3, resolved in `docs/00-SPEC.md` Appendix A):
+
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/api/complaints` | Validate → triage → persist. `201` always for a syntactically valid body; `400` field-level errors; `429` + `Retry-After` when rate-limited. |
+| `GET` | `/api/complaints/{id}` | Fetch one complaint. `200` / `404`. |
+| `GET` | `/api/complaints` | Filter by `category`, `priority`, `status`; paginate (`page`, `page_size≤100`); returns `total`. |
+| `PATCH` | `/api/complaints/{id}/status` | Advance the state machine via a transition-table lookup. Invalid transition → `409` naming the attempted transition. |
+| `GET` | `/api/stats` | Aggregate counts by category/priority/status. Redis-cached, 30s TTL, `X-Cache: HIT\|MISS`. |
+| `GET` | `/api/meta/providers` | Which triage provider is active, measured cache hit rate, and the last 20 triage outcomes (provider, latency, fallback y/n). The observability surface. |
+| `GET` | `/health` | Liveness. Process is alive. **Never touches the database.** |
+| `GET` | `/ready` | Readiness. `200` only if Postgres and Redis are both reachable; `503` naming the failed dependency. |
+| `GET` | `/metrics` | Prometheus text format: request count/latency, triage latency, fallback counter — labelled by `path_template`, never a raw path. |
+| `GET` | `/openapi.json` (+ `/docs`) | The tenth endpoint — the schema the typed frontend client is generated against (`docs/04-CONTRACTS.md §6.10`). |
+
+## Triage providers
+
+`TriageProvider` is a `Protocol` selected at runtime by `TRIAGE_PROVIDER`, so the classifier is a
+swappable implementation, not a hardwired dependency:
+
+| Provider | `TRIAGE_PROVIDER` value | Notes |
+|---|---|---|
+| `LLMTriage` | `llm` | Production path — Groq or Gemini free tier, JSON mode, 10s timeout, one jittered retry on timeout/429/5xx only. |
+| `OllamaTriage` | `ollama` | Fully offline, zero egress, a container in Compose — same interface, slower and less accurate on CPU (the trade-off is the lesson). |
+| `RuleBasedTriage` | `rules` | Deterministic keyword fallback. Always available, never fails — the target of every provider failure. |
+| `SimulatedTriage` | `simulated` | Deterministic fake for CI/local dev — seeded, no network, configurable failure injection. **This is the default and what CI always uses.** |
+
+Any provider failure — timeout, malformed JSON, wrong enum value, the provider being entirely
+down — degrades to `RuleBasedTriage` with zero retries on validation errors, exactly one jittered
+retry on timeout/429/5xx, inside a 12s total budget. `triaged_by="rules:fallback"` is recorded,
+and `POST /api/complaints` still returns `201`. See ADR-0001 and
+`docs/21-ARCHITECTURE-DIAGRAMS.md §5` (the fallback ladder).
+
+## Screenshots
+
+Captured live against a real `docker compose up` stack (Postgres, Redis, backend, frontend),
+not mocked.
+
+**Submit — validation and a filed report**
+![Submit form validation](docs/evidence/screenshots/submit-form-validation.png)
+
+**Dashboard — filters, pagination, and a triaged complaint expanded**
+![Dashboard expanded card](docs/evidence/screenshots/dashboard-expanded.png)
+
+**Dashboard — an invalid transition surfaced verbatim as a 409**
+![Dashboard 409 conflict](docs/evidence/screenshots/dashboard-409-conflict.png)
+
+**Stats — cache MISS then HIT**
+![Stats MISS](docs/evidence/screenshots/stats-view.png)
+![Stats HIT](docs/evidence/screenshots/stats-view-cache-hit.png)
+
+**Backend API — live Swagger UI**
+![Swagger UI](docs/evidence/screenshots/swagger-docs.png)
+
+Grafana dashboard screenshot is still pending — Prometheus/Grafana is a bonus item, not part of
+the core rubric, and is genuinely not stood up yet.
+
+## Configuration
+
+Copy `.env.example` to `.env` (done automatically by `make up` if `.env` doesn't exist yet) and
+edit as needed. `TRIAGE_PROVIDER=simulated` is the default — no external API key required to run
+the full stack. See `.env.example`'s own comments for what each provider option needs, and
+ADR-0004 for what leaves the machine when a real LLM provider is configured.
+
+## Testing
+
+```bash
+pytest -m "unit or contract"   # fast loop, ~4s — run before every commit
+pytest -m integration          # honest loop, ~90s — real Postgres/Redis via testcontainers
+```
+
+`TRIAGE_PROVIDER=simulated` in every test and CI run — never a live LLM call in CI. Coverage
+floor is 65% on `app/`. The single most important test in the codebase is the fallback test:
+given a provider that always raises, `POST /api/complaints` still returns `201` and
+`triaged_by == "rules:fallback"`. See [`docs/16-TESTING.md`](docs/16-TESTING.md).
+
+## Evidence
+
+47 artifacts in [`docs/evidence/`](docs/evidence/), most captured live against a real running
+stack (compose and/or a real k3d cluster) this session, not inferred from reading code. Full
+row-by-row mapping to rubric lines is in
+[`docs/20-RUBRIC-TRACEABILITY.md`](docs/20-RUBRIC-TRACEABILITY.md) — highlights:
+
+| File | Proves |
+|---|---|
+| [`fallback-test-live.txt`](docs/evidence/fallback-test-live.txt) | **The single most important test in the codebase, run live**: a provider that always raises still returns `201` with `triaged_by:"rules:fallback"` |
+| [`malformed-provider-test-live.txt`](docs/evidence/malformed-provider-test-live.txt) | Malformed-JSON provider → `201`, fallback, exactly one WARNING, zero retries |
+| [`ratelimit-provider-test-live.txt`](docs/evidence/ratelimit-provider-test-live.txt) | 429-provider → exactly one retry (`attempts:2`), then fallback, inside the time budget |
+| [`cache-behaviour.txt`](docs/evidence/cache-behaviour.txt) | `/api/stats`: real `MISS` → `HIT` → a real `POST` invalidates back to `MISS` |
+| [`ratelimit-distributed.txt`](docs/evidence/ratelimit-distributed.txt) | Real `429` + `Retry-After`; limiter key confirmed living in Redis (distributed, not per-process) |
+| [`health-vs-ready.txt`](docs/evidence/health-vs-ready.txt) | `/health` stays `200` with Postgres stopped; `/ready` returns a real `503` naming `postgres` |
+| [`sigterm-drain.txt`](docs/evidence/sigterm-drain.txt) | 144/144 in-flight requests survive a real `SIGTERM` to the backend |
+| [`schema-dump-live.txt`](docs/evidence/schema-dump-live.txt) | Live `\d+ complaints` — all required columns, both named indexes, all CHECK constraints |
+| [`k8s-get-all-live.txt`](docs/evidence/k8s-get-all-live.txt) | Live `kubectl get all` on a real k3d cluster — `StatefulSet` for postgres, `ClusterIP`-only services |
+| [`netpol-enforcement-live.txt`](docs/evidence/netpol-enforcement-live.txt) | Two-sided live proof: frontend blocked from postgres by raw pod IP, backend still allowed |
+| [`hpa-watch.txt`](docs/evidence/hpa-watch.txt) | Full real HPA cycle — replicas 2→4→6→8 under load, back to 2 after (Phase 7, tracked separately) |
+| [`rollback-demo.txt`](docs/evidence/rollback-demo.txt) | Timed `kubectl rollout undo` — 29.6s (Phase 7/8, tracked separately) |
+| [`meta-providers-live.txt`](docs/evidence/meta-providers-live.txt) | Live `/api/meta/providers` — 4 providers, real latency/cache-hit-rate numbers |
+| [`pr-review-audit-live.txt`](docs/evidence/pr-review-audit-live.txt) | Honest, current PR-review audit — 26/42 merged PRs have zero review |
+| [`branch-protection.png`](docs/evidence/branch-protection.png) | `main` branch protection — PR required, review required, checks required |
+| [`precommit-secret-block.txt`](docs/evidence/precommit-secret-block.txt) | Pre-commit gitleaks hook actually blocks a staged fake secret |
+
+Not yet captured: a real `git clone` into an empty directory run by the partner who didn't
+write the code (README quickstart, needs a second machine to mean anything), a full-history
+`gitleaks` scan (binary unavailable in the sandbox that produced most of this evidence), and
+everything Phase 7+ (VPA describe-run artifacts, k6 chart, a `cd.yml` execution).
+
+## ADRs
+
+| ADR | Title |
+|---|---|
+| [0001](docs/adr/0001-provider-interface.md) | Triage provider interface — the `Protocol` shape, retry policy, why `ValidationError` is not retryable, why fallbacks are not cached |
+| [0002](docs/adr/0002-frontend-runtime-config.md) | Frontend runtime configuration — nginx `/api` proxy as primary, `config.js` for non-URL flags, the build-once-deploy-many guarantee |
+| [0003](docs/adr/0003-deploy-by-sha.md) | Deploy by digest, tag by SHA — why `:latest` is pushed but never deployed, the two rollback mechanisms |
+| [0004](docs/adr/0004-pii-and-data-governance.md) | PII and data governance — what leaves the machine, to whom, and why that is acceptable |
+
+## Known limitations
+
+Pulled honestly from `docs/20-RUBRIC-TRACEABILITY.md` rather than hedged generically. Phases
+0–6 (bootstrap through Kubernetes) are implemented and, as of this update, the majority of
+rubric rows for those phases have live-captured evidence (real `docker compose` runs, a real
+k3d cluster, real Playwright screenshots against the running app) — see the tracking sheet for
+the row-by-row state. What's genuinely still open:
+
+- **Rubric A3 (PR review rigor) is failing, not just incomplete, and cannot be fixed
+  retroactively.** A live audit of every merged PR (`docs/evidence/pr-review-audit-live.txt`)
+  found 26 of 42 have zero reviews and a further 10 have only empty-body rubber-stamp
+  approvals — only 6 of 42 have anything resembling a real review comment. `docs/01-WORKFLOW.md
+  §2.3` is explicit that a rubber-stamp scores zero. This needs the human partners to leave
+  substantive review comments on PRs going forward; it cannot be applied to PRs already merged.
+- **Rubric A5's specific two-person merge-conflict exercise has not been run.**
+  `docs/01-WORKFLOW.md §2.4` calls for both partners to independently branch from the same
+  `dev` SHA and each add a field to `StatsResponse`, producing a real, scheduled conflict on
+  `schemas/stats.py`. Both fields the exercise would add already exist in the shipped schema —
+  the underlying feature work is done — but the ceremony itself (and its required evidence
+  bundle) has not happened, and cannot be produced by a single contributor or an AI session
+  acting alone without it being a fabrication of the actual collaborative exercise being tested.
+- **Rubric A4's commit-share number is genuinely contested**, not hidden: 35.9% (counting `--all`
+  refs) vs 22.6% (`--no-merges HEAD` only) — see `docs/evidence/shortlog.txt`. Decide which
+  counting method to defend at viva.
+- **`cd.yml` has not yet run against `main`.** The workflow exists and is structurally correct
+  (`needs:` gating, SHA tags, SBOM) but has never executed — `main` only recently caught up to
+  `dev` (PR #48). This is Phase 8 (CD/rollback) scope, not Phase 0–6.
+- **HPA/VPA live captures, and everything else Phase 7+ (load testing, autoscaling, CD, the
+  demo video)** are explicitly out of scope for the current close-out pass and tracked
+  separately once Phase 0–6 is confirmed locked in.
+- **NetworkPolicy enforcement depends on the CNI.** Verified empirically on a real k3d cluster
+  this session (`docs/evidence/netpol-enforcement-live.txt`) that k3d's default CNI does enforce
+  NetworkPolicy correctly (two-sided proof: frontend blocked, backend allowed) — `kind`'s default
+  CNI (`kindnet`) does not, so the project standardizes on k3d specifically (contradiction A13).
+- **`/api/meta/providers`'s `recent` list is per-pod, not cluster-wide.** It's an in-process
+  `deque(maxlen=20)`; scaling to multiple backend replicas fragments the observability view. A
+  Redis-backed list would fix this but is not implemented (documented trade-off, `docs/04-CONTRACTS.md §6.6`).
+
+## AI usage
+
+All AI tool usage (Claude Code + skills, what was AI-shaped vs AI-written vs hand-written, and
+what was overridden and why) is logged in [`docs/AI-USAGE.md`](docs/AI-USAGE.md), per
+`docs/00-SPEC.md §5.5`: specific disclosure carries no penalty.
+
+## Team
+
+Two-developer assignment build (CS4032 Assignment 01). Contribution shares:
+
+```
+$ git shortlog -sn --no-merges
+```
+
+See [`docs/evidence/shortlog.txt`](docs/evidence/shortlog.txt) (once captured) for the pasted
+output required by `docs/00-SPEC.md §5.8` item 5.
 
 ## Project layout
 
@@ -70,12 +309,6 @@ load/       k6 load-test scripts (HPA/VPA proof)
 docs/       Design docs, one per phase — docs/00-SPEC.md is authoritative
 scripts/    check_submission.py (automated rubric-deduction detectors) and friends
 ```
-
-## Configuration
-
-Copy `.env.example` to `.env` (done automatically by `make up` if `.env` doesn't exist yet) and
-edit as needed. `TRIAGE_PROVIDER=simulated` is the default — no external API key required to
-run the full stack. See `.env.example`'s own comments for what each provider option needs.
 
 ## Rules this repo enforces on itself
 

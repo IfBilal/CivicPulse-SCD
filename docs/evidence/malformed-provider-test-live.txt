@@ -1,0 +1,6 @@
+=== MALFORMED-JSON PROVIDER TEST — must be 201, fallback, ZERO retries per CLAUDE.md HARD rule 6 ===
+{"id":"d58a955c-5717-4dc5-b7af-e37ff631c351","text":"malformed-provider-test: this provider returns invalid JSON that fails schema validation","location":"malformed test evidence","reporter_contact":null,"category":"other","priority":"low","status":"open","ai_summary":"malformed-provider-test: this provider returns invalid JSON that fails schema validation","triaged_by":"rules:fallback","triage_latency_ms":0,"triage_confidence":0.0,"created_at":"2026-09-26T14:47:39.222173Z","updated_at":"2026-09-26T14:47:39.222173Z"}
+HTTP 201
+
+=== logs from the container, checking for exactly one WARNING with complaint id + provider + error class ===
+{"ts":"2026-09-26T14:47:39.183+00:00","level":"WARNING","logger":"app.triage","msg":"triage.fallback","request_id":"93f572ea-66b9-436b-8fc9-8dc3c38be31a","service":"backend","version":"dev","provider":"simulated","error_class":"SimulatedMalformedResponseError","attempts":1,"elapsed_ms":0}

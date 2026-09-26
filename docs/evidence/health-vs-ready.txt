@@ -1,0 +1,14 @@
+=== /health and /ready via backend's real port 8000, from inside the container ===
+/health -> 200
+/ready -> 200
+
+=== stop postgres ===
+
+=== /health should still be 200 (no DB dependency) ===
+/health -> 200
+=== /ready should be 503 naming postgres ===
+/ready -> 503 {"error":{"code":"not_ready","message":"Dependency check failed: postgres","request_id":"04a57d1c-c9af-4ea4-9ada-e6a4b5c8161a","details":{"checks":{"postgres":"error: OperationalError","redis":"ok"},"failed":["postgres"]}}}
+
+=== restart postgres ===
+=== /ready should recover to 200 ===
+/ready -> 200

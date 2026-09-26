@@ -1,0 +1,62 @@
+I1, I2, I3, I4, I5, I6 evidence — structural read of .github/workflows/ci.yml and
+cd.yml (no workflow execution needed for these claims; verified by direct file
+inspection, 2026-09-26). Line numbers refer to the files as they exist on this branch.
+
+I1 — ci.yml defines exactly 7 jobs, matching branch-ruleset.json's 7 required status
+checks exactly (see docs/evidence/branch-ruleset.json — GitHub's live API confirms these
+7 context names are enforced on `main`): lint-and-type, test-backend, test-frontend,
+build, scan, manifests, integration. Triggers on `pull_request` to [main, dev] and
+`push` to [dev] (ci.yml:7-11).
+
+I2 — the `integration` job (ci.yml:212-283) runs `docker compose up -d --build --wait`
+against the real compose.yaml, then asserts SIX real request-path behaviors against the
+running stack: (1) POST->GET->assert triaged category persisted, (2) X-Cache MISS then
+HIT on /api/stats, (3) POST invalidates the stats cache (fresh MISS after write), (4)
+frontend genuinely cannot reach the database (`nc -z database 5432` expected to fail),
+(5) rate limiter returns 429 after 12 requests against a limit of 10, with a
+Retry-After header, (6) compose logs uploaded as a CI artifact on any outcome. This
+matches rubric I2's "six assertions in one job" claim exactly.
+
+I3 — the `scan` job (ci.yml:143-172) runs Trivy against both built images
+(severity HIGH,CRITICAL, exit-code 1 -> job fails the build on any unfixed HIGH/CRITICAL
+CVE) and separately uploads a SARIF report to the Security tab via
+github/codeql-action/upload-sarif. The `manifests` job (ci.yml:174-210) runs kubeconform
+against both kustomize overlays (dev, prod) with -strict, plus two extra guards: no
+`:latest` in the rendered prod overlay, and no real-secret-shaped strings in k8s/.
+
+I4 — cd.yml's `build-push` job (line 30) has `needs: test` (line 31, with a comment
+citing the exact deduction-ledger cost: "§5.3 -8 if absent"). Images are tagged both
+`:${{ github.sha }}` and `:latest` at push time (lines 51-53, 64-66) — the `:latest` tag
+here is informational only; the actual DEPLOY step (below) pins to a content digest, not
+this tag, so this does not trip the "-8 deploying :latest" armor row (see I4/CD-LATEST-
+DEPLOY note below).
+
+I5 — cd.yml's `deploy-k8s` job (line 84) has `needs: build-push` (line 85, same
+deduction-ledger comment pattern), runs on an ephemeral `helm/kind-action` cluster (not a
+persistent one), waits on `kubectl rollout status` for the postgres StatefulSet and both
+Deployments (lines 119-122), and smoke-tests through the real ingress via port-forward
+(lines 123-130) before printing `kubectl get hpa`.
+
+I6 — Secrets are read only from `secrets.*` (GitHub Secrets) in cd.yml, e.g.
+`secrets.POSTGRES_PASSWORD`, `secrets.LLM_API_KEY` (lines 107, 109) — never a repo file.
+Every job in both workflows sets an explicit `permissions:` block scoped to only what
+that job needs: ci.yml's workflow-level default is `contents: read` (line 14), with the
+`scan` job separately elevated to add `security-events: write` (with a comment
+explaining exactly why, ci.yml:146-157) rather than widening the whole workflow. cd.yml's
+`build-push` job needs `packages: write` to push images and gets exactly that (line 33);
+the `test` job (which reuses ci.yml) is NOT given publish credentials.
+
+CRITICAL caveat re I4/I5 — confirmed via `gh api repos/IfBilal/CivicPulse-SCD/actions/
+workflows`: only ONE workflow is registered on GitHub, `ci` (path .github/workflows/
+ci.yml). `cd.yml` returns HTTP 404 from the Actions API and has NEVER executed — GitHub
+only registers/lists a workflow file once it exists on the default branch (`main`) and
+has run at least once. `main` on this repo (origin/main, confirmed via `git log
+origin/main`) is currently stale — it does not yet include the commits that introduced/
+finalized cd.yml (those landed on `dev` and feature branches; `git merge-base
+--is-ancestor origin/main origin/dev` returns false, i.e. main and dev have diverged,
+not just "main is behind"). This static read confirms the WORKFLOW YAML is correctly
+STRUCTURED (needs: gating present, least-privilege permissions, digest-pin at deploy
+time) — it does NOT confirm cd.yml has ever run, successfully or otherwise. I4 and I5
+must stay UNPROVEN until (a) `dev` is merged into `main` via a real PR, and (b) that
+push to `main` triggers a real cd.yml run that completes (or at minimum reaches the
+`build-push`/`deploy-k8s` jobs) — see the handover for the exact steps.

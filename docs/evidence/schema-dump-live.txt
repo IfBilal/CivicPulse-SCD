@@ -1,0 +1,31 @@
+                                                            Table "public.complaints"
+      Column       |           Type           | Collation | Nullable |       Default       | Storage  | Compression | Stats target | Description 
+-------------------+--------------------------+-----------+----------+---------------------+----------+-------------+--------------+-------------
+ id                | uuid                     |           | not null | gen_random_uuid()   | plain    |             |              | 
+ text              | text                     |           | not null |                     | extended |             |              | 
+ location          | character varying(200)   |           | not null |                     | extended |             |              | 
+ reporter_contact  | character varying(120)   |           |          |                     | extended |             |              | 
+ category          | category_enum            |           | not null |                     | plain    |             |              | 
+ priority          | priority_enum            |           | not null |                     | plain    |             |              | 
+ status            | status_enum              |           | not null | 'open'::status_enum | plain    |             |              | 
+ ai_summary        | character varying(140)   |           |          |                     | extended |             |              | 
+ triaged_by        | triaged_by_enum          |           | not null |                     | plain    |             |              | 
+ triage_latency_ms | integer                  |           | not null | 0                   | plain    |             |              | 
+ triage_confidence | numeric(3,2)             |           |          |                     | main     |             |              | 
+ created_at        | timestamp with time zone |           | not null | now()               | plain    |             |              | 
+ updated_at        | timestamp with time zone |           | not null | now()               | plain    |             |              | 
+Indexes:
+    "pk_complaints" PRIMARY KEY, btree (id)
+    "ix_complaints_created_at" btree (created_at DESC)
+    "ix_complaints_status_priority" btree (status, priority)
+Check constraints:
+    "ck_complaints_ck_complaints_confidence_range" CHECK (triage_confidence IS NULL OR triage_confidence >= 0::numeric AND triage_confidence <= 1::numeric)
+    "ck_complaints_ck_complaints_contact_len" CHECK (reporter_contact IS NULL OR char_length(reporter_contact::text) >= 3 AND char_length(reporter_contact::text) <= 120)
+    "ck_complaints_ck_complaints_latency_nonneg" CHECK (triage_latency_ms >= 0)
+    "ck_complaints_ck_complaints_location_len" CHECK (char_length(location::text) >= 3 AND char_length(location::text) <= 200)
+    "ck_complaints_ck_complaints_summary_len" CHECK (ai_summary IS NULL OR char_length(ai_summary::text) <= 140)
+    "ck_complaints_ck_complaints_text_len" CHECK (char_length(text) >= 10 AND char_length(text) <= 2000)
+Triggers:
+    trg_complaints_updated_at BEFORE UPDATE ON complaints FOR EACH ROW EXECUTE FUNCTION set_updated_at()
+Access method: heap
+

@@ -1,0 +1,69 @@
+=== BEFORE: ix_complaints_status_priority dropped ===
+DROP INDEX
+
+=== EXPLAIN (ANALYZE, BUFFERS) for Q-DASH-FILTER, no index ===
+                                                         QUERY PLAN                                                          
+-----------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=11.07..11.08 rows=1 width=1078) (actual time=0.184..0.189 rows=20 loops=1)
+   Buffers: shared hit=5
+   ->  Sort  (cost=11.07..11.08 rows=1 width=1078) (actual time=0.182..0.185 rows=20 loops=1)
+         Sort Key: created_at DESC
+         Sort Method: quicksort  Memory: 33kB
+         Buffers: shared hit=5
+         ->  WindowAgg  (cost=0.00..11.06 rows=1 width=1078) (actual time=0.078..0.091 rows=21 loops=1)
+               Buffers: shared hit=2
+               ->  Seq Scan on complaints c  (cost=0.00..11.05 rows=1 width=1070) (actual time=0.012..0.029 rows=21 loops=1)
+                     Filter: ((status = 'open'::status_enum) AND (priority = 'high'::priority_enum))
+                     Rows Removed by Filter: 29
+                     Buffers: shared hit=2
+ Planning:
+   Buffers: shared hit=125 dirtied=1
+ Planning Time: 1.580 ms
+ Execution Time: 0.309 ms
+(16 rows)
+
+
+=== restore the index ===
+CREATE INDEX
+
+=== AFTER: EXPLAIN (ANALYZE, BUFFERS) for Q-DASH-FILTER, with index ===
+ANALYZE
+                                                         QUERY PLAN                                                         
+----------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=3.52..3.57 rows=20 width=267) (actual time=0.153..0.157 rows=20 loops=1)
+   Buffers: shared hit=5
+   ->  Sort  (cost=3.52..3.57 rows=22 width=267) (actual time=0.151..0.153 rows=20 loops=1)
+         Sort Key: created_at DESC
+         Sort Method: quicksort  Memory: 33kB
+         Buffers: shared hit=5
+         ->  WindowAgg  (cost=0.00..3.03 rows=22 width=267) (actual time=0.066..0.076 rows=21 loops=1)
+               Buffers: shared hit=2
+               ->  Seq Scan on complaints c  (cost=0.00..2.75 rows=22 width=259) (actual time=0.015..0.027 rows=21 loops=1)
+                     Filter: ((status = 'open'::status_enum) AND (priority = 'high'::priority_enum))
+                     Rows Removed by Filter: 29
+                     Buffers: shared hit=2
+ Planning:
+   Buffers: shared hit=184 read=1
+ Planning Time: 2.328 ms
+ Execution Time: 0.410 ms
+(16 rows)
+
+
+=== Honest finding: no Seq Scan -> Bitmap Index Scan transition visible at this row count ===
+05-DATA-LAYER.md's own viva talking point ("Seq Scan -> Bitmap Index Scan is the line you
+point at") does NOT appear in this capture -- both plans above use Seq Scan, with and without
+the index. This is correct, expected PostgreSQL planner behavior, not a bug: the seeded table
+has ~50 rows, and Postgres's cost model correctly judges a sequential scan over 50 rows
+cheaper than an index scan (an index scan adds a second I/O per matching row to fetch the
+heap tuple, which only pays off once the table is large enough that skipping most of it is
+worth that extra cost -- typically thousands of rows, not tens).
+
+The index's structural correctness is still proven (both idx creation and the exact column
+order match 05-DATA-LAYER.md's own DDL), and the query PLANS identically either way BECAUSE
+the planner is making the right call for THIS data volume, not because the index is unused
+or broken. To actually observe the promised Seq Scan -> Bitmap Index Scan transition, the
+table needs enough rows that the planner's cost estimate flips -- try re-running this same
+EXPLAIN after `python -m app.cli.seed` has been extended to generate thousands of synthetic
+rows (not the ~30-50 row curated golden set), or after enough real production traffic
+accumulates. Recorded here as an honest, disclosed limitation of testing against the small
+seed set, not claimed as a win that didn't actually happen.

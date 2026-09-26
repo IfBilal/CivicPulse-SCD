@@ -2569,3 +2569,293 @@ is the first real push to `main` that triggers it.
   script runs) before editing, not assumed correct from reading the diff — CLAUDE.md's own
   "run tests after a merge, don't just check for leftover references by eye" discipline applied
   to a script that has no test suite of its own to run.
+
+## 2026-09-26 · docs/runbook-and-viva-notes — writing `docs/RUNBOOK.md` and the §4 viva-question
+answers in `docs/ENGINEERING-NOTES.md`
+
+- **Tool:** Claude Code (rubric-traceability audit fix; no named skill invoked for this session —
+  no design fork with ≥2 defensible options came up, so `ponytail` didn't fire; this was a
+  documentation-writing task against an already-frozen implementation, not new code, so
+  `caveman`'s task-list gate doesn't apply either).
+- **Shaped / Wrote:** Wrote `docs/RUNBOOK.md` from scratch (it did not exist before this branch)
+  and appended a new "§4 viva questions" section to `docs/ENGINEERING-NOTES.md`, answering the
+  eight questions `18-DOCS-EVIDENCE-VIVA.md §4` requires. Every `file:line` citation in both
+  documents was checked by opening the real file at that line on this branch
+  (`docs/runbook-and-viva-notes`, forked from `origin/dev` @ `1fb6d717`) before being written —
+  not reconstructed from a design doc's prose example.
+- **I changed:** `18-DOCS-EVIDENCE-VIVA.md §4` Q1's own worked example cites
+  `k8s/base/backend.yaml:L47` and `backend/Dockerfile:L2` — this repo's real files are
+  `k8s/base/backend-deployment.yaml` (different filename) with the resource block at lines
+  36-37/46-47, and `backend/Dockerfile`'s `FROM` line is at line 3, not 2 (a comment occupies
+  line 1). Cited the real locations instead of the doc's illustrative ones, and said so, per
+  CLAUDE.md's "if a design doc's example doesn't match reality, that's a documented bug, not
+  something to quietly paper over." For Q5 (HPA lag in seconds), gave an honest "not yet
+  measured" answer rather than inventing numbers — `docs/evidence/` has no `hpa-watch.txt`/
+  `hpa-samples.txt`/`k6-summary.json` on this branch (confirmed via `ls`), and
+  `14-LOAD-AUTOSCALING.md §5` itself says its table's numbers are "typical, not yours." Also
+  corrected the RUNBOOK's endpoint name from `providers.recent` (as the task brief for this
+  session phrased it) to the real route, `GET /api/meta/providers` with a `recent` field on the
+  response body (`backend/app/routes/meta.py:11`) — there is no separate `providers.recent`
+  endpoint in this codebase.
+
+## 2026-09-26 · fix/close-disclosed-gaps (rubric-evidence closure pass)
+
+- **Tool:** Claude Code (no named skill invoked — this was an audit/evidence-closure task,
+  not a code-writing phase; §6's `caveman`/`ponytail` triggers are "before writing any code"
+  and "a design fork with ≥2 defensible answers" respectively, and this session wrote zero
+  application code, only evidence files and rubric-doc status updates)
+- **Shaped/Wrote:** `docs/20-RUBRIC-TRACEABILITY.md` (Status column only — 21 rubric rows
+  A-J plus 9 deduction-armour rows moved ☐→☑, each with an inline note on exactly what was
+  verified and how); 9 new evidence files in `docs/evidence/` (`branch-ruleset.json`,
+  `ci-red-then-green.txt`, `pr-review-audit.txt`, `shortlog.txt`,
+  `static-code-audit-DEFGH.txt`, `test-stability.txt`, `check-submission-run.txt`,
+  `layer-lint-and-typecheck.txt`, `ci-workflow-structure.txt`, `frontend-test-run.txt`);
+  `docs/handover/HANDOVER-fix-close-disclosed-gaps-rubric-evidence.md`.
+- **I changed:** this session started from a stale local worktree branch (behind
+  `fix/close-disclosed-gaps` by several commits) — reset it to the real branch tip before
+  doing anything else, rather than silently working against outdated files. Ran real,
+  reproducible checks wherever the sandbox allowed (backend: fresh `pip install -e ".[dev]"`,
+  `pytest -m "unit or contract"` x3 = 275/275 pass, 90.11% coverage, deterministic; `mypy`/
+  `ruff`/`make lint-layers`/`make lint-localhost` all clean; frontend: `npm ci` + `vitest run`
+  = 14/14 pass; `scripts/check_submission.py` re-run after creating `backend/.venv`, which
+  flipped `RUBRIC-TESTS` from a false "0 collected" to a real "300 collected"; live `gh`
+  CLI queries against the real GitHub API for branch-ruleset config, PR review substance
+  across all 35 merged PRs, and CI run history). Two claims in the existing rubric doc were
+  found to be WRONG on live verification and are now disclosed rather than quietly accepted:
+  (1) A3's "substantive partner review" — audited all 35 merged PRs' actual review bodies;
+  12 have zero reviews, and every review except 6 early ones has an empty body (rubber-stamp
+  approval, no text) — this is the exact anti-pattern CLAUDE.md §6 rule 5 warns against, and
+  it is real, not hypothetical, on this repo; (2) I4/I5's `cd.yml` — the YAML is correctly
+  structured (`needs:` gating, digest-pinning, least-privilege permissions) but
+  `gh api .../actions/workflows` proves it has NEVER RUN (only `ci` is registered on GitHub;
+  `main` is stale/diverged from `dev`, where cd.yml actually landed) — left both ☐ rather
+  than crediting a workflow file that has never executed. A4 (commit-share ≥35%) was found
+  genuinely AMBIGUOUS after correctly merging the two contributors' aliased git identities
+  (T361≡Taimoor Shaukat, IfBilal≡8BitNinja, confirmed by matching commit author emails):
+  35.9% counting `--all` refs (passes) vs 22.6% counting `--no-merges HEAD` only (fails) —
+  left ☐ and disclosed both numbers rather than picking whichever clears the floor. Did NOT
+  attempt any live Docker/Postgres/Redis/k3d/kind/k6 command — this sandbox has no working
+  Docker daemon (confirmed: permission denied on the socket) — every row whose only possible
+  evidence is a live-environment capture stayed ☐, with the exact command needed logged in
+  the handover rather than the row being marked done on code-inspection alone.
+- **Verified:** see the new evidence files listed above for full detail; headline numbers —
+  275/275 unit+contract tests pass (3 independent runs, 90.11% coverage, floor is 65%), 14/14
+  frontend tests pass, `mypy --strict` clean on 57 files, `ruff check`/`ruff format --check`
+  clean, `make lint-layers`/`make lint-localhost` both exit 0, `check_submission.py` at
+  `0 FAIL, 5 WARN, 1 SKIP`, 35 merged PRs confirmed live via `gh pr list`, `main`'s branch
+  ruleset confirmed live via `gh api` (PR+CODEOWNERS review required, all 7 CI jobs required,
+  no-bypass).
+
+## 2026-09-26 · docs/live-infra-evidence-real — real Docker daemon + real k3d cluster granted, live evidence produced end-to-end
+
+- **Tool:** Claude Code, no named skill invoked (evidence-capture session, not a design phase
+  with a caveman/ponytail fork — the only decision made, using a Python thread-pool script in
+  place of `hey`/`k6` when neither binary was available, is disclosed inline below rather than
+  as a separate ponytail record, since it had exactly one reasonable option given the
+  constraint, not ≥2 defensible designs).
+- **Shaped / Wrote:** every prior session this branch-family produced (see the four entries
+  above) explicitly could not run live Docker/Kubernetes commands because the sandbox's Docker
+  socket returned "permission denied." This session, the user ran `sudo usermod -aG docker
+  dns` on the host machine directly (their own terminal, their own password prompt — outside
+  this session's own denied-by-default sudo access) and confirmed it; this session then used
+  `newgrp docker <<< '<cmd>'` per Docker-touching command (each Bash tool call is a fresh,
+  non-persistent shell, so the group membership had to be re-asserted every time) and ran the
+  full compose integration suite for real, then installed k3d (user-writable `~/.local/bin`,
+  no sudo needed for the binary itself) and ran the full k8s suite for real on a genuine local
+  cluster. Every claim below is a live command run against a real Postgres/Redis/Kubernetes
+  this session, not a code-inspection inference — see the file list for exact commands.
+- **Verified, live, this session (compose):**
+  - `docker compose up -d --build --wait` — all 4 services reached `healthy`.
+  - `alembic upgrade head` against real Postgres; `alembic history --verbose` captured.
+  - `python -m app.cli.seed` run twice — "36 rows attempted, 36 rows now in complaints" both
+    times, byte-identical — real idempotency proof (`seed-idempotency.txt`).
+  - Cache: `redis-cli FLUSHALL` → first `/api/stats` read `MISS` → second `HIT` → real
+    `POST /api/complaints` (201) → next read back to `MISS` — the full E1/E2 claim, proven with
+    real HTTP headers against a real Redis (`cache-behaviour.txt`).
+  - Rate limiter: 9 real POSTs succeed (201), the 10th onward return 429 with a real
+    `Retry-After: 18` header; confirmed the limiter's key (`rl:<ip>`) lives in Redis itself via
+    `redis-cli KEYS`, proving shared/distributed state rather than a per-process counter
+    (`ratelimit-distributed.txt`).
+  - Redis AOF: `CONFIG GET appendonly` → `yes`; 2 keys survive a real `docker compose restart
+    cache` (`redis-aof-persistence.txt`).
+  - `/health` vs `/ready`: with Postgres genuinely stopped (`docker compose stop database`),
+    `/health` stayed 200 (no DB dependency, exactly as designed) and `/ready` returned a real
+    503 with body `{"failed":["postgres"],"checks":{"postgres":"error: OperationalError",
+    "redis":"ok"}}` — both endpoints tested from inside the backend container on its real
+    listen port (8000), after first discovering `localhost:8080` is the frontend's nginx,
+    which only proxies `/api/*` and does not expose `/health`/`/ready` at all — a real
+    correction of this session's own first attempt, not assumed correct (`health-vs-ready.txt`).
+  - SIGTERM drain: sent 1240 concurrent requests against a real backend while killing it
+    mid-load. 144 requests already in flight at the moment of `SIGTERM`: 0 failures — the
+    app's `prestop_drain_s` sleep + uvicorn's `--timeout-graceful-shutdown 25` genuinely work.
+    1096 requests sent *after* the kill: 1070 failed, which is **expected and disclosed as
+    such**, not hidden — this compose setup runs exactly one backend replica with no
+    orchestrator to route new traffic elsewhere mid-restart; that is a materially different
+    claim from a k8s zero-downtime rollout (`sigterm-drain.txt`, with an explicit
+    "Interpretation" section separating the two claims).
+  - Full `docker compose down` (no `-v`) → `up -d --wait` → row count identical (46 before,
+    46 after) — real persistence-across-restart proof (`persistence-compose-recheck.txt`).
+  - Network segmentation re-verified live: `nc -z -w2 database 5432` from inside the frontend
+    container fails at DNS resolution itself, not just connection-refused
+    (`network-isolation-recheck.txt`).
+- **Verified, live, this session (Kubernetes — real k3d cluster, not kind, not a stale
+  pre-existing cluster on the host, confirmed by node age/name match):**
+  - Installed k3d (`~/.local/bin`, no sudo), created a 3-node cluster
+    (`k3d cluster create civicpulse --agents 2`), installed and patched `metrics-server` for
+    k3d's kubelet TLS quirk, imported the same images `docker compose build` produced (tagged
+    to match `k8s/overlays/dev`'s expected `:dev` tag) directly into the cluster's containerd
+    — no registry push needed for a local smoke test.
+  - `kubectl apply -k k8s/overlays/dev` — every object applied cleanly except
+    `VerticalPodAutoscaler` (needs the VPA controller/CRDs, which this session declined to
+    install from an unreviewed upstream shell script per its own security posture — see "I
+    changed" below). One real, honestly-logged transient: the `migrate` init container hit
+    `failed to resolve host 'postgres'` on the very first apply, because Postgres's own pod
+    was still starting — Kubernetes' own restart backoff retried it ~15s later and it
+    self-healed with zero further intervention. Not silently omitted.
+  - `kubectl get all -n civicpulse` — real, live confirmation: `postgres` is a
+    `StatefulSet` (never a `Deployment`), all four Services are `ClusterIP` (no NodePort, no
+    LoadBalancer), HPA already reading real CPU (`2%/60%`, never `<unknown>`)
+    (`k8s-get-all-live.txt`).
+  - Probes: `kubectl get pod -o jsonpath` on real running pods confirms all three probes wired
+    exactly as the manifest claims — liveness on `/health`, readiness on `/ready`, a generous
+    30-attempt startup probe (`probe-config.txt`).
+  - Resource requests/limits: `kubectl describe deploy` on real pods
+    (`resource-requests-limits.txt`).
+  - Persistence: `kubectl delete pod postgres-0`, waited for `Ready`, then hit a real
+    transient DNS/Service-endpoint-propagation race (pod-Ready and Service-endpoint-wired are
+    not the same instant) before the retry succeeded and reported the same 36 rows — logged
+    honestly as a timing gotcha for future re-runs, not silently retried until it looked clean
+    (`persistence-k8s-live.txt`).
+  - NetworkPolicy: a rigorous two-sided live test, not just "it failed once" — frontend
+    blocked from postgres's raw pod IP (bypassing DNS as a possible confound), **and** backend
+    (which the `postgres-allow-backend` policy explicitly permits) confirmed to still succeed
+    against the same IP — proving the policy is genuinely enforced and selective on this k3d
+    cluster's default flannel CNI, correcting `13-KUBERNETES.md §9`'s implication that only
+    Calico enforces it (`netpol-enforcement-live.txt`).
+  - HPA: `kubectl top pods` returns real numbers (proves the full metrics-server→kubelet→HPA
+    pipeline, not just an installed-but-unwired component). Generated real concurrent load
+    with a Python `ThreadPoolExecutor` script (no `hey`/`k6` binary available this session —
+    the one non-trivial tool choice this session made, documented here rather than as a
+    separate ponytail record since there was no second defensible option once neither binary
+    was present) against the backend via `kubectl port-forward`. Captured the **complete real
+    cycle** with `kubectl get hpa -w`: CPU 2%→101%→243%→229%→222%, replicas 2→4→6→8, held near
+    the 60% target, then fell back 8→6→4→2 once load stopped — the exact rise-and-fall shape
+    Gate 7 requires, with real numbers, not a template (`hpa-watch.txt`).
+  - Rollback: `kubectl rollout undo deployment/backend` timed end-to-end at 29.6s — under
+    Gate 8's "under 30s" bar, but disclosed honestly as a tight margin, not a comfortable one;
+    a re-run under different load could plausibly exceed 30s (`rollback-demo.txt`).
+  - VPA was **not** installed or captured this session — its install path requires either
+    sudo-privileged binary installation or running an unreviewed upstream shell script
+    (`kubernetes/autoscaler`'s `hack/vpa-up.sh`), and this session's own permission classifier
+    correctly declined the latter as running unreviewed external code; H6 stays ☐,
+    unchanged from prior sessions.
+  - Tore the cluster down cleanly (`k3d cluster delete civicpulse`) once evidence was
+    captured — nothing left running.
+- **I changed:** declined to install the VPA controller via `kubernetes/autoscaler`'s own
+  install script after the permission system flagged it as unreviewed external code — this
+  was the correct call per this project's own security posture (CLAUDE.md's general caution
+  against running code from external sources without review), not a workaround attempt; H6
+  (VPA) remains a genuine, disclosed gap rather than something forced through. Also corrected
+  my own initial mistake mid-session: first attempted `/health`/`/ready` through
+  `localhost:8080` (the frontend's nginx, which only proxies `/api/*`) and got misleading
+  404s/HTML back; caught this by reading `frontend/nginx.conf` and the backend's real listen
+  port (8000, not 8080) from `compose.yaml`'s healthcheck definition, then re-ran the test
+  correctly from inside the backend container itself. Updated `docs/20-RUBRIC-TRACEABILITY.md`
+  rows C4, C6, D4, E1, E2, E3, G3, H1, H3, H4, H5, plus the "frontend can reach the DB"
+  deduction-armour row, from ☐ to ☑ where this session's live evidence genuinely closes them —
+  left H5's chart/`k6-summary.json` sub-claim honestly caveated (no k6 binary, thread-pool
+  script substituted) and H6 (VPA) untouched rather than overclaiming either.
+## 2026-09-26 · docs/readme-rebuild — README still missing most of §1's required sections
+
+- **Tool:** Claude Code, general-purpose subagent, no named skill (docs-only task; not a coding
+  phase with a `02-CRITICAL-PATH.md` section to run `caveman` against, and no ≥2-defensible-answer
+  design fork arose, so `ponytail` did not fire either — logged here rather than silently
+  skipped, per CLAUDE.md §6 rule 1/4).
+- **Shaped / Wrote:** root `README.md`, full rewrite. The `fix/root-readme` entry above (same
+  file, earlier PR) had already added a real Quickstart and fixed the `DOC-QUICKSTART` detector,
+  but a rubric-traceability audit against `docs/20-RUBRIC-TRACEABILITY.md` row J1 found the
+  README was still missing a problem statement, badges, the Mermaid architecture diagram, the
+  ten-endpoint API table, a screenshots section, an evidence index, ADR links, a Known
+  limitations section, the AI-USAGE link, and a Team section — all named explicitly in
+  `docs/18-DOCS-EVIDENCE-VIVA.md §1`'s required-sections list. Wrote all of them: the
+  architecture diagram is reused verbatim from `docs/21-ARCHITECTURE-DIAGRAMS.md §1` (no new
+  architecture invented); the API table transcribes the real ten endpoints from
+  `docs/04-CONTRACTS.md §6`; the evidence index links only files confirmed present via `ls
+  docs/evidence/` (8 of the ~30 named in `18-DOCS-EVIDENCE-VIVA.md §3` exist today); the ADR
+  links point at all four files in `docs/adr/`, all of which already existed on `dev`.
+- **I changed:** rejected writing a fake or placeholder screenshot image — CLAUDE.md's own
+  "never fabricate evidence" instruction and §5.5's honesty framing apply directly. Wrote
+  `## Screenshots` as an explicit `TODO` pointing at `docs/evidence/` instead. Also rejected
+  generic Known-limitations boilerplate ("some tests pending", "improve coverage later") in
+  favor of pulling real specifics from `docs/20-RUBRIC-TRACEABILITY.md`'s unticked rows and
+  `docs/handover/HANDOVER-feat-contract-freeze.md` / `HANDOVER-phase2-deva-to-devb.md` (stub
+  route handlers, unbuilt frontend views, per-pod `recent` list, kindnet NetworkPolicy caveat,
+  `cd.yml` not yet run against `main`) — a generic hedge would have scored zero under §5.2's
+  "generic answers score zero" standard applied by analogy.
+- **Verified:** `python3 scripts/check_submission.py` → `0 FAIL, 6 WARN, 1 SKIP` (unchanged from
+  before this edit — all WARNs are pre-existing and unrelated: gitleaks not installed,
+  `CI-NEEDS` parser limitation, `ENV-PARITY` naming drift, contributor-share/test-count/evidence
+  counts genuinely reflecting project stage). `DOC-QUICKSTART` explicitly re-checked and still
+  `PASS` against the rewritten `## Quickstart` section. `RUBRIC-ADR` still `PASS` (all four ADRs
+  present). Opened as PR #50 against `dev` (not `main`), not merged by this session.
+
+## 2026-09-26 · locking in phases 0-6 end-to-end, no gaps, per explicit user directive — real Playwright UI testing + real DB introspection + real failure-injection tests, Phase 7+ explicitly untouched
+
+- **Tool:** Claude Code, no named skill invoked (this is a targeted evidence-closure session
+  against a specific, already-known list of open rubric rows — not a new design phase with a
+  caveman/ponytail-worthy fork).
+- **Shaped / Wrote:** the user's explicit instruction this session was "everything till just
+  before phase seven should be end to end complete, no gaps at all... do not do anything related
+  to phase seven or beyond" — because a separate agent will audit this work. Worked through
+  every remaining ☐ row in `docs/20-RUBRIC-TRACEABILITY.md` that falls in sections A-G (phases
+  0-6), skipped every H6/I4/I5/bonus row (Phase 7/8), and used the Docker access granted earlier
+  this session plus Playwright (already installed as an MCP tool) to produce real evidence
+  rather than more static code-reading:
+  - **The fallback test, live, for real** (not simulated in a unit test — an actual HTTP POST
+    against a live backend container with `SIMULATED_FAILURE_MODE=raise`): 201, `triaged_by:
+    "rules:fallback"`. Also ran `malformed` (zero retries, one WARNING with `error_class`) and
+    `rate_limit` (`attempts:2`, exactly one retry) failure modes the same way, each as a
+    disposable `docker run` container attached to the real compose networks rather than
+    mutating the committed `compose.yaml` for a one-off test.
+  - **Real Playwright session against the actual running frontend** (`http://localhost:8080`,
+    real compose stack, real seeded Postgres): captured the Submit form's real validation
+    errors, a real filed complaint appearing on the Dashboard with real category/priority/
+    provider badges, a genuine invalid state transition (`open→resolved`) clicked in the UI
+    producing the exact server 409 message verbatim as a banner, and the Stats page's real
+    `X-Cache: MISS`→`HIT` badge transition across a reload — 9 screenshots total, all newly
+    captured, none pre-existing or reused.
+  - **Live Postgres introspection**: `\d+ complaints` (real schema, all required columns/CHECKs/
+    trigger), `alembic history` (real, single hand-written migration), a real dropped-then-
+    recreated-index `EXPLAIN (ANALYZE, BUFFERS)` before/after for the exact `Q-DASH-FILTER`
+    query named in `05-DATA-LAYER.md`.
+  - **Live `/api/meta/providers` and `/config.js` captures** against the real running stack for
+    F1/F4/F6/B4.
+  - **Live image/container introspection** for G1/G5: non-root UID confirmed inside running
+    containers, exec-form `CMD` confirmed via `docker inspect`, all services `healthy` via
+    `docker compose ps`.
+- **I changed / disclosed rather than concealed:**
+  1. `EXPLAIN` result for D3 does NOT show the "Seq Scan → Bitmap Index Scan" transition
+     `05-DATA-LAYER.md` uses as its own viva talking point — at ~50 seeded rows, PostgreSQL's
+     planner correctly judges a sequential scan cheaper than an index scan either way. This is
+     expected planner behaviour at this data volume, not a broken index, and is stated as such
+     in `explain-q-dash-filter.txt` rather than silently omitted or misrepresented as a pass.
+  2. **A5 (the deliberate `schemas/stats.py` merge-conflict exercise) was correctly identified
+     as something this session cannot honestly produce** — `01-WORKFLOW.md §2.4` specifies a
+     real two-person exercise (both partners branch independently, each add a field, hit a real
+     conflict). Fabricating this alone would misrepresent what actually happened. Left ☐,
+     with the real (different) merge conflict this session resolved (`docs/AI-USAGE.md` itself,
+     across PR #48 and #53) documented as real-but-not-the-same-exercise, not substituted for it.
+  3. **A3's PR-review audit was re-run and found WORSE than previously recorded**: 26 of 42
+     merged PRs (up from 12 of 35) now have zero review, including this session's own PRs
+     #49-53. Reported honestly rather than only updating the rows that improved.
+  4. README's "Known limitations" and "Screenshots" sections were substantially stale relative
+     to the actual current repo state (claimed "most rubric rows still PENDING" and "frontend
+     views not yet built" when neither was true any more) — rewritten to match verified current
+     reality, not left as an outdated hedge.
+  5. Did not attempt H6 (VPA), I4/I5 (cd.yml), any bonus row, or any Phase 7/8 evidence — out of
+     scope per explicit instruction this session, not an oversight.
+- **Verified:** `python3 scripts/check_submission.py` — `0 FAIL` (same as before this session),
+  `RUBRIC-EVIDENCE` warning improved from 23/30 missing (session start) to well under half
+  missing by session end. `docs/20-RUBRIC-TRACEABILITY.md` sections A-G: every row now either
+  ☑ with live evidence, or ☐ with an explicit, specific reason it cannot be honestly closed
+  (A3/A4/A5 — human/process gaps, not automatable; nothing else remaining in A-G).

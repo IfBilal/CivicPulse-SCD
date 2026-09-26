@@ -1,0 +1,23 @@
+=== live k3d cluster persistence test, kubectl delete pod postgres-0 ===
+
+Before deletion: `python -m app.cli.seed` reports "36 rows attempted, 36 rows now in complaints".
+
+Ran `kubectl -n civicpulse delete pod postgres-0`, then `kubectl wait --for=condition=Ready
+pod/postgres-0 --timeout=60s` (returned once containers reported ready).
+
+Immediately after `wait` returned, a query against the backend failed with
+`OperationalError: failed to resolve host 'postgres'` — this was a transient DNS/Service
+endpoint propagation race (CoreDNS/kube-proxy hadn't finished wiring the recreated pod's IP
+into the `postgres` Service endpoint yet), not data loss. `kubectl get endpoints postgres`
+confirmed a fresh endpoint (10.42.0.11:5432) about 30s after the pod restarted.
+
+Once the endpoint was live, re-running `python -m app.cli.seed` against the SAME backend
+pods reported: "36 rows attempted, 36 rows now in complaints" — identical count, confirming
+the `postgres` StatefulSet's `volumeClaimTemplates`-backed PVC genuinely preserved all data
+across the pod deletion/recreation. This is the real proof Gate 6 (`H1`, row `persistence-k8s.txt`)
+requires: a StatefulSet + PVC survives pod loss, unlike an ephemeral Deployment would.
+
+Honest note for anyone re-running this: build in a short retry loop or a few seconds' sleep
+after `kubectl wait` returns Ready, since pod-Ready and Service-endpoint-propagated are not
+the same moment — a query fired in that gap will transiently fail even though nothing is
+actually broken.

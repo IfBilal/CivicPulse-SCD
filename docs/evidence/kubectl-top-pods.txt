@@ -1,0 +1,9 @@
+NAME                        CPU(cores)   MEMORY(bytes)   
+backend-774f468ff4-cr7dk    5m           70Mi            
+backend-774f468ff4-tjqz4    8m           70Mi            
+frontend-7f8bf7878f-7mc8p   1m           10Mi            
+frontend-7f8bf7878f-sskch   1m           9Mi             
+postgres-0                  6m           22Mi            
+redis-67dfb5f589-9jds7      17m          4Mi             
+NAME          REFERENCE            TARGETS       MINPODS   MAXPODS   REPLICAS   AGE
+backend-hpa   Deployment/backend   cpu: 3%/60%   2         10        2          4m45s
