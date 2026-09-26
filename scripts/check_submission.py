@@ -57,7 +57,15 @@ def sec_k8s_secret() -> Result:
     if not k8s.exists():
         return Result("SEC-K8S-SECRET", "SKIP", "k8s/ does not exist yet (Phase 6b)")
     bad: list[str] = []
-    placeholder_re = re.compile(r"^(PLACEHOLDER|CHANGE_ME|\"\"|'')")
+    # Values in the real manifests are YAML double-quoted strings (`"PLACEHOLDER_..."`), so the
+    # placeholder check must strip a matched leading/trailing quote before testing. `DATABASE_URL`
+    # specifically is a composite connection-string template with the placeholder marker
+    # embedded in the userinfo section, not at the very start of the whole value — for that key,
+    # judge only the `user:pass` userinfo segment (the only part that could actually carry a
+    # credential), not the whole URL, which is legitimately long scaffolding
+    # (`scheme://...@host:port/db`) even with a perfectly safe placeholder inside it (found via a
+    # cold audit, 2026-09-26; see docs/AI-USAGE.md).
+    placeholder_re = re.compile(r"^(PLACEHOLDER|CHANGE_ME)", re.IGNORECASE)
     for path in k8s.rglob("*secret*.y*ml"):
         text = path.read_text()
         for doc in text.split("\n---"):
@@ -70,7 +78,13 @@ def sec_k8s_secret() -> Result:
                 key, val = m.group(1), m.group(2).strip()
                 if key in ("apiVersion", "kind", "metadata", "type", "data", "stringData", "name"):
                     continue
-                if len(val) >= 16 and not placeholder_re.match(val):
+                unquoted = val[1:-1] if len(val) >= 2 and val[0] == val[-1] and val[0] in "\"'" else val
+                if key == "DATABASE_URL":
+                    userinfo_m = re.search(r"://([^@/]+)@", unquoted)
+                    to_check = userinfo_m.group(1) if userinfo_m else unquoted
+                else:
+                    to_check = unquoted
+                if len(to_check) >= 16 and not placeholder_re.match(to_check):
                     bad.append(f"{path.relative_to(ROOT)}: {key}")
     if bad:
         return Result("SEC-K8S-SECRET", "FAIL", f"non-placeholder value(s): {', '.join(bad)}")
@@ -99,6 +113,13 @@ def img_unpinned() -> Result:
 
 
 def net_localhost() -> Result:
+    # Brought into parity with `Makefile::lint-localhost`'s own already-established exclusions
+    # (found via a cold audit, 2026-09-26, that this detector never picked up the same fixes —
+    # see docs/AI-USAGE.md): a container healthcheck probes ITS OWN process on its own loopback
+    # (not a service-to-service call, so not what CLAUDE.md §5.3's -8 is about); a comment line
+    # explaining something isn't config; a dev-only ingress/overlay `host:`/`value: localhost`
+    # (e.g. k8s/overlays/dev/ingress-host.yaml) is a deliberate local-access hostname, matching
+    # `09-CACHE-RATELIMIT.md`/`14-LOAD-AUTOSCALING.md`'s own `civicpulse.localhost` examples.
     targets = [t for t in ("backend/app", "compose.yaml", "compose.prod.yaml", "k8s") if (ROOT / t).exists()]
     if not targets:
         return Result("NET-LOCALHOST", "SKIP", "no target paths exist yet")
@@ -111,8 +132,17 @@ def net_localhost() -> Result:
             *targets,
         ]
     )
-    if result.returncode == 0:
-        return Result("NET-LOCALHOST", "FAIL", result.stdout.strip().splitlines()[0])
+    _comment_re = re.compile(r"^[^:]+:[0-9]+:\s*#")
+    _host_value_re = re.compile(r'(host:|value:)\s*"?[A-Za-z0-9.-]*localhost')
+    hits = [
+        line
+        for line in result.stdout.splitlines()
+        if "healthcheck" not in line
+        and not _comment_re.match(line)
+        and not _host_value_re.search(line)
+    ]
+    if hits:
+        return Result("NET-LOCALHOST", "FAIL", hits[0])
     checked = ", ".join(targets)
     missing = [t for t in ("backend/app", "compose.yaml", "compose.prod.yaml", "k8s") if t not in targets]
     note = f" ({', '.join(missing)} not created yet)" if missing else ""
@@ -124,8 +154,16 @@ def net_segment() -> Result:
     if not compose.exists():
         return Result("NET-SEGMENT", "SKIP", "compose.yaml does not exist yet (Phase 5b)")
     text = compose.read_text()
+    # The `internal:` network key and its own `internal: true` property aren't necessarily
+    # adjacent lines (a real compose.yaml has `driver: bridge` between them, e.g.) — search the
+    # whole `internal:` network block, not just the next line, for `internal: true` anywhere in
+    # it (found via a cold audit, 2026-09-26, false-positiving a genuinely correct compose.yaml;
+    # see docs/AI-USAGE.md).
+    net_block_m = re.search(r"^  internal:\n((?:^ {4}.*\n)*)", text, re.MULTILINE)
     checks = {
-        "internal network marked internal:true": bool(re.search(r"internal:\s*\n?\s*internal:\s*true", text)),
+        "internal network marked internal:true": bool(
+            net_block_m and re.search(r"internal:\s*true", net_block_m.group(1))
+        ),
         "frontend on edge only": "frontend" in text,
         "database on internal only": "database" in text,
     }
@@ -179,9 +217,16 @@ def cd_latest_deploy() -> Result:
 
 
 def k8s_db_deployment() -> Result:
-    pg = ROOT / "k8s" / "base" / "postgres.yaml"
+    # `postgres-statefulset.yaml`, not `postgres.yaml` — the actual filename convention used
+    # (self-describing: this file also holds the paired headless Service, `k8s/base/`'s own
+    # pattern for every stateful component). Corrected 2026-09-26 via a cold audit; this check
+    # was silently SKIPping forever against a file that was never going to exist under this
+    # name (see docs/AI-USAGE.md).
+    pg = ROOT / "k8s" / "base" / "postgres-statefulset.yaml"
     if not pg.exists():
-        return Result("K8S-DB-DEPLOYMENT", "SKIP", "k8s/base/postgres.yaml does not exist yet (Phase 6b)")
+        return Result(
+            "K8S-DB-DEPLOYMENT", "SKIP", "k8s/base/postgres-statefulset.yaml does not exist yet"
+        )
     text = pg.read_text()
     if "kind: StatefulSet" not in text:
         return Result("K8S-DB-DEPLOYMENT", "FAIL", "postgres.yaml is not a StatefulSet")
@@ -220,7 +265,10 @@ def vcs_direct_main() -> Result:
 def doc_quickstart() -> Result:
     readme = ROOT / "README.md"
     if not readme.exists():
-        return Result("DOC-QUICKSTART", "SKIP", "root README.md does not exist yet")
+        # A missing README is the exact §5.3 −5 scenario this check exists to catch — SKIP
+        # would silently under-report it as "nothing to check yet" instead of a real failure
+        # (found via a cold audit, 2026-09-26; see docs/AI-USAGE.md).
+        return Result("DOC-QUICKSTART", "FAIL", "root README.md does not exist (§5.3 −5)")
     text = readme.read_text()
     m = re.search(r"## Quickstart(.*?)(\n## |\Z)", text, re.DOTALL)
     if not m:
@@ -245,12 +293,16 @@ def doc_quickstart() -> Result:
 
 
 def env_parity() -> Result:
+    # `settings.py`, not `config.py` — the actual filename this codebase uses throughout
+    # (`app.settings.Settings`, imported as `from app.settings import settings` everywhere).
+    # Corrected 2026-09-26 via a cold audit; this check was silently SKIPping forever against a
+    # file that was never going to exist under this name (see docs/AI-USAGE.md).
     env_example = ROOT / ".env.example"
-    config_py = ROOT / "backend" / "app" / "config.py"
+    config_py = ROOT / "backend" / "app" / "settings.py"
     if not env_example.exists():
         return Result("ENV-PARITY", "FAIL", ".env.example missing")
     if not config_py.exists():
-        return Result("ENV-PARITY", "SKIP", "backend/app/config.py does not exist yet (Phase 2/3)")
+        return Result("ENV-PARITY", "SKIP", "backend/app/settings.py does not exist yet")
     env_keys = set(re.findall(r"^([A-Z_][A-Z0-9_]*)=", env_example.read_text(), re.MULTILINE))
     config_keys = set(re.findall(r"^\s*([a-z_][a-z0-9_]*)\s*:", config_py.read_text(), re.MULTILINE))
     config_keys_upper = {k.upper() for k in config_keys}
@@ -297,8 +349,25 @@ def rubric_tests() -> Result:
         return Result("RUBRIC-TESTS", "SKIP", "no test directories yet")
     be_count = 0
     if backend_tests.exists():
-        result = run(["python3", "-m", "pytest", "--collect-only", "-q"], cwd=ROOT / "backend")
-        be_count = result.stdout.count("::")
+        # Prefer the project's own venv interpreter over the caller's ambient `python3` — this
+        # script isn't wired into CI (only `make submission-check`, a local dev target), and the
+        # bare `python3 -m pytest` silently collected 0 tests whenever the caller's shell didn't
+        # happen to have backend/.venv already activated (found via a cold audit, 2026-09-26,
+        # reporting "0 backend tests collected" against a real 272-test suite — see
+        # docs/AI-USAGE.md).
+        venv_python = ROOT / "backend" / ".venv" / "bin" / "python3"
+        python_bin = str(venv_python) if venv_python.exists() else "python3"
+        result = run(
+            [python_bin, "-m", "pytest", "--collect-only", "-q", "--no-cov"],
+            cwd=ROOT / "backend",
+        )
+        # This project's own `-q --collect-only` output is file-level summary lines
+        # (`path/to/test_x.py: 12`), not one `path::test_name` line per test — counting `"::"`
+        # occurrences always undercounted to 0 against this specific format (found via a cold
+        # audit, 2026-09-26; see docs/AI-USAGE.md). Sum the per-file counts instead. `--no-cov`
+        # also added: the project's own `--cov-fail-under=65` addopts otherwise makes this
+        # narrow collect-only invocation exit non-zero on an unrelated coverage floor.
+        be_count = sum(int(n) for n in re.findall(r":\s*(\d+)\s*$", result.stdout, re.MULTILINE))
     if be_count < 14:
         return Result("RUBRIC-TESTS", "WARN" if backend_tests.exists() else "SKIP", f"{be_count} backend tests collected, floor is 14")
     return Result("RUBRIC-TESTS", "PASS", f"{be_count} backend tests collected")
