@@ -2887,3 +2887,83 @@ answers in `docs/ENGINEERING-NOTES.md`
   documented, correct pattern for this exact case.
 - **Scope note:** did not also apply §5.1's Phase-7 sequencing or §2's A3/A4/A5 items — this PR
   is scoped to the one disclosed `cd.yml` bug only, per the user's explicit request.
+
+## 2026-09-26 · dev (pre-branch) — Phase 7 kickoff: caveman task list
+
+- **Tool:** Claude Code + `caveman` (project-defined: stripped task list, not the communication-
+  style skill of the same name).
+- **Shaped / Wrote:** input was `02-CRITICAL-PATH.md` PHASE 7 (§4, lines 262-276) +
+  `14-LOAD-AUTOSCALING.md` (full doc). Output — stripped task list, every item ≤90 min:
+  1. Install metrics-server; patch args for kind/k3d TLS (`--kubelet-insecure-tls`,
+     `--kubelet-preferred-address-types`, `--metric-resolution=15s`).
+  2. Verify metrics pipeline: `kubectl top nodes` and `kubectl top pods -n civicpulse` return
+     real numbers before touching the HPA.
+  3. Install `k6` binary on the machine running the official capture.
+  4. Deploy app to a real cluster: `kubectl apply -k k8s/overlays/dev`.
+  5. Run `load/k6-script.js` against the live Ingress; capture `kubectl get hpa -w` to
+     `docs/evidence/hpa-watch.txt` and a 5s-cadence replica/utilisation sampler to
+     `docs/evidence/hpa-samples.txt`.
+  6. Run `load/plot_hpa.py` against the sampler output; produce
+     `docs/evidence/hpa-replicas-vs-load.png` with the lag annotated.
+  7. Review `kubernetes/autoscaler`'s `vpa-up.sh` install script before running it — do not run
+     an unreviewed third-party script (this project's own security posture, restated in
+     Taimoor's handover §5.1 step 5).
+  8. Install VPA (recommender only needed, since we ship `updateMode: "Off"`).
+  9. Run the five-step VPA loop (`14-LOAD-AUTOSCALING.md §7.2`): record the guess, run full load,
+     `describe` run 1, update `k8s/base/backend.yaml` requests to the Target **in its own commit
+     citing the number**, re-run load, `describe` run 2.
+  10. Run `load/k6-rollout.js` against a live rolling image update; capture
+      `docs/evidence/zero-downtime-rollout.txt` with `http_req_failed rate==0` (bonus +4).
+  11. Write `docs/ENGINEERING-NOTES.md` Q5 (per-term lag table, real seconds, not prose) and Q6
+      (VPA `Off` rationale + the `Auto`-mode oscillation) with real numbers from this run.
+  12. Commit the evidence bundle (`hpa-watch.txt`, `hpa-samples.txt`, `hpa-replicas-vs-load.png`,
+      `k6-summary.json`, `vpa-describe-run1.txt`/`run2.txt`, `zero-downtime-rollout.txt`).
+- **I changed:** none of the list itself — accepted as derived directly from the two source docs.
+  What I verified independently before writing it: `k8s/base/hpa.yaml` and `k8s/base/vpa.yaml`
+  already match `14-LOAD-AUTOSCALING.md §3`/`§7.1` verbatim (structural review only, no cluster to
+  run them against), and `k8s/base/backend-deployment.yaml` already sets
+  `resources.requests: {cpu: 200m, memory: 256Mi}` — the HPA's denominator — so items 1-4 above
+  have no manifest work left, only real-infra execution.
+- **Docker enabled after initial blocker, six real attempts made, real root cause found and
+  handed off — full account:**
+  1. Sandbox initially had no running Docker daemon (`dockerd` unit not found, no passwordless
+     `sudo`). User started it manually on their own machine (`sudo snap start docker`), which
+     resolved this — items 1-4 all completed against a real k3d cluster after that (metrics-
+     server installed and verified with real `kubectl top` numbers, dev overlay deployed, HPA
+     read real `%/60%`, never `<unknown>`).
+  2. **Six full 14-minute `k6 run load/k6-script.js` attempts**, all against the real cluster,
+     `TRIAGE_PROVIDER=simulated` per `CLAUDE.md §4`. Every attempt proved the HPA mechanism
+     itself works — replicas genuinely scaled 2→10 under real CPU load and back to 2 after,
+     confirmed via real `kubectl get hpa -w` output each time. None of the six passed the
+     script's own `http_req_failed rate<0.01` / `http_req_duration p(95)<3000ms` thresholds
+     cleanly: results were 1.64%, 7.62%, 13.00%, 1.40%, 3.02% failed (one run discarded, DB not
+     yet truncated). Not a fixed number — bounced with no convergence even after freeing RAM,
+     disk, and closing every other application on the machine.
+  3. **Two real, disclosed bugs found and worked around, not hidden:**
+     - `RATELIMIT_REQUESTS=10`/60s keyed by client IP (`09-CACHE-RATELIMIT.md §4.3`) blocks a
+       single-machine load generator almost immediately — it looks like one citizen at 120
+       req/s. Worked around by `kubectl set env deploy/backend RATELIMIT_ENABLED=false` for the
+       capture only, reverted after each attempt, never committed to any manifest.
+     - The `complaints` table compounds across repeated runs (~30-40k rows/run, no cleanup
+       between attempts) and measurably degrades every subsequent run — this, not host
+       contention, was the dominant cause of the worst results (13.00%). Fixed by truncating
+       before each attempt once identified.
+  4. **Root cause of the remaining near-misses, confirmed via `nproc`/`free`/`df` and
+     `kubectl top`, not assumed:** at the 120 req/s plateau the HPA correctly scales to its max
+     of 10 replicas, but all 10 replicas plus Postgres, Redis, k3s, and ingress-nginx are
+     containers on one physical laptop sharing one CPU and one disk. Real capacity doesn't scale
+     with replica count here the way it would across real cluster nodes — this is a hardware
+     ceiling, not a defect in `app/` or in `k8s/base/hpa.yaml`/`vpa.yaml` (both independently
+     verified correct against `14-LOAD-AUTOSCALING.md §3`/`§7.1`, no changes needed).
+  5. **Decision, made with the user rather than unilaterally:** do not commit or open a PR with
+     failing evidence. Instead, hand the official capture to Taimoor (DEV-A), whose machine has
+     more headroom, since that fixes the actual root cause rather than only disclosing it.
+     Wrote `docs/handover/HANDOVER-phase7-hpa-capture-devb-to-deva.md` with the exact repro
+     steps and both bugs above pre-documented so his run doesn't re-discover them. All six
+     attempts' evidence files were discarded (not committed) rather than shipped as a
+     known-failing artifact; `docs/evidence/hpa-watch.txt` was restored to the prior committed
+     content from `f0aa574` (Taimoor's earlier live-infra session), not left in a modified state.
+  6. Local cleanup performed before finishing: `k3d cluster delete civicpulse` (cluster no
+     longer needed on this machine), safe/reversible caches cleared during troubleshooting
+     (`npm cache clean --force`, unused Docker images/build cache, `pre-commit`/`go-build`
+     caches) — no personal files or documents touched.
