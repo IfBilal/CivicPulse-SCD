@@ -1,0 +1,47 @@
+check_submission.py — the project's own 18-check §5.3 mirror, run for real in this
+evidence-closure session (2026-09-26), with backend/.venv actually installed
+(pip install -e ".[dev]" from a clean venv) so RUBRIC-TESTS reflects the real suite
+instead of silently collecting 0 tests against an absent venv.
+
+Command: python3 scripts/check_submission.py
+
+civicpulse submission check — 18 checks
+  WARN  SEC-ENV-HISTORY        gitleaks not installed in this environment
+  PASS  SEC-K8S-SECRET         all Secret manifests use placeholders
+  PASS  IMG-UNPINNED           23 manifest(s) all pinned
+  PASS  NET-LOCALHOST          no localhost in backend/app, compose.yaml, compose.prod.yaml, k8s
+  PASS  NET-SEGMENT            network segmentation present
+  PASS  PORT-EXPOSED-PROD      no db/cache ports published in prod
+  WARN  CI-NEEDS               publish/deploy step found — verify needs: manually, parser not built
+  PASS  CD-LATEST-DEPLOY       no :latest in rendered overlays
+  PASS  K8S-DB-DEPLOYMENT      postgres is a StatefulSet with volumeClaimTemplates
+  PASS  VCS-DIRECT-MAIN        main has only the initial scaffold commits, rest are PR merges
+  PASS  DOC-QUICKSTART         quickstart commands resolve against Makefile
+  WARN  ENV-PARITY             possible drift — in .env.example only: ['IMAGE_TAG', 'POSTGRES_DB', 'POSTGRES_HOST', 'POSTGRES_PASSWORD', 'POSTGRES_PORT'], in config.py only: ['PRESTOP_DRAIN_S', 'SIMULATED_FAILURE_MODE', 'SIMULATED_SEED', 'VERSION']
+  WARN  RUBRIC-COMMITS         min contributor share 7.5% (floor 35%)
+  PASS  RUBRIC-PRS             30 merged PRs
+  PASS  RUBRIC-TESTS           300 backend tests collected
+  SKIP  RUBRIC-SEED            requires a live DB — run via make seed, not this static check
+  PASS  RUBRIC-ADR             all four ADRs present and substantial
+  WARN  RUBRIC-EVIDENCE        21/30 evidence file(s) missing (expected this early)
+0 FAIL, 5 WARN, 1 SKIP. Exit 0.
+
+Notes on the WARNs that matter for rubric rows (the other WARNs — SEC-ENV-HISTORY,
+CI-NEEDS, ENV-PARITY, RUBRIC-EVIDENCE — are tooling/environment limitations already
+discussed elsewhere, not rubric-blocking on their own):
+
+RUBRIC-COMMITS "min contributor share 7.5%" — this script's own author-grouping does
+NOT merge the two aliased identities per contributor (T361/Taimoor Shaukat are one
+person; IfBilal/8BitNinja are another — see docs/evidence/shortlog.txt for the full
+identity-merge analysis and email proof). Even after merging aliases correctly, the
+real number is contested depending on which commit set is counted (--all vs
+--no-merges HEAD): 35.9% (passes 35% floor) counting all refs, or 22.6% (fails) counting
+only this branch's own non-merge history. Left unresolved and disclosed rather than
+picking whichever number is convenient — see shortlog.txt.
+
+RUBRIC-TESTS now genuinely PASSES at 300 (the earlier "0 backend tests collected"
+result, still visible in earlier check_submission runs before this session, was an
+artefact of backend/.venv not existing in this environment — not a real test-count
+problem; docs/evidence/test-stability.txt independently confirms 275 unit+contract
+tests pass 3/3 runs, and 300 total includes the additional `integration`-marked tests
+that need a live DB).
