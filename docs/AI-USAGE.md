@@ -2364,3 +2364,89 @@ restored the fix, confirmed green again.
   `prometheus_client` directly — not a HARD-rule violation (`lint-layers`' actual checks don't
   cover it), but inconsistent with the codebase's own stated routes-are-thin-HTTP-callers
   discipline once noticed, so moved before finishing rather than left as a first-draft artifact.
+
+## 2026-09-26 · cold contrarian audit vs. every spec doc, Phases 0-6 — real gaps found and closed
+
+Ran a cold, adversarial subagent audit (no access to this session's own reasoning) against
+`00-SPEC.md`, `04-CONTRACTS.md`, `06`/`07-BACKEND-CORE/API.md`, `08-AI-TRIAGE.md`,
+`09-CACHE-RATELIMIT.md`, `13-KUBERNETES.md`, `14-LOAD-AUTOSCALING.md`, and CLAUDE.md's own HARD
+rules, against the real code on `dev` — not asked to confirm things were fine, asked to find
+discrepancies. Findings, and what was actually true about each:
+
+**1. Missing HPA and VPA — the real, material gap.** `00-SPEC.md §3.3` and `13-KUBERNETES.md`'s
+own object inventory both require `backend-hpa` (HPA v2) and `backend-vpa` (VPA,
+`updateMode: Off`) — neither existed anywhere in `k8s/`. This is Rubric H territory (7 marks +
+4 bonus), not disclosed anywhere as intentionally deferred. **Fixed properly, not just
+patched over:** added `k8s/base/hpa.yaml` (the exact spec from `14-LOAD-AUTOSCALING.md §3` —
+`minReplicas: 2`, `maxReplicas: 10`, 60% CPU target, asymmetric scale-up/scale-down behavior)
+and `k8s/base/vpa.yaml` (`updateMode: "Off"`, per-container resource policy, `migrate`
+initContainer explicitly excluded — §7's own reasoning for why `Off` and not `Auto`). Wired
+into `k8s/base/kustomization.yaml`. **Verified for real, not assumed:** downloaded the exact
+`kustomize`/`kubeconform` binaries CI uses, ran the exact validation command CI runs
+(including the CRDs-catalog schema-location flag `14-LOAD-AUTOSCALING.md §7.1` warns is a
+"20-minute trap" for the VPA CRD specifically) — both `dev` and `prod` overlays: **21/21
+resources valid**, VPA CRD resolved correctly, no trap hit. Also verified locally: no `:latest`
+in the built prod overlay, no secret-shaped strings anywhere in `k8s/`.
+
+Also built the rest of `14-LOAD-AUTOSCALING.md`'s deliverables that don't require a live
+cluster: `load/k6-script.js` (the real scale-out driver, `ramping-arrival-rate` not
+`ramping-vus` — the doc's own explanation of why VUs would corrupt the chart, reproduced in
+comments), `load/corpus.json` (20 real complaint texts pulled from `backend/app/db/seed_data.py`,
+not invented), `load/k6-rollout.js` (the zero-downtime bonus proof, `rate==0` threshold per
+the doc's own insistence it be pass/fail not eyeballed), `load/plot_hpa.py` (the chart script).
+Syntax-verified all three (`node --check` on the JS, `py_compile` on the Python) — cannot
+execute any of them without a real cluster, which this sandbox has never had access to all
+session (confirmed again: no Docker group membership, no passwordless sudo). Also completed
+`Makefile::k8s-up`'s metrics-server patch, which was only setting 1 of the 3 args
+`14-LOAD-AUTOSCALING.md §1` specifies (`--kubelet-insecure-tls` was there;
+`--kubelet-preferred-address-types` and `--metric-resolution=15s` were missing) plus added
+`vpa-up` (§7.1's actual controller install, previously only `vpa-show`'s post-install describe
+existed), `load-rollout`, `hpa-chart` targets.
+
+**What genuinely cannot be closed from this sandbox, disclosed rather than faked:** the live
+evidence files §8's Gate-7 checklist requires — `docs/evidence/hpa-watch.txt`,
+`hpa-samples.txt`, `hpa-replicas-vs-load.png`, `k6-summary.json`, `vpa-describe-run{1,2}.txt`,
+`zero-downtime-rollout.txt` — all require an actual k6 run against an actual live k3d cluster.
+Fabricating plausible-looking numbers for these would be presenting invented data as a real
+measurement, which is a worse problem than an honestly-disclosed gap. **This needs to run on
+real infrastructure outside this sandbox** — the commands are all real and ready
+(`make k8s-up && make vpa-up`, then the five-step VPA loop in `14-LOAD-AUTOSCALING.md §7.2`,
+then `make load` / `make hpa-chart` / `make load-rollout`).
+
+**2. `.github/workflows/ci.yml`'s `manifests` job header was stale**, claiming "Phase 6 has not
+landed... this job is intentionally red" — false as of `dev`'s current state (the job passes).
+Worse: it gave false confidence, since `kubeconform` validates schema conformance only, never
+"did you ship every object the doc requires" — exactly how finding #1 went unnoticed. Corrected
+the comment to say what's actually true and to flag that a green run here is not proof of
+completeness against `13-KUBERNETES.md`/`14-LOAD-AUTOSCALING.md`'s own object inventories.
+
+**3. `.github/workflows/ci.yml`'s "X-Cache MISS → HIT" step had a stale, now-false comment**
+claiming `ComplaintService.create()` never calls `StatsService.invalidate()` — true before this
+session's earlier `fix/stats-invalidation-ordering` work, false since. Removed the stale claim
+and **added a real assertion this session hadn't actually added anywhere in CI**: a fresh
+`POST /api/complaints`, then confirm the next `/api/stats` read is a genuine `MISS` (not just
+documented as fixed in the unit suite — proven at the real HTTP level, in the same job that
+already proves the MISS→HIT cache-population path).
+
+**4. Dead code: `RateLimited` domain exception + `_on_rate_limited` handler, registered but
+never reachable.** Real 429s are produced entirely at the middleware layer
+(`rate_limited_response()` in `app/middleware/ratelimit.py`, called before any route/service
+code runs) — nothing in the codebase ever raises `RateLimited` for the registered handler to
+catch. The contract (`04-CONTRACTS.md §5.3`) was already satisfied correctly by the real
+middleware path; this was purely unreachable code contradicting `domain/errors.py`'s own
+docstring claim that "only the registered exception handler... knows these map to 409/404/429."
+Removed the exception class, its handler, and the registration line; corrected the docstring's
+claim to 409/404/503 (the three that ARE still handler-mediated) and explained why 429 never
+was. Confirmed no test referenced any of the removed symbols before deleting.
+
+- **Verified:** `pytest -m "unit or contract"` — 272 passed, unchanged (confirms nothing broke
+  removing the dead code — a `NameError` from a missed registration line WAS caught this way,
+  see below). `ruff check .`, `ruff format --check .`, `mypy app` (strict), `make lint-layers` —
+  all clean. `kustomize build | kubeconform` — 21/21 valid on both overlays, real binaries, real
+  command, not assumed from YAML syntax alone.
+- **I changed:** first pass at removing `RateLimited` missed `errors.py`'s
+  `app.add_exception_handler(RateLimited, _on_rate_limited)` registration line — caught
+  immediately by running the actual test suite afterward (`NameError: name 'RateLimited' is not
+  defined` at app-construction time, since `tests/conftest.py` imports `app.main`), not by
+  re-reading the diff. Exactly the reason CLAUDE.md's post-merge discipline says to run tests
+  after a change, not just check for leftover references by eye.

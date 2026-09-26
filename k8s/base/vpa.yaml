@@ -1,0 +1,22 @@
+# `14-LOAD-AUTOSCALING.md §7`. `updateMode: "Off"` — recommender only, never evicts. Running
+# both HPA (§3) and VPA in `Auto` on the same signal (CPU) creates a control-loop conflict: the
+# HPA reads utilisation = usage/request, VPA(Auto) raises `request` in response to usage, which
+# moves the HPA's own denominator and can trigger oscillating scale-up/scale-down, plus VPA(Auto)
+# evicts pods to apply new requests — churning the fleet during exactly the traffic event you're
+# trying to survive. `Off` puts a human at the point where the two concerns meet (§7.4).
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: backend-vpa
+  namespace: civicpulse
+spec:
+  targetRef: { apiVersion: apps/v1, kind: Deployment, name: backend }
+  updatePolicy: { updateMode: "Off" }
+  resourcePolicy:
+    containerPolicies:
+      - containerName: backend
+        controlledResources: ["cpu", "memory"]
+        minAllowed: { cpu: 50m, memory: 128Mi }
+        maxAllowed: { cpu: "2", memory: 1Gi }
+      - containerName: migrate
+        mode: "Off" # short-lived initContainer — no meaningful CPU/memory history to recommend from

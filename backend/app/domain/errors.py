@@ -1,9 +1,16 @@
 """Domain exceptions — carry data, not HTTP status (`06-BACKEND-CORE.md §7`).
 
-Only the registered exception handler in `app/errors.py` knows these map to 409/404/429.
+Only the registered exception handler in `app/errors.py` knows these map to 409/404/503.
 `services/` may raise these; it may never import a status code (CLAUDE.md §3, `make lint-layers`
 greps for `status_code` under `services/`).
-"""
+
+Rate limiting (429) is NOT one of these — it's produced entirely at the middleware layer
+(`app/middleware/rate_limit.py` + `ratelimit.py::rate_limited_response()`), before any request
+reaches a route or service, so there was never a call site that could raise a domain-level
+`RateLimited` for an exception handler to catch. An earlier version of this module declared one
+anyway (paired with a dead `_on_rate_limited` handler in `app/errors.py`) — removed 2026-09-26
+(found via a cold audit) rather than left as unreachable code contradicting this docstring's own
+claim about how every domain exception here gets mapped."""
 
 from uuid import UUID
 
@@ -25,14 +32,6 @@ class InvalidTransition(Exception):
         self.src = src
         self.dst = dst
         super().__init__(f"cannot transition {src} -> {dst}")
-
-
-class RateLimited(Exception):
-    """Caller is over the configured rate limit. `retry_after_s` is seconds, not a timestamp."""
-
-    def __init__(self, retry_after_s: int) -> None:
-        self.retry_after_s = retry_after_s
-        super().__init__(f"rate limited, retry after {retry_after_s}s")
 
 
 class NotReady(Exception):
