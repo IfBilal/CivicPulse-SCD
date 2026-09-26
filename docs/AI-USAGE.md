@@ -2570,6 +2570,34 @@ is the first real push to `main` that triggers it.
   "run tests after a merge, don't just check for leftover references by eye" discipline applied
   to a script that has no test suite of its own to run.
 
+## 2026-09-26 · docs/runbook-and-viva-notes — writing `docs/RUNBOOK.md` and the §4 viva-question
+answers in `docs/ENGINEERING-NOTES.md`
+
+- **Tool:** Claude Code (rubric-traceability audit fix; no named skill invoked for this session —
+  no design fork with ≥2 defensible options came up, so `ponytail` didn't fire; this was a
+  documentation-writing task against an already-frozen implementation, not new code, so
+  `caveman`'s task-list gate doesn't apply either).
+- **Shaped / Wrote:** Wrote `docs/RUNBOOK.md` from scratch (it did not exist before this branch)
+  and appended a new "§4 viva questions" section to `docs/ENGINEERING-NOTES.md`, answering the
+  eight questions `18-DOCS-EVIDENCE-VIVA.md §4` requires. Every `file:line` citation in both
+  documents was checked by opening the real file at that line on this branch
+  (`docs/runbook-and-viva-notes`, forked from `origin/dev` @ `1fb6d717`) before being written —
+  not reconstructed from a design doc's prose example.
+- **I changed:** `18-DOCS-EVIDENCE-VIVA.md §4` Q1's own worked example cites
+  `k8s/base/backend.yaml:L47` and `backend/Dockerfile:L2` — this repo's real files are
+  `k8s/base/backend-deployment.yaml` (different filename) with the resource block at lines
+  36-37/46-47, and `backend/Dockerfile`'s `FROM` line is at line 3, not 2 (a comment occupies
+  line 1). Cited the real locations instead of the doc's illustrative ones, and said so, per
+  CLAUDE.md's "if a design doc's example doesn't match reality, that's a documented bug, not
+  something to quietly paper over." For Q5 (HPA lag in seconds), gave an honest "not yet
+  measured" answer rather than inventing numbers — `docs/evidence/` has no `hpa-watch.txt`/
+  `hpa-samples.txt`/`k6-summary.json` on this branch (confirmed via `ls`), and
+  `14-LOAD-AUTOSCALING.md §5` itself says its table's numbers are "typical, not yours." Also
+  corrected the RUNBOOK's endpoint name from `providers.recent` (as the task brief for this
+  session phrased it) to the real route, `GET /api/meta/providers` with a `recent` field on the
+  response body (`backend/app/routes/meta.py:11`) — there is no separate `providers.recent`
+  endpoint in this codebase.
+
 ## 2026-09-26 · fix/close-disclosed-gaps (rubric-evidence closure pass)
 
 - **Tool:** Claude Code (no named skill invoked — this was an audit/evidence-closure task,
@@ -2737,3 +2765,36 @@ is the first real push to `main` that triggers it.
   deduction-armour row, from ☐ to ☑ where this session's live evidence genuinely closes them —
   left H5's chart/`k6-summary.json` sub-claim honestly caveated (no k6 binary, thread-pool
   script substituted) and H6 (VPA) untouched rather than overclaiming either.
+## 2026-09-26 · docs/readme-rebuild — README still missing most of §1's required sections
+
+- **Tool:** Claude Code, general-purpose subagent, no named skill (docs-only task; not a coding
+  phase with a `02-CRITICAL-PATH.md` section to run `caveman` against, and no ≥2-defensible-answer
+  design fork arose, so `ponytail` did not fire either — logged here rather than silently
+  skipped, per CLAUDE.md §6 rule 1/4).
+- **Shaped / Wrote:** root `README.md`, full rewrite. The `fix/root-readme` entry above (same
+  file, earlier PR) had already added a real Quickstart and fixed the `DOC-QUICKSTART` detector,
+  but a rubric-traceability audit against `docs/20-RUBRIC-TRACEABILITY.md` row J1 found the
+  README was still missing a problem statement, badges, the Mermaid architecture diagram, the
+  ten-endpoint API table, a screenshots section, an evidence index, ADR links, a Known
+  limitations section, the AI-USAGE link, and a Team section — all named explicitly in
+  `docs/18-DOCS-EVIDENCE-VIVA.md §1`'s required-sections list. Wrote all of them: the
+  architecture diagram is reused verbatim from `docs/21-ARCHITECTURE-DIAGRAMS.md §1` (no new
+  architecture invented); the API table transcribes the real ten endpoints from
+  `docs/04-CONTRACTS.md §6`; the evidence index links only files confirmed present via `ls
+  docs/evidence/` (8 of the ~30 named in `18-DOCS-EVIDENCE-VIVA.md §3` exist today); the ADR
+  links point at all four files in `docs/adr/`, all of which already existed on `dev`.
+- **I changed:** rejected writing a fake or placeholder screenshot image — CLAUDE.md's own
+  "never fabricate evidence" instruction and §5.5's honesty framing apply directly. Wrote
+  `## Screenshots` as an explicit `TODO` pointing at `docs/evidence/` instead. Also rejected
+  generic Known-limitations boilerplate ("some tests pending", "improve coverage later") in
+  favor of pulling real specifics from `docs/20-RUBRIC-TRACEABILITY.md`'s unticked rows and
+  `docs/handover/HANDOVER-feat-contract-freeze.md` / `HANDOVER-phase2-deva-to-devb.md` (stub
+  route handlers, unbuilt frontend views, per-pod `recent` list, kindnet NetworkPolicy caveat,
+  `cd.yml` not yet run against `main`) — a generic hedge would have scored zero under §5.2's
+  "generic answers score zero" standard applied by analogy.
+- **Verified:** `python3 scripts/check_submission.py` → `0 FAIL, 6 WARN, 1 SKIP` (unchanged from
+  before this edit — all WARNs are pre-existing and unrelated: gitleaks not installed,
+  `CI-NEEDS` parser limitation, `ENV-PARITY` naming drift, contributor-share/test-count/evidence
+  counts genuinely reflecting project stage). `DOC-QUICKSTART` explicitly re-checked and still
+  `PASS` against the rewritten `## Quickstart` section. `RUBRIC-ADR` still `PASS` (all four ADRs
+  present). Opened as PR #50 against `dev` (not `main`), not merged by this session.
