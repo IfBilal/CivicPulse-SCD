@@ -163,11 +163,27 @@ and `POST /api/complaints` still returns `201`. See ADR-0001 and
 
 ## Screenshots
 
-**TODO — pending a live deploy capture.** This sandbox has no running instance of the app to
-screenshot honestly. See [`docs/evidence/`](docs/evidence/) below for the evidence artifacts that
-substitute for screenshots today (terminal captures of network isolation, persistence, runtime
-config, etc.) — Submit/Dashboard/Stats UI screenshots and the Grafana dashboard will be added
-once a live deploy is captured, per `docs/18-DOCS-EVIDENCE-VIVA.md §1`.
+Captured live against a real `docker compose up` stack (Postgres, Redis, backend, frontend),
+not mocked.
+
+**Submit — validation and a filed report**
+![Submit form validation](docs/evidence/screenshots/submit-form-validation.png)
+
+**Dashboard — filters, pagination, and a triaged complaint expanded**
+![Dashboard expanded card](docs/evidence/screenshots/dashboard-expanded.png)
+
+**Dashboard — an invalid transition surfaced verbatim as a 409**
+![Dashboard 409 conflict](docs/evidence/screenshots/dashboard-409-conflict.png)
+
+**Stats — cache MISS then HIT**
+![Stats MISS](docs/evidence/screenshots/stats-view.png)
+![Stats HIT](docs/evidence/screenshots/stats-view-cache-hit.png)
+
+**Backend API — live Swagger UI**
+![Swagger UI](docs/evidence/screenshots/swagger-docs.png)
+
+Grafana dashboard screenshot is still pending — Prometheus/Grafana is a bonus item, not part of
+the core rubric, and is genuinely not stood up yet.
 
 ## Configuration
 
@@ -190,22 +206,34 @@ given a provider that always raises, `POST /api/complaints` still returns `201` 
 
 ## Evidence
 
-Artifacts in [`docs/evidence/`](docs/evidence/) that exist today:
+47 artifacts in [`docs/evidence/`](docs/evidence/), most captured live against a real running
+stack (compose and/or a real k3d cluster) this session, not inferred from reading code. Full
+row-by-row mapping to rubric lines is in
+[`docs/20-RUBRIC-TRACEABILITY.md`](docs/20-RUBRIC-TRACEABILITY.md) — highlights:
 
 | File | Proves |
 |---|---|
+| [`fallback-test-live.txt`](docs/evidence/fallback-test-live.txt) | **The single most important test in the codebase, run live**: a provider that always raises still returns `201` with `triaged_by:"rules:fallback"` |
+| [`malformed-provider-test-live.txt`](docs/evidence/malformed-provider-test-live.txt) | Malformed-JSON provider → `201`, fallback, exactly one WARNING, zero retries |
+| [`ratelimit-provider-test-live.txt`](docs/evidence/ratelimit-provider-test-live.txt) | 429-provider → exactly one retry (`attempts:2`), then fallback, inside the time budget |
+| [`cache-behaviour.txt`](docs/evidence/cache-behaviour.txt) | `/api/stats`: real `MISS` → `HIT` → a real `POST` invalidates back to `MISS` |
+| [`ratelimit-distributed.txt`](docs/evidence/ratelimit-distributed.txt) | Real `429` + `Retry-After`; limiter key confirmed living in Redis (distributed, not per-process) |
+| [`health-vs-ready.txt`](docs/evidence/health-vs-ready.txt) | `/health` stays `200` with Postgres stopped; `/ready` returns a real `503` naming `postgres` |
+| [`sigterm-drain.txt`](docs/evidence/sigterm-drain.txt) | 144/144 in-flight requests survive a real `SIGTERM` to the backend |
+| [`schema-dump-live.txt`](docs/evidence/schema-dump-live.txt) | Live `\d+ complaints` — all required columns, both named indexes, all CHECK constraints |
+| [`k8s-get-all-live.txt`](docs/evidence/k8s-get-all-live.txt) | Live `kubectl get all` on a real k3d cluster — `StatefulSet` for postgres, `ClusterIP`-only services |
+| [`netpol-enforcement-live.txt`](docs/evidence/netpol-enforcement-live.txt) | Two-sided live proof: frontend blocked from postgres by raw pod IP, backend still allowed |
+| [`hpa-watch.txt`](docs/evidence/hpa-watch.txt) | Full real HPA cycle — replicas 2→4→6→8 under load, back to 2 after (Phase 7, tracked separately) |
+| [`rollback-demo.txt`](docs/evidence/rollback-demo.txt) | Timed `kubectl rollout undo` — 29.6s (Phase 7/8, tracked separately) |
+| [`meta-providers-live.txt`](docs/evidence/meta-providers-live.txt) | Live `/api/meta/providers` — 4 providers, real latency/cache-hit-rate numbers |
+| [`pr-review-audit-live.txt`](docs/evidence/pr-review-audit-live.txt) | Honest, current PR-review audit — 26/42 merged PRs have zero review |
 | [`branch-protection.png`](docs/evidence/branch-protection.png) | `main` branch protection — PR required, review required, checks required |
-| [`network-isolation.txt`](docs/evidence/network-isolation.txt) | `docker compose exec frontend ping database` fails; `backend` → `database` succeeds |
-| [`persistence-compose.txt`](docs/evidence/persistence-compose.txt) | Row count survives `docker compose down` / `up` |
-| [`persistence-k8s.txt`](docs/evidence/persistence-k8s.txt) | Row count survives `kubectl delete pod postgres-0` |
-| [`netpol-enforcement.txt`](docs/evidence/netpol-enforcement.txt) | Kubernetes `NetworkPolicy` blocks frontend → postgres in-cluster |
-| [`dockerignore-context-sizes.txt`](docs/evidence/dockerignore-context-sizes.txt) | `.dockerignore` before/after build-context size, both images >99% smaller |
-| [`runtime-config.txt`](docs/evidence/runtime-config.txt) | One image digest running in two environments with different `config.js` |
 | [`precommit-secret-block.txt`](docs/evidence/precommit-secret-block.txt) | Pre-commit gitleaks hook actually blocks a staged fake secret |
 
-Remaining evidence named in `docs/18-DOCS-EVIDENCE-VIVA.md §3` (HPA/VPA captures, CI red→green
-screenshots, merge-conflict drill artifacts, k6 summaries, etc.) is **not yet captured** — see
-Known limitations below and `docs/20-RUBRIC-TRACEABILITY.md` for the live tracking sheet.
+Not yet captured: a real `git clone` into an empty directory run by the partner who didn't
+write the code (README quickstart, needs a second machine to mean anything), a full-history
+`gitleaks` scan (binary unavailable in the sandbox that produced most of this evidence), and
+everything Phase 7+ (VPA describe-run artifacts, k6 chart, a `cd.yml` execution).
 
 ## ADRs
 
@@ -218,38 +246,38 @@ Known limitations below and `docs/20-RUBRIC-TRACEABILITY.md` for the live tracki
 
 ## Known limitations
 
-Pulled honestly from `docs/20-RUBRIC-TRACEABILITY.md` and the handover notes rather than hedged
-generically:
+Pulled honestly from `docs/20-RUBRIC-TRACEABILITY.md` rather than hedged generically. Phases
+0–6 (bootstrap through Kubernetes) are implemented and, as of this update, the majority of
+rubric rows for those phases have live-captured evidence (real `docker compose` runs, a real
+k3d cluster, real Playwright screenshots against the running app) — see the tracking sheet for
+the row-by-row state. What's genuinely still open:
 
-- **Most rubric rows are still `PENDING`, not `PROVEN`.** `docs/20-RUBRIC-TRACEABILITY.md` tracks
-  every scoring line against its implementation, test and evidence artifact; as of this README
-  rewrite the majority of rows are unticked. This file is not a claim that the system is feature
-  complete — it documents what exists today.
-- **Backend routes are largely stubs.** Per `docs/handover/HANDOVER-feat-contract-freeze.md`, all
-  ten route handlers were `501 not_implemented` stubs as of the contract-freeze phase; the
-  four-layer implementation (services/repositories/providers) lands in later phases per
-  `docs/02-CRITICAL-PATH.md`.
-- **Frontend views (Submit/Dashboard/Stats) are not yet built.** Only the scaffold, router,
-  typed client and MSW mocks exist as of Phase 2 (`docs/handover/HANDOVER-phase2-deva-to-devb.md`)
-  — the actual views are Phase 4 scope.
-- **`cd.yml` has not yet run against `main`.** The CD workflow (build-push, deploy-k8s) exists but
-  a successful run against `main` — GHCR images, SBOM, cluster deploy, smoke test — is not yet
-  captured. This is being addressed in a separate PR.
-- **Rubric A3 (PR review rigor on `main`) needs improvement.** `docs/01-WORKFLOW.md §2.3` is
-  explicit that a rubber-stamp review scores zero; this needs continued discipline as more PRs
-  land, not a one-time fix.
-- **HPA/VPA live captures are pending a live cluster run.** `kubectl get hpa -w`, the
-  replicas-vs-load chart, and the VPA `Target`/`Lower Bound`/`Upper Bound` before/after
-  recommendations (`docs/18-DOCS-EVIDENCE-VIVA.md §3`) require a running k3d/kind cluster under
-  load and have not been captured yet.
-- **UI screenshots and the Grafana dashboard are not captured** — see Screenshots above.
-- **Merge-conflict drill evidence is not yet produced.** `docs/20-RUBRIC-TRACEABILITY.md` A5
-  requires a deliberate, resolved merge conflict on `schemas/stats.py` with markers, graph, and a
-  2–4 sentence rationale; this is planned per `docs/01-WORKFLOW.md §2.4` but not yet executed.
-- **NetworkPolicy enforcement depends on the CNI.** `kind`'s default CNI (`kindnet`) does not
-  enforce `NetworkPolicy`; the project standardizes on k3d specifically because of this
-  (contradiction A13, `docs/00-SPEC.md` Appendix A) — using `kind` instead silently makes the
-  policy decorative.
+- **Rubric A3 (PR review rigor) is failing, not just incomplete, and cannot be fixed
+  retroactively.** A live audit of every merged PR (`docs/evidence/pr-review-audit-live.txt`)
+  found 26 of 42 have zero reviews and a further 10 have only empty-body rubber-stamp
+  approvals — only 6 of 42 have anything resembling a real review comment. `docs/01-WORKFLOW.md
+  §2.3` is explicit that a rubber-stamp scores zero. This needs the human partners to leave
+  substantive review comments on PRs going forward; it cannot be applied to PRs already merged.
+- **Rubric A5's specific two-person merge-conflict exercise has not been run.**
+  `docs/01-WORKFLOW.md §2.4` calls for both partners to independently branch from the same
+  `dev` SHA and each add a field to `StatsResponse`, producing a real, scheduled conflict on
+  `schemas/stats.py`. Both fields the exercise would add already exist in the shipped schema —
+  the underlying feature work is done — but the ceremony itself (and its required evidence
+  bundle) has not happened, and cannot be produced by a single contributor or an AI session
+  acting alone without it being a fabrication of the actual collaborative exercise being tested.
+- **Rubric A4's commit-share number is genuinely contested**, not hidden: 35.9% (counting `--all`
+  refs) vs 22.6% (`--no-merges HEAD` only) — see `docs/evidence/shortlog.txt`. Decide which
+  counting method to defend at viva.
+- **`cd.yml` has not yet run against `main`.** The workflow exists and is structurally correct
+  (`needs:` gating, SHA tags, SBOM) but has never executed — `main` only recently caught up to
+  `dev` (PR #48). This is Phase 8 (CD/rollback) scope, not Phase 0–6.
+- **HPA/VPA live captures, and everything else Phase 7+ (load testing, autoscaling, CD, the
+  demo video)** are explicitly out of scope for the current close-out pass and tracked
+  separately once Phase 0–6 is confirmed locked in.
+- **NetworkPolicy enforcement depends on the CNI.** Verified empirically on a real k3d cluster
+  this session (`docs/evidence/netpol-enforcement-live.txt`) that k3d's default CNI does enforce
+  NetworkPolicy correctly (two-sided proof: frontend blocked, backend allowed) — `kind`'s default
+  CNI (`kindnet`) does not, so the project standardizes on k3d specifically (contradiction A13).
 - **`/api/meta/providers`'s `recent` list is per-pod, not cluster-wide.** It's an in-process
   `deque(maxlen=20)`; scaling to multiple backend replicas fragments the observability view. A
   Redis-backed list would fix this but is not implemented (documented trade-off, `docs/04-CONTRACTS.md §6.6`).

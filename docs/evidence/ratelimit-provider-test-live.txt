@@ -1,0 +1,7 @@
+=== 429/RATE-LIMIT PROVIDER TEST — must retry EXACTLY ONCE with jitter, then fallback ===
+{"id":"9ce08cfc-ca0b-4e0b-ae5c-c9c18be905f1","text":"ratelimit-provider-test: this provider returns 429 on every call, testing single-retry behavior","location":"ratelimit test evidence","reporter_contact":null,"category":"other","priority":"low","status":"open","ai_summary":"ratelimit-provider-test: this provider returns 429 on every call, testing single-retry behavior","triaged_by":"rules:fallback","triage_latency_ms":0,"triage_confidence":0.0,"created_at":"2026-09-26T14:48:04.367750Z","updated_at":"2026-09-26T14:48:04.367750Z"}
+HTTP 201
+elapsed_ms=596
+
+=== container logs — expect exactly one retry attempt, then fallback ===
+{"ts":"2026-09-26T14:48:04.329+00:00","level":"WARNING","logger":"app.triage","msg":"triage.fallback","request_id":"ab86048f-7fbf-4f41-bd23-99220873d0e2","service":"backend","version":"dev","provider":"simulated","error_class":"SimulatedRateLimitError","attempts":2,"elapsed_ms":0}

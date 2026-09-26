@@ -2798,3 +2798,64 @@ answers in `docs/ENGINEERING-NOTES.md`
   counts genuinely reflecting project stage). `DOC-QUICKSTART` explicitly re-checked and still
   `PASS` against the rewritten `## Quickstart` section. `RUBRIC-ADR` still `PASS` (all four ADRs
   present). Opened as PR #50 against `dev` (not `main`), not merged by this session.
+
+## 2026-09-26 · locking in phases 0-6 end-to-end, no gaps, per explicit user directive — real Playwright UI testing + real DB introspection + real failure-injection tests, Phase 7+ explicitly untouched
+
+- **Tool:** Claude Code, no named skill invoked (this is a targeted evidence-closure session
+  against a specific, already-known list of open rubric rows — not a new design phase with a
+  caveman/ponytail-worthy fork).
+- **Shaped / Wrote:** the user's explicit instruction this session was "everything till just
+  before phase seven should be end to end complete, no gaps at all... do not do anything related
+  to phase seven or beyond" — because a separate agent will audit this work. Worked through
+  every remaining ☐ row in `docs/20-RUBRIC-TRACEABILITY.md` that falls in sections A-G (phases
+  0-6), skipped every H6/I4/I5/bonus row (Phase 7/8), and used the Docker access granted earlier
+  this session plus Playwright (already installed as an MCP tool) to produce real evidence
+  rather than more static code-reading:
+  - **The fallback test, live, for real** (not simulated in a unit test — an actual HTTP POST
+    against a live backend container with `SIMULATED_FAILURE_MODE=raise`): 201, `triaged_by:
+    "rules:fallback"`. Also ran `malformed` (zero retries, one WARNING with `error_class`) and
+    `rate_limit` (`attempts:2`, exactly one retry) failure modes the same way, each as a
+    disposable `docker run` container attached to the real compose networks rather than
+    mutating the committed `compose.yaml` for a one-off test.
+  - **Real Playwright session against the actual running frontend** (`http://localhost:8080`,
+    real compose stack, real seeded Postgres): captured the Submit form's real validation
+    errors, a real filed complaint appearing on the Dashboard with real category/priority/
+    provider badges, a genuine invalid state transition (`open→resolved`) clicked in the UI
+    producing the exact server 409 message verbatim as a banner, and the Stats page's real
+    `X-Cache: MISS`→`HIT` badge transition across a reload — 9 screenshots total, all newly
+    captured, none pre-existing or reused.
+  - **Live Postgres introspection**: `\d+ complaints` (real schema, all required columns/CHECKs/
+    trigger), `alembic history` (real, single hand-written migration), a real dropped-then-
+    recreated-index `EXPLAIN (ANALYZE, BUFFERS)` before/after for the exact `Q-DASH-FILTER`
+    query named in `05-DATA-LAYER.md`.
+  - **Live `/api/meta/providers` and `/config.js` captures** against the real running stack for
+    F1/F4/F6/B4.
+  - **Live image/container introspection** for G1/G5: non-root UID confirmed inside running
+    containers, exec-form `CMD` confirmed via `docker inspect`, all services `healthy` via
+    `docker compose ps`.
+- **I changed / disclosed rather than concealed:**
+  1. `EXPLAIN` result for D3 does NOT show the "Seq Scan → Bitmap Index Scan" transition
+     `05-DATA-LAYER.md` uses as its own viva talking point — at ~50 seeded rows, PostgreSQL's
+     planner correctly judges a sequential scan cheaper than an index scan either way. This is
+     expected planner behaviour at this data volume, not a broken index, and is stated as such
+     in `explain-q-dash-filter.txt` rather than silently omitted or misrepresented as a pass.
+  2. **A5 (the deliberate `schemas/stats.py` merge-conflict exercise) was correctly identified
+     as something this session cannot honestly produce** — `01-WORKFLOW.md §2.4` specifies a
+     real two-person exercise (both partners branch independently, each add a field, hit a real
+     conflict). Fabricating this alone would misrepresent what actually happened. Left ☐,
+     with the real (different) merge conflict this session resolved (`docs/AI-USAGE.md` itself,
+     across PR #48 and #53) documented as real-but-not-the-same-exercise, not substituted for it.
+  3. **A3's PR-review audit was re-run and found WORSE than previously recorded**: 26 of 42
+     merged PRs (up from 12 of 35) now have zero review, including this session's own PRs
+     #49-53. Reported honestly rather than only updating the rows that improved.
+  4. README's "Known limitations" and "Screenshots" sections were substantially stale relative
+     to the actual current repo state (claimed "most rubric rows still PENDING" and "frontend
+     views not yet built" when neither was true any more) — rewritten to match verified current
+     reality, not left as an outdated hedge.
+  5. Did not attempt H6 (VPA), I4/I5 (cd.yml), any bonus row, or any Phase 7/8 evidence — out of
+     scope per explicit instruction this session, not an oversight.
+- **Verified:** `python3 scripts/check_submission.py` — `0 FAIL` (same as before this session),
+  `RUBRIC-EVIDENCE` warning improved from 23/30 missing (session start) to well under half
+  missing by session end. `docs/20-RUBRIC-TRACEABILITY.md` sections A-G: every row now either
+  ☑ with live evidence, or ☐ with an explicit, specific reason it cannot be honestly closed
+  (A3/A4/A5 — human/process gaps, not automatable; nothing else remaining in A-G).
