@@ -2859,3 +2859,31 @@ answers in `docs/ENGINEERING-NOTES.md`
   missing by session end. `docs/20-RUBRIC-TRACEABILITY.md` sections A-G: every row now either
   ☑ with live evidence, or ☐ with an explicit, specific reason it cannot be honestly closed
   (A3/A4/A5 — human/process gaps, not automatable; nothing else remaining in A-G).
+
+## 2026-09-26 · fix/cd-workflow-call — `cd.yml`'s reusable-workflow call was structurally broken
+
+- **Tool:** Claude Code, no skill invocation warranted — single-line, single-correct-answer
+  fix flagged verbatim by Taimoor's handover (`docs/handover/HANDOVER-to-ifbilal-phases-0-6-
+  close-and-next-steps.md §3`), not a design fork (`ponytail`) and not a new phase's task list
+  (`caveman`).
+- **Bug:** `cd.yml:27` (`test` job) does `uses: ./.github/workflows/ci.yml` — a reusable-
+  workflow call. `ci.yml`'s `on:` block only declared `pull_request` and `push`, no
+  `workflow_call:`. GitHub rejects the calling workflow file before any job starts (fails in
+  0s) whenever a workflow lacks that trigger. Confirmed via the handover's own account: `cd.yml`
+  had run twice against `main` (after PR #48 and #55), both 0s failures — broken since it was
+  written, never surfaced earlier because `cd.yml` only triggers on push to `main`, which never
+  happened until `main` caught up to `dev` this session.
+- **Fix:** added `workflow_call:` to `ci.yml`'s `on:` block. One line, no job/step/trigger
+  behavior change for the existing `pull_request`/`push` paths — `workflow_call` only adds a
+  third valid caller, it doesn't alter the other two.
+- **I changed:** nothing beyond the one line — verified via `python3 -c "import yaml;
+  yaml.safe_load(...)"` that the file still parses, and confirmed job names (branch-protection-
+  load-bearing per this file's own top comment) are untouched.
+- **Pre-PR review (≥3 `file:line` findings or credible none-found):** none found, and that's
+  credible for this specific diff — it is a single added trigger key with no interaction
+  surface: it can't introduce a secret (no new step), can't break layer discipline (not
+  application code), can't change what `pull_request`/`push` runs, and `workflow_call` combined
+  with `secrets: inherit` on the `cd.yml` caller side (already present, unchanged) is the
+  documented, correct pattern for this exact case.
+- **Scope note:** did not also apply §5.1's Phase-7 sequencing or §2's A3/A4/A5 items — this PR
+  is scoped to the one disclosed `cd.yml` bug only, per the user's explicit request.
