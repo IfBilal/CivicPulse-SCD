@@ -44,13 +44,21 @@ def _triage_service(primary: object) -> TriageService:
 
 class _FakeRepo:
     """In-memory stand-in for `ComplaintRepository` — enough surface for the service tests,
-    with no SQLAlchemy/DB involved (CLAUDE.md HARD rule 15: no real network in a test)."""
+    with no SQLAlchemy/DB involved (CLAUDE.md HARD rule 15: no real network in a test).
+
+    `commit()` and `calls` exist so tests can assert `ComplaintService` calls `repo.commit()`
+    before `stats.invalidate()` — `09-CACHE-RATELIMIT.md §2.3`'s required `COMMIT → DEL`
+    ordering, added at the post-merge audit fix (2026-09-25, see
+    `docs/AI-USAGE.md`): `create()`/`change_status()` previously either never invalidated at
+    all or invalidated before `app/deps.py::get_session()`'s implicit commit ever ran."""
 
     def __init__(self) -> None:
         self.rows: dict = {}
         self.created_kwargs: list[dict] = []
+        self.calls: list[str] = []
 
     async def create(self, **kwargs):
+        self.calls.append("create")
         self.created_kwargs.append(kwargs)
         row = _Row(**kwargs)
         self.rows[row.id] = row
@@ -64,7 +72,11 @@ class _FakeRepo:
         if row is None or row.status != expected:
             return None
         row.status = new
+        self.calls.append("transition")
         return row
+
+    async def commit(self) -> None:
+        self.calls.append("commit")
 
 
 class _Row:
@@ -73,6 +85,49 @@ class _Row:
         self.status = "open"
         for k, v in kwargs.items():
             setattr(self, k, v)
+
+
+class _FakeStats:
+    """Records only that `invalidate()` was called, into the SAME shared list `_FakeRepo`
+    appends to — a per-object call list couldn't prove cross-object ordering, which is the
+    entire point of this test."""
+
+    def __init__(self, calls: list[str]) -> None:
+        self._calls = calls
+
+    async def invalidate(self) -> None:
+        self._calls.append("invalidate")
+
+
+async def test_create_commits_then_invalidates_stats_cache() -> None:
+    """`09-CACHE-RATELIMIT.md §2.3`: `COMMIT → DEL`, never the reverse, and `create()` must
+    invalidate at all — post-merge audit fix (2026-09-25, see `docs/AI-USAGE.md`): `create()`
+    previously never called `invalidate()` at all, and `change_status()`'s call ran before
+    commit. Falsified during the fix by temporarily removing the `repo.commit()`/
+    `stats.invalidate()` calls from `ComplaintService.create()` and confirming this test goes
+    red — restored afterward, per CLAUDE.md HARD rule 14."""
+    repo = _FakeRepo()
+    svc = ComplaintService(
+        repo=repo, triage=_triage_service(SimulatedTriage()), stats=_FakeStats(repo.calls)
+    )
+
+    await svc.create(text="pothole reported near the market gate", location="F-7", contact=None)
+
+    assert repo.calls == ["create", "commit", "invalidate"]
+
+
+async def test_change_status_commits_then_invalidates_stats_cache() -> None:
+    """Same ordering requirement as `create()`, for the PATCH .../status write path."""
+    repo = _FakeRepo()
+    svc = ComplaintService(
+        repo=repo, triage=_triage_service(SimulatedTriage()), stats=_FakeStats(repo.calls)
+    )
+    row = await svc.create(text="streetlight out near the school", location="F-6", contact=None)
+    repo.calls.clear()  # isolate change_status()'s own ordering from create()'s
+
+    await svc.change_status(row.id, "in_progress")
+
+    assert repo.calls == ["transition", "commit", "invalidate"]
 
 
 async def test_fallback_emits_201_shaped_result_when_primary_always_raises() -> None:

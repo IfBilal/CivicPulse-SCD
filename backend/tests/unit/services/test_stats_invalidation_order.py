@@ -1,17 +1,24 @@
 """E6: `test_invalidate_happens_after_commit` -- `09-CACHE-RATELIMIT.md section 2.3`'s own
 test sketch, asserting call ORDER, not just that both calls happened.
 
-**Deferred wiring, disclosed:** `ComplaintService.create()`/`change_status()` do not exist
-on this branch yet -- Phase 3's write path (`feat/backend-api`) hasn't merged. There is no
-real "commit-then-invalidate" call site to test end-to-end yet. What this test proves
-instead: `StatsService.invalidate()` is a `DEL`-only operation entirely decoupled from the
-DB session, so whichever branch adds `ComplaintService` can safely call
-`session.commit()` then `await stats_service.invalidate()` in that literal order without
-`invalidate()` itself doing anything commit-adjacent that could race. The ordering
-assertion is written against a minimal stand-in write-path function
-(`_create_complaint_then_invalidate`) that mirrors the exact two-step shape
-`ComplaintService.create()` will have, so the test is falsifiable: reversing the two
-lines below turns it red.
+**Written when `ComplaintService.create()`/`change_status()` didn't exist on this branch yet
+(Phase 3's write path hadn't merged) -- superseded, 2026-09-25 (post-merge audit fix, see
+`docs/AI-USAGE.md`), once it did and a real bug was found: `create()` never called
+`invalidate()` at all, and `change_status()`'s call ran BEFORE the DB commit (`app/deps.py`'s
+`get_session()` only commits after the route handler returns, which is after any service-layer
+code could run -- fixed by giving `ComplaintRepository` an explicit `commit()` the service
+calls before `invalidate()`). The real, end-to-end ordering assertions now live in
+`tests/unit/test_complaint_service.py::test_create_commits_then_invalidates_stats_cache` and
+`test_change_status_commits_then_invalidates_stats_cache`, against the actual
+`ComplaintService`, not a synthetic stand-in.
+
+What's left in this file: the two properties below don't depend on `ComplaintService`'s
+specific shape and are still worth their own isolated coverage -- that `StatsService.
+invalidate()` never touches the DB session (so calling it after commit can't reopen or
+interfere with the transaction), and a general falsifiability demonstration of the
+ordering-assertion *style* itself. The synthetic write-path stand-in and its
+`_RecordingSession`/`_RecordingStatsService` were removed since they now only test a shape
+mirroring code that actually exists elsewhere.
 """
 
 import pytest
@@ -19,61 +26,6 @@ import pytest
 from tests.unit.fakes import FakeRedis
 
 pytestmark = pytest.mark.unit
-
-
-class _RecordingSession:
-    """Stand-in for the real `AsyncSession` -- records when `commit()` is called."""
-
-    def __init__(self, seen: list[str]) -> None:
-        self._seen = seen
-
-    async def commit(self) -> None:
-        self._seen.append("commit")
-
-
-class _RecordingStatsService:
-    """Stand-in for `StatsService` -- records when `invalidate()` is called, without a
-    real Redis round trip."""
-
-    def __init__(self, seen: list[str]) -> None:
-        self._seen = seen
-
-    async def invalidate(self) -> None:
-        self._seen.append("del")
-
-
-async def _create_complaint_then_invalidate(
-    session: _RecordingSession, stats: _RecordingStatsService
-) -> None:
-    """Mirrors the exact shape `ComplaintService.create()` must have per section 2.3:
-    COMMIT, then DEL -- never the reverse, and never DEL inside the transaction."""
-    await session.commit()
-    await stats.invalidate()
-
-
-async def test_invalidate_happens_after_commit() -> None:
-    seen: list[str] = []
-    session = _RecordingSession(seen)
-    stats = _RecordingStatsService(seen)
-
-    await _create_complaint_then_invalidate(session, stats)
-
-    assert seen.index("commit") < seen.index("del")
-
-
-async def test_invalidate_reversed_order_is_detected_as_wrong() -> None:
-    """Falsifiability check (CLAUDE.md HARD rule 14): confirms the ordering assertion
-    above would actually fail if a future `ComplaintService` got the order backwards."""
-    seen: list[str] = []
-    session = _RecordingSession(seen)
-    stats = _RecordingStatsService(seen)
-
-    # Deliberately wrong order, to prove the assertion style catches it.
-    await stats.invalidate()
-    await session.commit()
-
-    with pytest.raises(AssertionError):
-        assert seen.index("commit") < seen.index("del")
 
 
 async def test_invalidate_is_del_only_no_side_effect_on_session() -> None:

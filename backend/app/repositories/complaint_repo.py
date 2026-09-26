@@ -28,6 +28,18 @@ class ComplaintRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._s = session
 
+    async def commit(self) -> None:
+        """Explicit commit, callable from the service layer without exposing `AsyncSession`
+        itself (CLAUDE.md HARD rule 3 / `make lint-layers`: services never import or hold a
+        session). Exists so `ComplaintService` can commit *before* calling
+        `StatsService.invalidate()` — `09-CACHE-RATELIMIT.md §2.3`'s required `COMMIT → DEL`
+        ordering can't be achieved by relying on `app/deps.py::get_session()`'s implicit
+        post-return commit, because that commit only runs after the route handler function has
+        already returned (FastAPI's generator-dependency teardown order), which is after any
+        code the service itself could run. See `ComplaintService.create()`/`change_status()`
+        for the call sites this exists for."""
+        await self._s.commit()
+
     async def create(
         self,
         *,

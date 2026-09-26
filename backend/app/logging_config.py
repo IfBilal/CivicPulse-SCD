@@ -76,6 +76,9 @@ def configure_logging(settings: Settings) -> None:
 
     # Remove only the handler *we* previously installed, not every handler on the root logger —
     # a caller (pytest's caplog, an embedding host, ...) may have its own for good reason.
+    # Removing unrelated handlers here used to silently break `caplog`-based assertions in any
+    # test running after one that boots the real app via `TestClient`/`lifespan` (found via a
+    # CI-only failure, 2026-09-25 — see docs/AI-USAGE.md).
     if _our_handler is not None and _our_handler in root.handlers:
         root.removeHandler(_our_handler)
 
