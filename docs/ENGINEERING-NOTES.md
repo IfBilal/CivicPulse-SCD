@@ -976,3 +976,211 @@ already used for `orjson` isn't safe to apply blindly to every CVE finding — d
 resolution succeeding is necessary, not sufficient; only installing exactly as production does
 and actually importing the app caught this. `orjson`'s bump remains correct and shipped precisely
 because it *was* verified the same way and didn't break anything.
+
+---
+
+## The eight viva questions (`18-DOCS-EVIDENCE-VIVA.md §4`), answered against real file:line
+
+Each answer below was checked against the actual file at the stated line on this branch
+(`docs/runbook-and-viva-notes`, forked from `origin/dev` @ `1fb6d717`) before being written down —
+not reconstructed from the design docs' prose. Where a design doc's example line number didn't
+match the real file, the real line is cited and the mismatch is noted rather than silently
+"corrected" in the doc (`CLAUDE.md`'s own "say so, don't quietly reconcile" rule, one level down).
+
+### Q1 — Three laptop-vs-CI differences + the exact freezing line
+
+1. **CPU count / available compute.** GitHub's `ubuntu-24.04` hosted runner is a fixed 4-core,
+   16 GB box (`.github/workflows/ci.yml:36,75,89` — `runs-on: ubuntu-24.04` on every job); a dev
+   laptop is whatever it is. This isn't frozen by a k8s `resources.limits.cpu` value the way
+   `18-DOCS-EVIDENCE-VIVA.md`'s own example implies (this repo's CI doesn't run inside a
+   cluster) — the actual freezing line for *this* project is `backend-deployment.yaml:36-37,46-47`
+   (`k8s/base/backend-deployment.yaml`), which fixes CPU/memory requests+limits once the app is
+   deployed to any cluster, laptop or CI-built kind cluster alike, so a slower/faster underlying
+   host can't silently change how much compute a backend pod is entitled to.
+2. **Base image contents.** Frozen by `FROM python:3.12.14-slim-bookworm` at
+   `backend/Dockerfile:3` (the builder stage) — not `:2` as `18-DOCS-EVIDENCE-VIVA.md`'s own
+   example line implies; the real file has a comment line at `:1`, pushing the `FROM` to `:3`.
+   Whatever OS package versions exist inside that exact tag are what both a laptop's `docker
+   build` and CI's `build`/`scan` jobs get — no "whatever's on my machine's `python3`" drift.
+3. **Service startup order.** Frozen by `depends_on: { condition: service_healthy }` at
+   `compose.yaml:28-29` (frontend won't start until backend reports healthy) and
+   `compose.yaml:51-53` (backend won't start until database+cache report healthy) — a laptop
+   with a warm Docker cache and a cold CI runner pulling every layer fresh would otherwise race
+   differently every run without this.
+
+Also legitimate, not chased down to a specific line this session: locale/timezone (`TZ`, `LANG`
+aren't pinned anywhere in `compose.yaml`/`Dockerfile`s — an honest gap, not a frozen line),
+filesystem case-sensitivity (laptop-OS-dependent, no freezing mechanism in this repo), Docker
+storage driver (host-level, out of this repo's control).
+
+### Q2 — Maturity rung + next rung
+
+Per `15-CICD.md §8`'s table (not reproduced verbatim here to avoid drifting from the source of
+truth if that table is edited later — see that file directly): this project currently sits at
+"automated build + automated test + automated image publish + automated deploy on merge to
+`main`" (`build-push` and `deploy-k8s` in `.github/workflows/cd.yml:30-136`, gated by `needs:` at
+`cd.yml:31,85`). It does **not** have automated rollback on a post-deploy health signal — `cd.yml`
+runs a smoke test (`cd.yml:123-130`) but a failing smoke test does not trigger `rollout undo`; a
+human reads the failed run and executes `13-KUBERNETES.md §7`'s commands by hand.
+
+**The next rung is automated rollback on a post-deploy SLO breach** — e.g. `cd.yml`'s smoke-test
+step failing, or a canary window's error-rate/latency check failing, triggering
+`kubectl rollout undo` automatically instead of paging a human first. That buys MTTR in minutes
+(bounded by how fast the automation notices) rather than however long it takes a human to be
+looking at the failed run — without removing the human from the loop entirely, since the
+declarative "re-apply previous SHA" path (`13-KUBERNETES.md §7.2`) still needs a person to open
+the revert PR.
+
+### Q3 — The build-once-deploy-many line + what breaks without it
+
+`frontend/src/api/config.ts:3` → `export const API_BASE = "/api";` (confirmed by reading the
+file — a relative path, never an absolute origin baked into the bundle), paired with
+`frontend/nginx.conf:51` → `proxy_pass http://$backend_upstream;` (resolved at container boot from
+`BACKEND_UPSTREAM`, not baked into the image either — see the `DEV-B · Phase 2 · nginx resolves
+the backend per request` entry above for why it's a variable, not a literal host).
+
+**What breaks without it:** if `API_BASE` were instead e.g. `https://api-dev.civicpulse.example`
+baked in at `npm run build` time, the resulting bundle would contain one specific environment as a
+string literal. The image tagged `civicpulse-frontend:$GIT_SHA` would then only be correct for
+whichever environment it was built against — deploying that same digest to a second environment
+(dev vs. prod, `k8s/overlays/dev` vs `k8s/overlays/prod`) would silently point the browser at the
+wrong backend, and the SHA/digest tag would no longer identify "what is running" the way
+ADR-0003 and `docs/evidence/runtime-config.txt` claim it does — the whole point of
+`docs/evidence/runtime-config.txt` (one image digest, two `config.js` outputs under `APP_ENV=dev`
+vs `APP_ENV=prod`, per the Phase 2 entry above) depends on the frontend never hard-coding a
+backend URL.
+
+### Q4 — What "correct" means for a probabilistic component + CI determinism
+
+**"Correct" is not a particular label.** It is: the contract *around* the model holds, checked
+mechanically by `backend/app/services/triage_service.py`:
+- output validates against `TriageResult` (Pydantic construction — `category`/`priority` are
+  closed enums; an invalid value raises `ValidationError` before it can ever reach a caller, per
+  the `DEV-A · Phase 3 — SimulatedTriage's "malformed" mode raises` entry above);
+- a below-floor-confidence result is downgraded to `OTHER`/`NORMAL` rather than trusted outright
+  (`triage_service.py:195-208`, `_postvalidate`, floor read from `settings.triage_min_confidence`);
+- a non-retryable failure (schema/malformed-JSON/4xx-except-429 — `NON_RETRYABLE` tuple,
+  `triage_service.py:93-100`, classified by `classify()` at `triage_service.py:118-148`) goes
+  straight to fallback with **zero retries**;
+- a retryable failure (timeout/429/5xx — `RETRYABLE` tuple, `triage_service.py:82-88`) gets
+  **exactly one** jittered retry inside the 12 s total budget
+  (`settings.py:29-32` — `triage_timeout_s=10.0`, `triage_total_budget_ms=12_000`,
+  `triage_max_retries=1`, `triage_retry_jitter_ms=250`);
+- a failure that exhausts its retries or is non-retryable always reaches
+  `RuleBasedTriage` (`triage_service.py:316-318`, the fallback branch) which "cannot raise", and
+  the caller (`ComplaintService.create()`, `backend/app/services/complaint_service.py:52-76`)
+  always gets back a `Complaint` row and returns **201** — never an exception past this boundary
+  (CLAUDE.md HARD rule 5).
+
+It does **not** mean the classifier picked the label a human would have picked — that's an
+accuracy question, out of scope for what "correct" is being asked to guarantee here.
+
+**CI determinism:** `TRIAGE_PROVIDER=simulated` in every test/CI run (never a live LLM call in
+CI, per `CLAUDE.md §4`). `SimulatedTriage`'s failure modes are deterministic exception classes
+(`SimulatedRateLimitError`, `SimulatedServerError` → RETRYABLE; `SimulatedMalformedResponseError`,
+`SimulatedValidationError` → NON_RETRYABLE — all four imported at `triage_service.py:40-45` and
+registered into the two tuples above), so the same seed/input always exercises the same path
+through the ladder — see `docs/TRIAGE.md` and `08-AI-TRIAGE.md §8` for the full F1–F24 failure-mode
+matrix this determinism is built to support.
+
+### Q5 — HPA lag in seconds + where it went + what reduces it
+
+**Honest answer: not yet measured on this branch.** `docs/14-LOAD-AUTOSCALING.md §5` gives the
+ten-term decomposition table and says explicitly *"the numbers are typical, not yours"* — it is a
+template for a real `kubectl get hpa -w` + k6 capture, not a substitute for one.
+`docs/evidence/` on this branch contains no `hpa-watch.txt`, `hpa-samples.txt`,
+`hpa-replicas-vs-load.png`, or `k6-summary.json` (checked: `ls docs/evidence/` returns
+`branch-protection.png dockerignore-context-sizes.txt netpol-enforcement.txt
+network-isolation.txt persistence-compose.txt persistence-k8s.txt precommit-secret-block.txt
+runtime-config.txt` — none of the Gate 7 HPA artefacts). `k8s/base/hpa.yaml` (2 pods min, 10 max,
+60% CPU target, `scaleUp` stabilization 0 s / `scaleDown` 300 s) and `load/k6-script.js` +
+`load/plot_hpa.py` exist and are ready to run the capture, but the capture itself — starting a
+real cluster, running k6 against it, `tee`-ing `kubectl get hpa -w`, and building the chart — is
+Gate 7 evidence work that has not happened yet on this branch. Reporting a fabricated number here
+would violate the same honesty standard `18-DOCS-EVIDENCE-VIVA.md §5.2`'s "generic answers score
+zero" line is protecting; the mechanism (why each of the ten terms exists, and that the total is
+minute-scale, not second-scale) is understood and documented, but the specific seconds are not
+yet this project's own measured numbers.
+
+### Q6 — Why VPA `Off` + the `Auto` failure mode
+
+`k8s/base/vpa.yaml:14` — `updatePolicy: { updateMode: "Off" }` (recommender only, never evicts),
+with the reasoning in the same file's header comment (`vpa.yaml:1-6`) and expanded in
+`docs/14-LOAD-AUTOSCALING.md §7.4`: HPA reads `utilisation = usage / request`; VPA in `Auto` raises
+`request` in response to usage, which moves the HPA's own denominator — a control-loop conflict
+where each controller acts on the same signal (CPU) and can move the other's ratio. Consequence in
+`Auto`, stated precisely because it's the part people skip: **VPA in `Auto` evicts running pods to
+apply a new `request` value**, so the fleet churns (pods restarting) during exactly the kind of
+sustained-load event the HPA exists to survive — a PDB (`minAvailable: 1`, `k8s/base/pdb.yaml`)
+bounds that churn but does not prevent it. The correct fix at scale, per
+`14-LOAD-AUTOSCALING.md §7.4`: put the HPA on a non-CPU metric (RPS, queue depth, p95 latency via
+`type: Pods`/`External` with Prometheus Adapter or KEDA) so HPA and VPA act on **different**
+signals and stop fighting; `VPA Initial` (sets requests once at pod creation, never evicts) is
+named as a middle ground, not what's shipped here.
+
+### Q7 — Where `internal: true` leaves the hosted-LLM caller
+
+`compose.yaml:10` — the `internal` network is marked `internal: true` ("no route to the outside
+world"). `backend` is the **only** service attached to both networks
+(`compose.yaml:37` — `networks: [edge, internal]`), so it alone keeps egress to the internet while
+`database`/`cache` (`compose.yaml:60,76` — `networks: [internal]` only) and `frontend`
+(`compose.yaml:21` — `networks: [edge]` only) do not. That's how a hosted LLM call (Groq) still
+reaches the internet: through the one dual-homed service, never through a network path the
+frontend or the database could also use.
+
+**The real casualty is Ollama.** `ollama` itself (`compose.yaml:84-89`) is `networks: [internal]`
+only, so it has no egress to pull a model from `registry.ollama.ai` — under strict
+`internal: true` segmentation it would be permanently stuck with an empty model store. Solved with
+a one-shot `ollama-pull` service (`compose.yaml:93-99`) that runs **on `edge`** (has egress),
+shares the **same** named volume (`ollama_models:/root/.ollama`) as the real `ollama` service, pulls
+the model once, and exits (`pkill ollama` in its own command) — the serving container never needs
+egress because the volume already has the model by the time it starts.
+
+**The Kubernetes expression of the same intent:** `k8s/base/networkpolicy.yaml` — a
+`default-deny` policy (`networkpolicy.yaml:11-18`, `podSelector: {}`, both `Ingress` and `Egress`)
+plus a `backend-egress` policy (`networkpolicy.yaml:63-79`) that grants `backend` egress to
+postgres:5432, redis:6379, DNS (UDP/TCP 53 to `kube-system`), and — the one rule doing the same job
+as `compose.yaml`'s `internal: true` — TCP 443 to `0.0.0.0/0` **except** the RFC1918 ranges
+(`networkpolicy.yaml:78-79`), so only the backend can reach a hosted LLM over the public internet,
+and it can reach nothing else out there. `13-KUBERNETES.md §9`'s own caveat, verified empirically
+on this project's actual cluster (not assumed): kindnet does not enforce NetworkPolicy, but the
+k3d/k3s combination actually used here does — confirmed both by DNS-name and raw-pod-IP `nc`
+attempts in `docs/evidence/netpol-enforcement.txt` (frontend blocked both ways, backend succeeds).
+
+### Q8 — The >1h failure
+
+**Candidate chosen: the `caplog`/`Logger.disabled` bug**, already the single most thoroughly
+disclosed failure in this file (see `DEV-B · fix/logging-caplog-and-orjson-cve` above, in full).
+Compressed to the §4 format:
+
+**Symptoms:** `tests/unit/test_logging_config.py::test_fallback_emits_exactly_one_warning` passed
+in isolation but failed (`assert 0 == 1`, zero warnings captured) when run as part of the full
+suite — and after `dev` merged Phase 4, two more tests in
+`tests/unit/services/test_triage_service.py` failed the identical way.
+
+**What was wrongly believed, in order:** (1) that `configure_logging()`
+(`backend/app/logging_config.py:72-93`) unconditionally wiping every root-logger handler
+(including pytest's own `caplog` handler) was the *whole* bug — fixed that (track and remove only
+the one handler this module installed, `logging_config.py:63-69,77-83`), re-ran the full suite,
+and the same 3 tests still failed. (2) that the handler fix not helping meant the theory was
+wrong, rather than incomplete.
+
+**The exact command/log line that told the truth:** debug-instrumenting the actual failing test
+inside a real full-suite run (not an isolated `-k` selection — order-dependent bugs don't
+reproduce in isolation) and printing `logging.getLogger("app.triage").disabled` showed `True`.
+`Logger.disabled` short-circuits `isEnabledFor()` entirely, independent of handlers, levels, or
+propagation — which is exactly why the handler fix alone didn't close it. Ruled out uvicorn's own
+logging config (read `uvicorn.config.LOGGING_CONFIG` directly — sets `disable_existing_loggers:
+False`) and pytest's own `_pytest/logging.py::_disable_loggers` (gated behind an unused CLI
+option in this repo) before landing the real fix: `configure_logging()` now also unconditionally
+re-enables every known logger each run (`logging_config.py:111-112`), plus an `autouse=True`
+fixture in `tests/conftest.py` doing the same per-test, so the guarantee doesn't depend on
+`configure_logging()` having run first. Verified by running the full suite twice in a row after
+the fix: 296 passed both times.
+
+**The general lesson:** an order-dependent global-state bug (`Logger.disabled`, not handlers) can
+hide behind a plausible-looking first fix (handler wiping) that addresses a real but insufficient
+mechanism — the tell that the first fix was incomplete was that the *same* tests kept failing
+after it shipped, not different ones. Confirming a fix against the *specific* failure mode (here:
+instrumenting the actual attribute suspected, inside the actual failing run) beats re-running the
+suite and hoping a plausible-sounding cause was the real one.
