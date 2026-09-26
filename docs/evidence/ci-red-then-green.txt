@@ -1,0 +1,57 @@
+I7 evidence — a red pipeline blocking progress, then a real fix turning it green.
+Gathered via `gh run list` / `gh pr checks` against the live GitHub Actions history on
+IfBilal/CivicPulse-SCD (not fabricated; timestamps and run IDs are real API output).
+
+Sequence of events (chronological, all times UTC, 2026-09-26):
+
+1. PR #43 "fix(be): bump fastapi/starlette/pydantic to clear 3 HIGH CVEs" opened.
+   CI attempts on branch fix/fastapi-starlette-cve:
+     07:45:25  failure  run=36227748478
+     07:49:33  cancelled run=36227955907
+     07:50:10  failure  run=36227987438
+     08:03:51  failure  run=36228657624
+     08:06:38  failure  run=36228797041   <- scan job specifically: FAIL
+   `gh pr checks 43` on the final pre-merge run (36228797041) shows:
+     scan            fail   53s
+     Trivy           pass    3s
+     build           pass   32s
+     integration     pass  1m8s
+     lint-and-type   pass   57s
+     manifests       pass    7s
+     test-backend    pass   59s
+     test-frontend   pass   29s
+   Root cause (see ci.yml `scan` job comment, and PR #45 below): the `scan` job's
+   `upload-sarif` step needs `security-events: write`, which the workflow was not
+   granting on `push`-triggered runs — `pull_request`-triggered runs happened to have
+   enough token access already, masking the bug until a direct push run surfaced it.
+
+2. PR #43 was still merged into `dev` (08:10:12Z) — `dev` is not covered by the
+   `main`-only branch-protection ruleset (docs/evidence/branch-ruleset.json's
+   `conditions.ref_name.include` is `~DEFAULT_BRANCH`, i.e. `main` only), so this is
+   consistent with the project's documented two-branch model (features/fixes gate into
+   `dev` freely; only `dev` -> `main` is required-checks-gated). The resulting `push`
+   run on `dev` (36228973606, 08:10:14Z) is still `failure`, and the following PR
+   #44 (frontend Alpine CVE fix) also lands with the pipeline still red
+   (36229853987, 08:27:57Z, failure).
+
+3. PR #45 "fix(ci): grant scan job security-events: write for upload-sarif" merged.
+   The very next `dev` push run goes green:
+     08:34:59Z  success  push  run=36230205385  (PR #45's own merge)
+     08:35:02Z  success  pull_request run=36230208365
+   From this point on, every subsequent `dev` push run in the 100-run sample retrieved
+   is `success` (PRs #46, #47, and the `fix/close-disclosed-gaps` branch this
+   evidence-closure work is based on).
+
+Conclusion: this is a real red pipeline (specifically the `scan` job, a required check
+for merges into `main`) caused by a genuine permissions bug, diagnosed and fixed in a
+dedicated PR, with the fix verified by the next run going green — not a screenshot pair
+assembled after the fact. `main`'s own ruleset (branch-ruleset.json) lists `scan` as one
+of the 7 required status checks, so this class of failure would have blocked a `dev` ->
+`main` PR had one been attempted before PR #45 landed.
+
+Raw API calls used (all read-only, run from the repo root):
+  gh run list --repo IfBilal/CivicPulse-SCD --branch fix/fastapi-starlette-cve \
+    --json databaseId,conclusion,createdAt,displayTitle
+  gh pr checks 43 --repo IfBilal/CivicPulse-SCD
+  gh run list --repo IfBilal/CivicPulse-SCD --branch dev \
+    --json databaseId,conclusion,createdAt,displayTitle,event

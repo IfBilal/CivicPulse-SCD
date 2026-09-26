@@ -1,0 +1,56 @@
+A4 evidence — commit authorship, `git shortlog -sn --all` (raw output first, then
+identity-merged analysis; identities merged by matching commit author email, since two
+contributors each committed under two different display names).
+
+=== raw `git shortlog -sn --all` ===
+    52	T361
+    34	IfBilal
+    23	Taimoor Shaukat
+     8	8BitNinja
+
+=== raw `git log --all --format='%ae|%an'` counts, by (email, name) ===
+     52 tshaukat.25@gmail.com|T361
+     34 muhammadbilaltahir06@gmail.com|IfBilal
+     23 142240717+T361@users.noreply.github.com|Taimoor Shaukat
+      8 muhammadbilaltahir06@gmail.com|8BitNinja
+
+=== identity merge ===
+`8BitNinja` and `IfBilal` share the email muhammadbilaltahir06@gmail.com — same person,
+two display names used across the project's history (GitHub username changed at some
+point, or a local git config with a different `user.name` was used briefly).
+`T361` (tshaukat.25@gmail.com) and `Taimoor Shaukat` (142240717+T361@users.noreply.
+github.com, GitHub's own noreply address for the T361 account) are also the same person.
+
+Merged, across ALL branches/refs (`--all`):
+  Taimoor Shaukat / T361:  52 + 23 = 75 commits
+  IfBilal / 8BitNinja:     34 +  8 = 42 commits
+  Total: 117.  Min contributor share: 42/117 = 35.9% — clears the 35% floor.
+
+HOWEVER: restricting to `git log --no-merges HEAD` (i.e. only this branch's own
+non-merge, first-party commit history, not everything reachable via `--all` across
+every PR branch and squash-merge target) gives a materially different, smaller picture:
+  git shortlog -sn --no-merges HEAD:
+    29  T361
+    12  Taimoor Shaukat
+     8  8BitNinja
+     4  IfBilal
+  Merged: Taimoor Shaukat/T361 = 41, IfBilal/8BitNinja = 12. Total = 53.
+  Min share = 12/53 = 22.6% — FAILS the 35% floor.
+
+This discrepancy exists because `--all` counts commits made on now-superseded/rebased
+branches and both sides of squash-merged PRs (GitHub squash-merge can attribute the
+squashed commit differently from the branch's original individual commits), while
+`--no-merges HEAD` counts only what's actually reachable, non-merge, from this specific
+branch tip. check_submission.py's own RUBRIC-COMMITS check (`scripts/check_submission.py`
+line ~321) uses `git shortlog -sn --no-merges HEAD` WITHOUT merging the two aliased
+identities, and reports "min contributor share 7.5%" — even lower than the 22.6% this
+audit computes after merging aliases, because it treats T361/Taimoor Shaukat/IfBilal/
+8BitNinja as four separate contributors rather than two.
+
+Conclusion: A4 is NOT safely provable either way from a quick check — the true
+per-person split depends on which commit set you count (all-refs vs HEAD-reachable
+non-merges) and squash-merge attribution quirks. Left UNPROVEN (☐). Whoever finalizes
+this row should decide which counting method the marker will actually run
+(`git shortlog -sn --no-merges main` against the real `main` branch, post-submission, is
+the most likely marker method) and verify the real number against THAT, not against
+`--all`.
