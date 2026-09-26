@@ -1,0 +1,4 @@
+=== seed run 1 ===
+seed: 36 rows attempted, 36 rows now in complaints
+=== seed run 2 (idempotency check) ===
+seed: 36 rows attempted, 36 rows now in complaints

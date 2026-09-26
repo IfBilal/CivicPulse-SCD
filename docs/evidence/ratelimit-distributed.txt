@@ -1,0 +1,23 @@
+=== ratelimit_requests=10 per ratelimit_window_s=60 (backend/app/settings.py:52-53) ===
+=== 14 rapid POSTs, expect 429s once the window is exceeded ===
+req 1 -> 201
+req 2 -> 201
+req 3 -> 201
+req 4 -> 201
+req 5 -> 201
+req 6 -> 201
+req 7 -> 201
+req 8 -> 201
+req 9 -> 201
+req 10 -> 429
+req 11 -> 429
+req 12 -> 429
+req 13 -> 429
+req 14 -> 429
+
+=== Retry-After header on a 429 ===
+HTTP/1.1 429 Too Many Requests
+retry-after: 18
+=== rate-limit key lives in Redis (shared state, proves 'distributed' not per-process) ===
+
+-2

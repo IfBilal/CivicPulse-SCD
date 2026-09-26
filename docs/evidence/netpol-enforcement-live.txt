@@ -1,0 +1,20 @@
+=== NetworkPolicy enforcement, live k3d cluster (k3d v5.9.0, default CNI: flannel) ===
+
+Negative control — frontend pod attempting to reach postgres directly by POD IP (not
+hostname, to eliminate DNS resolution as a confound):
+  $ kubectl -n civicpulse exec <frontend-pod> -- nc -z -w2 <postgres-pod-ip> 5432
+  BLOCKED (NetworkPolicy enforced)
+
+Positive control — backend pod (which the `postgres-allow-backend` NetworkPolicy
+explicitly permits) reaching the same postgres pod IP:
+  $ kubectl -n civicpulse exec <backend-pod> -c backend -- python -c \
+      "socket.create_connection(('<postgres-pod-ip>', 5432), timeout=2)"
+  REACHED postgres from backend (correctly allowed)
+
+Conclusion: NetworkPolicy is genuinely enforced on this cluster, and selectively — frontend
+is blocked, backend is allowed, matching k8s/base/networkpolicy.yaml's
+`postgres-allow-backend` + `default-deny` rules exactly. This corrects an assumption in
+13-KUBERNETES.md §9 that only called out k3d/Calico as enforcing; this k3d default install
+(flannel CNI, no Calico installed) enforced NetworkPolicy correctly on this run — worth
+re-verifying k3d's current default CNI version before citing that doc's caveat verbatim at
+viva, since it may be stale relative to a newer k3d release's defaults.
