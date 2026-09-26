@@ -1,0 +1,61 @@
+# strategy: Recreate, not RollingUpdate (13-KUBERNETES.md §4.2) — a ReadWriteOnce PVC can't
+# attach to two pods at once, so a rolling update on redis deadlocks (new pod can't mount until
+# the old releases; old pod isn't removed until the new one is ready). Recreate accepts a few
+# seconds of cache unavailability, which the stats-cache degradation path already tolerates.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: civicpulse
+  labels: { app: redis }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: redis } }
+  template:
+    metadata:
+      labels: { app: redis }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 999, fsGroup: 999 }
+      containers:
+        - name: redis
+          image: redis:7.4.1-alpine
+          command:
+            ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec",
+             "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru", "--save", ""]
+          ports: [{ name: redis, containerPort: 6379 }]
+          volumeMounts: [{ name: redisdata, mountPath: /data }]
+          readinessProbe:
+            exec: { command: ["redis-cli", "ping"] }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec: { command: ["redis-cli", "ping"] }
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 320Mi }
+      volumes:
+        - name: redisdata
+          persistentVolumeClaim: { claimName: redisdata }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redisdata
+  namespace: civicpulse
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 1Gi } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: civicpulse
+  labels: { app: redis }
+spec:
+  type: ClusterIP
+  selector: { app: redis }
+  ports: [{ name: redis, port: 6379, targetPort: redis }]

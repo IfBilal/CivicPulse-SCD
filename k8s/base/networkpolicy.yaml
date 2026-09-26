@@ -1,0 +1,79 @@
+# Not in §3.3's spec, shipped anyway (13-KUBERNETES.md §9, contradiction A13) — the direct
+# Kubernetes translation of compose's `internal: true` segmentation (12-DOCKER-COMPOSE.md §4):
+# only the backend gets egress, and only to what it actually needs, including one narrow egress
+# to the internet (443, RFC1918-excluded) for the hosted LLM provider.
+#
+# CAVEAT THAT MUST BE TRUE OR THE POLICY IS THEATRE: NetworkPolicy is enforced by the CNI, not
+# the API server. kind's default CNI (kindnet) does NOT enforce it — these objects would apply
+# cleanly and do nothing. k3d/k3s's default CNI (flannel) doesn't enforce NetworkPolicy either by
+# default; enforcement here requires Calico or another policy-aware CNI. Verify empirically
+# (docs/evidence/netpol-enforcement.txt), never assume from the objects existing.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: civicpulse
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+# Beyond the doc's literal 3-policy sample: under default-deny, ingress-nginx couldn't reach
+# frontend/backend at all without this, and Gate 6's "Ingress serves / and /api/stats" would
+# fail — ponytail record in docs/AI-USAGE.md.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-controller
+  namespace: civicpulse
+spec:
+  podSelector: { matchExpressions: [{ key: app, operator: In, values: [frontend, backend] }] }
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: ingress-nginx } } }]
+      ports: [{ protocol: TCP, port: 8080 }, { protocol: TCP, port: 8000 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-allow-backend
+  namespace: civicpulse
+spec:
+  podSelector: { matchLabels: { app: postgres } }
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ podSelector: { matchLabels: { app: backend } } }]
+      ports: [{ protocol: TCP, port: 5432 }]
+---
+# Also beyond the doc's literal sample: backend-egress (below) allows egress to redis:6379, but
+# under default-deny that traffic still needs a matching INGRESS allow on the redis pod itself,
+# the same way postgres has one — otherwise backend's cache/rate-limit calls would silently
+# blackhole despite its own egress being permitted.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-allow-backend
+  namespace: civicpulse
+spec:
+  podSelector: { matchLabels: { app: redis } }
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ podSelector: { matchLabels: { app: backend } } }]
+      ports: [{ protocol: TCP, port: 6379 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: backend-egress
+  namespace: civicpulse
+spec:
+  podSelector: { matchLabels: { app: backend } }
+  policyTypes: [Egress]
+  egress:
+    - to: [{ podSelector: { matchLabels: { app: postgres } } }]
+      ports: [{ protocol: TCP, port: 5432 }]
+    - to: [{ podSelector: { matchLabels: { app: redis } } }]
+      ports: [{ protocol: TCP, port: 6379 }]
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } } }]
+      ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]   # DNS — forget this, nothing resolves
+    - to: [{ ipBlock: { cidr: 0.0.0.0/0, except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16] } }]
+      ports: [{ protocol: TCP, port: 443 }]   # the hosted LLM, and ONLY the backend

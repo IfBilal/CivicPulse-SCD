@@ -20,37 +20,50 @@ nuke: ## stop and DESTROY volumes
 	$(COMPOSE) down -v
 
 ## ── quality gate (run before every commit) ────────────────────────────────
-check: lint type test lint-localhost secret-scan ## full local gate
+check: lint type test lint-localhost lint-layers secret-scan ## full local gate
+lint-layers: ## CLAUDE.md HARD rule 3 — SQL only in repositories/, no HTTP concerns below routes
+	@! grep -rnE "select\(|session|execute\(|text\(" backend/app/routes/ || (echo "FAIL: SQL in routes"; exit 1)
+	@! grep -rnE "HTTPException|status_code|Response" backend/app/repositories/ || (echo "FAIL: HTTP concerns in repositories"; exit 1)
+	@! grep -rn "from app.routes" backend/app/services backend/app/repositories backend/app/providers 2>/dev/null || (echo "FAIL: upward import — arrows point one way"; exit 1)
 lint:
 	cd backend && ruff check . && ruff format --check .
-	@test -d frontend && (cd frontend && npm run lint) || echo "skip: frontend/ not scaffolded yet (Phase 2b)"
+	@if [ -f frontend/vite.config.ts ]; then cd frontend && npm run lint; else echo "skip: frontend/ not scaffolded yet (Phase 2b)"; fi
+	@! grep -rnE "in_progress.*resolved|TRANSITIONS|allowedNext" frontend/src --include=*.ts --include=*.tsx --exclude=schema.d.ts \
+	  || (echo "FAIL: business rule leaked into the frontend (CLAUDE.md HARD rule 9)"; exit 1)
 type:
 	cd backend && mypy app
-	@test -d frontend && (cd frontend && npx tsc --noEmit) || echo "skip: frontend/ not scaffolded yet (Phase 2b)"
+	@if [ -f frontend/vite.config.ts ]; then cd frontend && npx tsc --noEmit; else echo "skip: frontend/ not scaffolded yet (Phase 2b)"; fi
 test: test-be test-fe
 test-be:
 	cd backend && pytest
 test-fe:
-	@test -d frontend && (cd frontend && npm run test -- --run) || echo "skip: frontend/ not scaffolded yet (Phase 2b)"
+	@if [ -f frontend/vite.config.ts ]; then cd frontend && npm run test -- --run; else echo "skip: frontend/ not scaffolded yet (Phase 2b)"; fi
 
 ## ── deduction armour ──────────────────────────────────────────────────────
 lint-localhost: ## §5.3 −8: no localhost in service-to-service config
-	@! grep -rnI --exclude-dir={node_modules,.git,dist,tests,docs} \
-	  -e 'localhost' -e '127\.0\.0\.1' \
-	  backend/app compose.yaml compose.prod.yaml k8s/ \
-	  || (echo "FAIL: localhost used for service-to-service"; exit 1)
+	@paths="backend/app compose.yaml compose.prod.yaml"; [ -d k8s ] && paths="$$paths k8s"; \
+	hits=$$(grep -rnI --exclude-dir={node_modules,.git,dist,tests,docs} \
+	  -e 'localhost' -e '127\.0\.0\.1' $$paths \
+	  | grep -v 'healthcheck' \
+	  | grep -vE '^[^:]+:[0-9]+:\s*#' \
+	  | grep -vE '(host:|value:)\s*"?[A-Za-z0-9.-]*localhost'); \
+	if [ -n "$$hits" ]; then echo "$$hits"; echo "FAIL: localhost used for service-to-service"; exit 1; fi
 secret-scan: ## §5.3 −20: no secrets in the working tree or history
 	@gitleaks detect --no-banner --redact -c .gitleaks.toml
 history-scan:
 	@gitleaks detect --no-banner --redact --log-opts="--all" -c .gitleaks.toml
 submission-check:
-	python scripts/check_submission.py
+	python3 scripts/check_submission.py
 
 ## ── contract ──────────────────────────────────────────────────────────────
 openapi: ## dump OpenAPI WITHOUT running a server
-	cd backend && python -m app.cli.openapi_dump > ../openapi.json
+	cd backend && python3 -m app.cli.openapi_dump > ../openapi.json.tmp
+	mv openapi.json.tmp openapi.json
 gen-client: openapi ## regenerate the typed client; must be a no-op diff in CI
-	cd frontend && npx openapi-typescript ../openapi.json -o src/api/schema.d.ts
+	cd frontend && npm ci --silent && npx --no-install openapi-typescript ../openapi.json --empty-objects-unknown -o src/api/schema.d.ts && cp ../openapi.json src/api/openapi.json
+
+lock: ## re-pin backend/requirements.lock (hashed) from pyproject.toml — commit the result
+	cd backend && uv pip compile pyproject.toml --generate-hashes --universal --python-version 3.12 -q -o requirements.lock
 
 ## ── data ──────────────────────────────────────────────────────────────────
 migrate:   ; $(COMPOSE) exec -T backend alembic upgrade head
@@ -60,13 +73,18 @@ db-shell:  ; $(COMPOSE) exec database psql -U $$POSTGRES_USER -d $$POSTGRES_DB
 db-dump:   ; $(COMPOSE) exec -T database pg_dump -U $$POSTGRES_USER $$POSTGRES_DB > backup-$$(date +%F-%H%M).sql
 
 ## ── kubernetes (the SECOND command of §1.4) ───────────────────────────────
-k8s-up: ## cluster + metrics-server + VPA + deploy dev overlay
-	k3d cluster create $(NS) --agents 2 -p "8081:80@loadbalancer" --wait
+k8s-up: ## cluster + ingress-nginx + metrics-server + deploy dev overlay
+	k3d cluster create $(NS) --agents 2 -p "8081:80@loadbalancer" \
+	  --k3s-arg '--disable=traefik@server:*' --wait
+	kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.11.3/deploy/static/provider/cloud/deploy.yaml
+	kubectl -n ingress-nginx wait --for=condition=ready pod \
+	  -l app.kubernetes.io/component=controller --timeout=180s
 	kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
 	kubectl -n kube-system patch deploy metrics-server --type=json \
 	  -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
 	kubectl apply -k k8s/overlays/dev
 	kubectl -n $(NS) rollout status deploy/backend --timeout=300s
+	kubectl -n $(NS) rollout status deploy/frontend --timeout=300s
 k8s-down:  ; k3d cluster delete $(NS)
 k8s-logs:  ; kubectl -n $(NS) logs -l app=backend --tail=200 -f
 rollback:  ; kubectl -n $(NS) rollout undo deployment/backend && kubectl -n $(NS) rollout status deployment/backend

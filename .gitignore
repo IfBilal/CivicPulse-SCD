@@ -17,6 +17,7 @@ venv/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.hypothesis/
 htmlcov/
 .coverage
 coverage.xml
@@ -40,3 +41,4 @@ Thumbs.db
 .idea/
 .vscode/*
 !.vscode/extensions.json
+openapi.json.tmp

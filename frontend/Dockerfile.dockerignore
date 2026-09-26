@@ -1,0 +1,19 @@
+# BuildKit per-Dockerfile ignore (context is the repo root). Allow-list: only what the
+# frontend image needs reaches the daemon.
+*
+!frontend/package.json
+!frontend/package-lock.json
+!frontend/index.html
+!frontend/vite.config.ts
+!frontend/tsconfig.json
+!frontend/eslint.config.js
+!frontend/src
+!frontend/public
+!frontend/mocks
+!frontend/nginx.conf
+!frontend/docker-entrypoint.d
+frontend/node_modules
+frontend/dist
+frontend/coverage
+**/.env*
+**/*.log

@@ -1,0 +1,8 @@
+# build-once-deploy-many: same image digest, two environments
+digest: sha256:2de25d3397a401dcbf30f170831a13d6472ebfa614c946c2323b2541985687f1
+
+dev config.js:
+window.__CIVICPULSE__ = { env: "smoketest", version: "abc1234", statsPollMs: 15000, showCacheBadge: true };
+
+prod config.js:
+window.__CIVICPULSE__ = { env: "prod", version: "abc1234", statsPollMs: 15000, showCacheBadge: true };

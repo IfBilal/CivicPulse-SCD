@@ -1,0 +1,11 @@
+$ kubectl -n civicpulse exec postgres-0 -- psql -U $POSTGRES_USER -tAc "select count(*) from complaints"   (before)
+36
+
+$ kubectl -n civicpulse delete pod postgres-0
+pod "postgres-0" deleted from civicpulse namespace
+
+$ kubectl -n civicpulse wait --for=condition=ready pod/postgres-0 --timeout=180s
+pod/postgres-0 condition met
+
+$ kubectl -n civicpulse exec postgres-0 -- psql -U $POSTGRES_USER -tAc "select count(*) from complaints"   (after)
+36

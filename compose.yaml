@@ -1,0 +1,100 @@
+name: civicpulse
+
+x-healthcheck-defaults: &hc { interval: 10s, timeout: 3s, retries: 5, start_period: 15s }
+
+networks:
+  edge:
+    driver: bridge
+  internal:
+    driver: bridge
+    internal: true          # ← no route to the outside world
+
+volumes:
+  pgdata:
+  redisdata:
+  ollama_models:
+
+services:
+  frontend:
+    build: { context: ., dockerfile: frontend/Dockerfile, args: { GIT_SHA: "${GIT_SHA:-dev}" } }
+    image: civicpulse-frontend:dev
+    networks: [edge]                       # ← edge ONLY. This is the marked line.
+    ports: ["8080:8080"]
+    environment:
+      APP_ENV: dev
+      GIT_SHA: "${GIT_SHA:-dev}"   # entrypoint reads this at runtime for /config.js's version field —
+                                   # the build ARG above only reaches the image build, not the process env
+      STATS_POLL_MS: "15000"
+    depends_on:
+      backend: { condition: service_healthy }
+    healthcheck: { test: ["CMD","wget","-qO-","http://127.0.0.1:8080/healthz"], <<: *hc }
+    restart: unless-stopped
+    deploy: { resources: { limits: { cpus: "0.50", memory: 128M } } }
+
+  backend:
+    build: { context: ., dockerfile: backend/Dockerfile, args: { GIT_SHA: "${GIT_SHA:-dev}" } }
+    image: civicpulse-backend:dev
+    networks: [edge, internal]             # ← the ONLY service that bridges both
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@database:5432/${POSTGRES_DB}
+      REDIS_URL: redis://cache:6379/0
+      TRIAGE_PROVIDER: ${TRIAGE_PROVIDER:-simulated}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.groq.com/openai/v1}
+      OLLAMA_BASE_URL: http://ollama:11434
+      TRUSTED_PROXY_HOPS: "1"
+      APP_ENV: dev
+    # DEV ONLY hot-reload mount: trades reproducibility for iteration speed. Absent from
+    # compose.prod.yaml, which trades iteration speed back for reproducibility (§3.4).
+    volumes:
+      - ./backend/app:/app/app:ro
+    depends_on:
+      database: { condition: service_healthy }
+      cache:    { condition: service_healthy }
+    healthcheck: { test: ["CMD","python","-c","import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=2)"], <<: *hc }
+    restart: unless-stopped
+    deploy: { resources: { limits: { cpus: "1.00", memory: 512M } } }
+
+  database:
+    image: postgres:16.4-alpine           # pinned minor. NOT postgres:16, NOT postgres (§5.3 −8)
+    networks: [internal]                   # ← internal ONLY
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes: ["pgdata:/var/lib/postgresql/data"]   # ← /data, not the parent. See 05-DATA-LAYER.md §7.1
+    healthcheck:
+      test: ["CMD-SHELL","pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      <<: *hc
+    restart: unless-stopped
+    deploy: { resources: { limits: { cpus: "1.00", memory: 512M } } }
+    # NOTE: a published port here is dev-only convenience. It is ABSENT from compose.prod.yaml.
+    ports: ["5432:5432"]
+
+  cache:
+    image: redis:7.4.1-alpine
+    networks: [internal]
+    command: ["redis-server","--appendonly","yes","--appendfsync","everysec",
+              "--maxmemory","256mb","--maxmemory-policy","allkeys-lru","--save",""]
+    volumes: ["redisdata:/data"]
+    healthcheck: { test: ["CMD","redis-cli","ping"], <<: *hc }
+    restart: unless-stopped
+    deploy: { resources: { limits: { cpus: "0.50", memory: 320M } } }
+
+  ollama:
+    image: ollama/ollama:0.3.14
+    networks: [internal]
+    volumes: ["ollama_models:/root/.ollama"]
+    healthcheck: { test: ["CMD","ollama","list"], <<: *hc }
+    profiles: ["ollama"]
+    restart: unless-stopped
+    deploy: { resources: { limits: { cpus: "2.00", memory: 4G } } }
+
+  ollama-pull:                              # ← one-shot, on EDGE, solves contradiction A8
+    image: ollama/ollama:0.3.14
+    networks: [edge]                        # has egress; can reach registry.ollama.ai
+    volumes: ["ollama_models:/root/.ollama"]  # SAME volume as the serving container
+    entrypoint: ["/bin/sh","-c"]
+    command: ["ollama serve & sleep 3; ollama pull ${OLLAMA_MODEL:-llama3.2:1b}; pkill ollama"]
+    profiles: ["ollama"]
+    restart: "no"

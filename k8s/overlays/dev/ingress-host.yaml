@@ -1,0 +1,6 @@
+# JSON6902, not a strategic-merge patch: spec.rules has no merge key, so a partial
+# strategic-merge patch here would risk replacing the whole rule (wiping http.paths) instead of
+# just the host. This only ever touches the one field it names.
+- op: replace
+  path: /spec/rules/0/host
+  value: localhost

@@ -1,0 +1,376 @@
+import gsap from "gsap";
+import { Flip } from "gsap/Flip";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+
+import { api, ApiError } from "../api/client";
+import { CATEGORIES, LIMITS, PRIORITIES, STATUSES } from "../api/schemaMeta";
+import type { Category, Complaint, ComplaintPage, ListQuery, Priority, Status } from "../api/types";
+import { CategoryChip, PriorityTag, ProviderBadge, StatusPill } from "../components/Badges";
+import { CountUp } from "../components/CountUp";
+import { SplitTitle } from "../components/SplitTitle";
+import { Glass } from "../components/Glass";
+import { Expand } from "../components/fx/Expand";
+import { prefersReducedMotion, useReveal } from "../hooks/motion";
+import { CATEGORY_HEX, CATEGORY_META, PRIORITY_META, relativeTime, shortId, STATUS_META } from "../lib/format";
+import { emitPulse } from "../lib/pulse";
+
+const PAGE_SIZES = [10, 20, 50, 100].filter((n) => n <= LIMITS.pageSizeMax);
+const SORTS = [
+  { value: "-created_at", label: "Newest first" },
+  { value: "created_at", label: "Oldest first" },
+  { value: "-priority", label: "Highest priority" },
+  { value: "priority", label: "Lowest priority" },
+] as const;
+
+type Banner = { kind: "conflict" | "error" | "success"; text: string } | null;
+
+/** A positive integer from the URL, or the fallback for junk (missing, NaN, ≤ 0). */
+function positiveInt(raw: string | null, fallback: number): number {
+  const n = Math.floor(Number(raw));
+  return Number.isFinite(n) && n >= 1 ? n : fallback;
+}
+
+function readQuery(sp: URLSearchParams): ListQuery {
+  // The URL is user-editable: clamp/allow-list everything so a hand-typed link can't produce a 400.
+  const sort = SORTS.find((s) => s.value === sp.get("sort"))?.value ?? "-created_at";
+  const q: ListQuery = {
+    page: positiveInt(sp.get("page"), 1),
+    page_size: Math.min(LIMITS.pageSizeMax, positiveInt(sp.get("page_size"), 20)),
+    sort,
+  };
+  const cat = sp.getAll("category").filter((v): v is Category => (CATEGORIES as string[]).includes(v));
+  const pri = sp.getAll("priority").filter((v): v is Priority => (PRIORITIES as string[]).includes(v));
+  const st = sp.getAll("status").filter((v): v is Status => (STATUSES as string[]).includes(v));
+  if (cat.length) q.category = cat;
+  if (pri.length) q.priority = pri;
+  if (st.length) q.status = st;
+  return q;
+}
+
+export default function Dashboard() {
+  const [sp, setSp] = useSearchParams();
+  const query = readQuery(sp);
+  const key = sp.toString();
+  const [page, setPage] = useState<ComplaintPage | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [banner, setBanner] = useState<Banner>(null);
+  const [pending, setPending] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<string | null>(null);
+  // Learned from the server's own 409 (`details.terminal`) — never assumed locally.
+  const [terminal, setTerminal] = useState<Record<string, string>>({});
+  const listRef = useRef<HTMLUListElement>(null);
+  const scope = useReveal<HTMLDivElement>();
+
+  // Only the latest request may write state: a slow response for an old filter/page must never
+  // overwrite a newer one (found by the browser E2E run: filter change + fast "Next").
+  const seq = useRef(0);
+  // Flip: capture row positions before a new list lands, then animate from them (filters/sort/page).
+  const flipState = useRef<Flip.FlipState | null>(null);
+  const animateList = useRef(false);
+  const load = useCallback(async () => {
+    const mine = ++seq.current;
+    const latest = () => mine === seq.current;
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const data = await api.listComplaints(readQuery(new URLSearchParams(key)));
+      if (latest()) {
+        if (listRef.current && !prefersReducedMotion()) {
+          gsap.registerPlugin(Flip);
+          flipState.current = Flip.getState(listRef.current.querySelectorAll("li.complaint"));
+        }
+        animateList.current = true;
+        setPage(data);
+      }
+    } catch (e) {
+      if (latest()) setLoadError(e instanceof ApiError ? e.body.error.message : "Could not load complaints.");
+    } finally {
+      if (latest()) setLoading(false);
+    }
+  }, [key]);
+
+  useEffect(() => {
+    const t = window.setTimeout(() => void load(), 0);
+    return () => {
+      clearTimeout(t);
+      seq.current += 1; // unmount / key change: in-flight responses become stale
+    };
+  }, [load]);
+
+  useLayoutEffect(() => {
+    // Only a freshly LOADED list animates; an in-place status update must not re-shuffle rows.
+    if (!page || !listRef.current || !animateList.current || prefersReducedMotion()) return;
+    animateList.current = false;
+    const state = flipState.current;
+    flipState.current = null;
+    const rows = listRef.current.querySelectorAll("li.complaint");
+    if (state && state.elementStates.length) {
+      const flip = Flip.from(state, {
+        targets: rows,
+        duration: 0.6,
+        ease: "power3.inOut",
+        stagger: 0.015,
+        onEnter: (els) =>
+          gsap.fromTo(
+            els,
+            { opacity: 0, rotateX: -55, z: -80, transformOrigin: "50% 0%" },
+            { opacity: 1, rotateX: 0, z: 0, duration: 0.6, ease: "power3.out", stagger: 0.03, clearProps: "transform" },
+          ),
+      });
+      return () => {
+        flip.kill();
+      };
+    }
+    const ctx = gsap.context(() => {
+      gsap.from(rows, { opacity: 0, rotateX: -60, z: -90, transformOrigin: "50% 0%", duration: 0.7, ease: "power3.out", stagger: 0.04, clearProps: "transform" });
+    }, listRef);
+    return () => ctx.revert();
+  }, [page]);
+
+  function update(mutator: (next: URLSearchParams) => void, resetPage = true) {
+    const next = new URLSearchParams(sp);
+    mutator(next);
+    if (resetPage) next.delete("page");
+    setSp(next);
+  }
+
+  function toggle(name: "category" | "priority" | "status", value: string) {
+    update((next) => {
+      const cur = next.getAll(name);
+      next.delete(name);
+      (cur.includes(value) ? cur.filter((v) => v !== value) : [...cur, value]).forEach((v) => next.append(name, v));
+    });
+  }
+
+  async function transition(c: Complaint, to: Status) {
+    setPending(`${c.id}:${to}`);
+    setBanner(null);
+    try {
+      const updated = await api.updateStatus(c.id, { status: to });
+      setPage((p) => p && { ...p, items: p.items.map((i) => (i.id === updated.id ? updated : i)) });
+      setBanner({ kind: "success", text: `#${shortId(c.id)} is now ${STATUS_META[updated.status].label.toLowerCase()}.` });
+      emitPulse("#3df5a6", { strength: 1 });
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409) {
+        setBanner({ kind: "conflict", text: e.body.error.message }); // ← verbatim, never a mapped string
+        emitPulse("#ff4d6d", { strength: 0.8 });
+        const d = e.body.error.details as { terminal?: boolean; from?: Status } | undefined;
+        if (d?.terminal) setTerminal((t) => ({ ...t, [c.id]: e.body.error.message }));
+        if (d?.from && d.from !== c.status) {
+          setPage((p) => p && { ...p, items: p.items.map((i) => (i.id === c.id ? { ...i, status: d.from! } : i)) });
+        }
+      } else {
+        setBanner({ kind: "error", text: e instanceof ApiError ? e.body.error.message : "Update failed." });
+      }
+    } finally {
+      setPending(null);
+    }
+  }
+
+  const activeFilters = (query.category?.length ?? 0) + (query.priority?.length ?? 0) + (query.status?.length ?? 0);
+  const from = page && page.total ? (page.page - 1) * page.page_size + 1 : 0;
+  const to = page ? Math.min(page.total, page.page * page.page_size) : 0;
+
+  return (
+    <div ref={scope}>
+      <header className="page-head" data-reveal>
+        <p className="eyebrow">Operator console</p>
+        <h1 className="page-title">
+          <SplitTitle text="Dashboard" />
+        </h1>
+        <p className="page-sub">Every report, triaged. Filter, sort and move complaints through their lifecycle — the server decides what&apos;s allowed.</p>
+      </header>
+
+      <Glass className="filters" aria-label="Filters">
+        <div className="filter-group">
+          <span className="filter-label">Category</span>
+          <div className="row">
+            {CATEGORIES.map((c) => (
+              <button key={c} type="button" className="chip chip-toggle" style={{ ["--c" as string]: CATEGORY_META[c].color }} aria-pressed={!!query.category?.includes(c)} onClick={() => toggle("category", c)}>
+                <span className="dot" aria-hidden />
+                {CATEGORY_META[c].label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="filter-group">
+          <span className="filter-label">Priority</span>
+          <div className="row">
+            {PRIORITIES.map((p) => (
+              <button key={p} type="button" className="chip chip-toggle" style={{ ["--c" as string]: PRIORITY_META[p].color }} aria-pressed={!!query.priority?.includes(p)} onClick={() => toggle("priority", p)}>
+                {PRIORITY_META[p].label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="filter-group">
+          <span className="filter-label">Status</span>
+          <div className="row">
+            {STATUSES.map((s) => (
+              <button key={s} type="button" className="chip chip-toggle" style={{ ["--c" as string]: STATUS_META[s].color }} aria-pressed={!!query.status?.includes(s)} onClick={() => toggle("status", s)}>
+                <span aria-hidden>{STATUS_META[s].icon}</span>
+                {STATUS_META[s].label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="row filter-foot">
+          <label className="inline-select">
+            Sort
+            <select className="select" value={query.sort} onChange={(e) => update((n) => n.set("sort", e.target.value))}>
+              {SORTS.map((s) => (
+                <option key={s.value} value={s.value}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="inline-select">
+            Per page
+            <select className="select" value={query.page_size} onChange={(e) => update((n) => n.set("page_size", e.target.value))}>
+              {PAGE_SIZES.map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+          </label>
+          <span className="spacer" />
+          {activeFilters > 0 && (
+            <button type="button" className="btn btn-sm btn-ghost" onClick={() => setSp(new URLSearchParams())}>
+              Clear {activeFilters} filter{activeFilters > 1 ? "s" : ""} ✕
+            </button>
+          )}
+          <span className="total-pill" aria-live="polite">
+            {page ? <CountUp value={page.total} /> : "—"} matching
+          </span>
+        </div>
+      </Glass>
+
+      <div style={{ height: 18 }} />
+
+      {banner && (
+        <div className={`banner ${banner.kind}`} role={banner.kind === "success" ? "status" : "alert"}>
+          <span aria-hidden>{banner.kind === "success" ? "✓" : banner.kind === "conflict" ? "⛔" : "⚠"}</span>
+          <span>{banner.text}</span>
+          <button className="x" aria-label="Dismiss" onClick={() => setBanner(null)}>
+            ×
+          </button>
+        </div>
+      )}
+
+      {loadError ? (
+        <div className="banner error" role="alert">
+          <span aria-hidden>⚠</span>
+          <span>{loadError}</span>
+          <button className="btn btn-sm" style={{ marginLeft: "auto" }} onClick={() => void load()}>
+            Retry
+          </button>
+        </div>
+      ) : loading && !page ? (
+        <ul className="complaints" aria-busy="true" aria-label="Loading complaints">
+          {Array.from({ length: 6 }, (_, i) => (
+            <li key={i} className="skeleton" style={{ height: 96 }} />
+          ))}
+        </ul>
+      ) : page && page.items.length === 0 ? (
+        <Glass className="empty">
+          <p className="eyebrow">No signal</p>
+          <h2 className="card-title">No complaints match these filters.</h2>
+          <button className="btn btn-sm" onClick={() => setSp(new URLSearchParams())}>
+            Clear filters
+          </button>
+        </Glass>
+      ) : (
+        page && (
+          <ul className={`complaints ${loading ? "is-loading" : ""}`} ref={listRef} aria-busy={loading}>
+            {page.items.map((c) => {
+              const open = expanded === c.id;
+              const lockedMsg = terminal[c.id];
+              return (
+                <li
+                  key={c.id}
+                  data-flip-id={c.id}
+                  className={`complaint glass ${open ? "open" : ""}`}
+                  style={{ ["--c" as string]: CATEGORY_META[c.category].color }}
+                  onPointerEnter={(e) => e.pointerType === "mouse" && emitPulse(CATEGORY_HEX[c.category], { strength: 0.45, at: "random" })}
+                >
+                  <button className="complaint-head" aria-expanded={open} aria-controls={`c-${c.id}`} onClick={() => setExpanded(open ? null : c.id)}>
+                    <span className="cat-rail" aria-hidden />
+                    <span className="complaint-main">
+                      <span className="complaint-title">{c.ai_summary ?? c.text}</span>
+                      <span className="complaint-meta">
+                        <span className="mono">#{shortId(c.id)}</span> · {c.location} · {relativeTime(c.created_at)}
+                      </span>
+                    </span>
+                    <span className="complaint-tags">
+                      <CategoryChip category={c.category} />
+                      <PriorityTag priority={c.priority} />
+                      <StatusPill key={c.status} status={c.status} flash />
+                    </span>
+                    <span className="chev" aria-hidden>
+                      ⌄
+                    </span>
+                  </button>
+                  {open && (
+                    <Expand className="complaint-body" id={`c-${c.id}`}>
+                      <blockquote>{c.text}</blockquote>
+                      <div className="row" style={{ marginBottom: 14 }}>
+                        <ProviderBadge provider={c.triaged_by} />
+                        <span className="hint mono">{c.triage_latency_ms} ms</span>
+                        {c.reporter_contact && <span className="hint">contact on file</span>}
+                      </div>
+                      <div className="row transitions" role="group" aria-label="Move to status">
+                        {STATUSES.filter((s) => s !== c.status).map((s) => (
+                          <button
+                            key={s}
+                            className="btn btn-sm"
+                            style={{ ["--b" as string]: STATUS_META[s].color }}
+                            disabled={!!lockedMsg || pending !== null}
+                            aria-disabled={!!lockedMsg || pending !== null}
+                            title={lockedMsg ?? `Move to ${STATUS_META[s].label}`}
+                            onClick={() => void transition(c, s)}
+                          >
+                            {pending === `${c.id}:${s}` ? <span className="spinner" aria-hidden /> : <span aria-hidden>{STATUS_META[s].icon}</span>}
+                            {STATUS_META[s].label}
+                          </button>
+                        ))}
+                      </div>
+                    </Expand>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )
+      )}
+
+      {page && page.total > 0 && (
+        <nav className="pager" aria-label="Pagination">
+          <span className="hint">
+            Showing {from}–{to} of {page.total}
+          </span>
+          <span className="spacer" />
+          <button className="btn btn-sm" disabled={page.page <= 1} onClick={() => update((n) => n.set("page", String(page.page - 1)), false)}>
+            ← Prev
+          </button>
+          {Array.from({ length: page.pages }, (_, i) => i + 1)
+            .filter((n) => n === 1 || n === page.pages || Math.abs(n - page.page) <= 1)
+            .map((n, i, arr) => (
+              <span key={n} className="row" style={{ gap: 6 }}>
+                {i > 0 && n - arr[i - 1]! > 1 && <span className="hint">…</span>}
+                <button className={`btn btn-sm ${n === page.page ? "current" : ""}`} aria-current={n === page.page ? "page" : undefined} onClick={() => update((q) => q.set("page", String(n)), false)}>
+                  {n}
+                </button>
+              </span>
+            ))}
+          <button className="btn btn-sm" disabled={page.page >= page.pages} onClick={() => update((n) => n.set("page", String(page.page + 1)), false)}>
+            Next →
+          </button>
+        </nav>
+      )}
+    </div>
+  );
+}

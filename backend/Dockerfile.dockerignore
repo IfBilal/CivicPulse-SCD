@@ -1,0 +1,10 @@
+# BuildKit per-Dockerfile ignore (context is the repo root). Allow-list, so a new top-level
+# directory never silently bloats the backend context.
+*
+!backend/requirements.lock
+!backend/app
+!backend/alembic
+!backend/alembic.ini
+**/__pycache__
+**/*.pyc
+**/.env*

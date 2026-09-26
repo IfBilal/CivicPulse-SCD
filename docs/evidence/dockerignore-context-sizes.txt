@@ -1,0 +1,4 @@
+# build-context sizes · 2026-09-24T11:12:36Z · 0fc6e8f
+# method: docker buildx (transferring context)
+backend  without ignore:   270.6MB    with:   141.0KB    (−99.9%)
+frontend without ignore:   236.0MB    with:   486.5KB    (−99.8%)
