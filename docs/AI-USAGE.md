@@ -2256,3 +2256,29 @@ fastapi/starlette/pydantic." Would need its own `chore/bump-base-image` pass: pi
 `python:3.12.*-slim-bookworm` digest (or the next Debian point release) and re-verify the
 Docker build + full suite against it. Flagged here rather than silently left once discovered,
 even though fixing it wasn't this PR's job.
+
+## 2026-09-26 · fix/frontend-alpine-cve — corrected: the 19 OS CVEs are frontend's, not backend's
+
+Re-read the prior entry's own scan log line-by-line rather than trust my earlier skim: the
+`Target` column says `civicpulse-frontend:ci (alpine 3.21.3)`, not backend. My first attempt at
+this fix (reverted before committing, never pushed) added `apt-get upgrade` to
+`backend/Dockerfile` — the wrong file entirely, since backend's base is `python:3.12.14-slim-
+bookworm` (Debian), not Alpine, and its own scan result (`civicpulse-backend:ci`, separately
+logged earlier in the same job) already showed 0 vulnerabilities before this fix even started.
+
+**Real fix:** `frontend/Dockerfile`'s runtime stage (`nginx:1.27.5-alpine-slim`) is the actual
+Alpine 3.21.3 image Trivy flagged. Added `apk upgrade --no-cache` as the first step of that
+stage's existing `RUN` block (same non-root user setup, unchanged) — Alpine's equivalent of
+`apt-get upgrade`, patches OS packages to whatever fix is available as of build time regardless
+of when the base tag was last rebuilt. `--no-cache` skips leaving an apk index behind, keeping
+this Dockerfile's own stated size budget (45-55 MB runtime) intact.
+
+**Not verified against a real Docker build** — same Docker-socket-permission gap as every other
+Docker-dependent check this session (`permission denied` on `unix:///var/run/docker.sock`,
+confirmed again directly before writing this). `apk upgrade --no-cache` in an Alpine-based
+Dockerfile's runtime stage is a standard, low-risk, well-established pattern for exactly this
+Trivy finding — not a novel or risky change — but the real confirmation is CI's own `scan` job
+building and scanning the actual image, not assumed correct from the pattern alone.
+- **I changed:** caught and reverted my own first, wrong-file attempt before it was ever
+  committed or pushed — re-read the actual scan log instead of assuming "the CVEs" meant
+  backend just because that PR's own recent work was backend-focused.
