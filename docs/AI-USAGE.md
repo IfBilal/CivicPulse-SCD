@@ -788,20 +788,9 @@ the code against real infrastructure for the first time. Three separate red runs
 diagnosed from the actual job log and fixed with a real code change, not a workaround:
 
 **1. Gitleaks flagged `backend/tests/unit/test_logging_config.py:55`** (`google-ai-key` rule) —
-a test fixture exercising `_redact()`'s `AIza[\w-]{35}` pattern happened to be a literal string
-matching Google's key shape. Not a live key, but CLAUDE.md HARD rule 1 treats a fixture shaped
-like a real key the same as a real one — gitleaks is shape-based by design and correctly
-doesn't distinguish. Fixed by assembling both key-shaped fixtures (`gsk_`/`AIza`) at runtime
-via generator expressions instead of embedding a matching literal in source, verified by hand
-against `.gitleaks.toml`'s exact `groq-key`/`google-ai-key` regexes and by disabling
-`_SECRET_PATTERNS` at runtime to confirm both tests still go red without the implementation.
-Because the flagged commit (`be8d08e`, created by an earlier rebase) had already been pushed,
-fixing forward wasn't enough — gitleaks scans the full PR commit range, so the flagged blob
-kept surfacing in every subsequent CI run even after a later commit fixed it. Resolved with
-`git reset --soft` to the branch's merge-base with `dev` and a single clean recommit, removing
-the flagged blob from this branch's history entirely (the branch was never shared — only this
-session had pushed to it, so rewriting was safe; confirmed via `--force-with-lease`, which
-would have refused had anyone else pushed).
+a test fixture happened to literally match a key-shape regex. Not a live key. Fixed by
+assembling key-shaped fixtures at runtime instead of a matching literal in source, and by
+rewriting the affected commit out of this (never-shared) branch's history.
 
 **2. `data-layer` CI job failed:** `pydantic_core.ValidationError: Instance is frozen`, on
 `Settings.database_url`. `backend/tests/integration/conftest.py::migrated_db` and
@@ -1042,6 +1031,9 @@ exposed keys are never actually exercised by anything this session does. The use
 asked this session to "forget the hard rules" for this pass; that request was declined for both
 the secret-handling rule and the no-self-merge-to-`main`/partner-review rule — stated directly
 to the user, not silently narrowed in scope.
+
+**Update, 2026-09-26:** user confirms both keys have been rotated in their respective consoles.
+Exposure window closed; no further action needed on this entry.
 
 ---
 
