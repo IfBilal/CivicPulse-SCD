@@ -1,0 +1,30 @@
+# `14-LOAD-AUTOSCALING.md §3`. `resources.requests.cpu` is the denominator this HPA reads —
+# already set on `backend`'s container in backend-deployment.yaml; omitting it there would make
+# every TARGETS column read `<unknown>/60%` forever, the single most common HPA failure mode
+# (§0 item 1). Requires metrics-server installed and verified (`kubectl top pods` returns real
+# numbers) before this object does anything visible — see that doc's §1 for the kind/k3d patch.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: backend-hpa
+  namespace: civicpulse
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: backend }
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 60 } }
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300 # a brief traffic trough can't collapse the fleet
+      policies:
+        - { type: Percent, value: 50, periodSeconds: 60 } # at most halve per minute
+        - { type: Pods, value: 2, periodSeconds: 60 }
+      selectPolicy: Min # most conservative policy wins on the way down
+    scaleUp:
+      stabilizationWindowSeconds: 0 # users are waiting — act on the newest reading immediately
+      policies:
+        - { type: Percent, value: 100, periodSeconds: 30 } # double every 30s
+        - { type: Pods, value: 4, periodSeconds: 30 }
+      selectPolicy: Max # most aggressive policy wins on the way up

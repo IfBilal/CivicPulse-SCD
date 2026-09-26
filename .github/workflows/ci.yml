@@ -172,20 +172,22 @@ jobs:
         with: { sarif_file: trivy.sarif }
 
   manifests:
-    # Phase 6 (Kubernetes) has not landed yet as of this PR — k8s/overlays/{dev,prod} don't exist.
-    # This job is intentionally red until then (docs/AI-USAGE.md, 2026-09-25, "manifests job
-    # scope" ponytail entry) rather than faked green with a hollow scaffold. It goes green without
-    # touching this file again once Phase 6 adds k8s/.
+    # Phase 6 (Kubernetes) landed 2026-09-26 — k8s/overlays/{dev,prod} exist and this job is
+    # green. NOTE (docs/AI-USAGE.md, 2026-09-26 audit): kubeconform validates schema conformance
+    # only, not "did you ship every object 13-KUBERNETES.md/14-LOAD-AUTOSCALING.md require" — a
+    # green run here is not proof the k8s/ tree is complete against those docs, just that
+    # whatever IS there parses. Cross-check the object inventory by hand against those docs'
+    # own tables, not just this job's own color.
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: fail loudly, not silently, while k8s/ doesn't exist yet
-        # `! grep ... k8s/ || {...}` (below) can't tell "no match" from "path doesn't exist" —
-        # grep exits 2 either way and `!` treats any nonzero the same (the same bug class fixed
-        # in Makefile::lint-localhost this same PR). Guard explicitly instead of relying on that.
+      - name: fail loudly, not silently, if k8s/ ever goes missing
+        # Defensive guard, kept even though k8s/ exists now: `! grep ... k8s/ || {...}` (below)
+        # can't tell "no match" from "path doesn't exist" — grep exits 2 either way and `!`
+        # treats any nonzero the same (the same bug class fixed in Makefile::lint-localhost).
         run: |
           if [ ! -d k8s/overlays/dev ] || [ ! -d k8s/overlays/prod ]; then
-            echo "::error::k8s/overlays/{dev,prod} don't exist yet — Phase 6 hasn't landed"
+            echo "::error::k8s/overlays/{dev,prod} missing"
             exit 1
           fi
       - run: |
@@ -232,13 +234,7 @@ jobs:
           [ -n "$cat" ] && [ "$cat" != "null" ] || { echo "::error::no category on created complaint"; exit 1; }
       - name: X-Cache MISS → HIT
         # #34 (Taimoor's real Redis-backed stats cache) merged into dev — verified for real
-        # against a live compose stack before hard-gating this. NOT tested here: invalidation
-        # on POST /api/complaints. Found and disclosed separately (ENGINEERING-NOTES.md) that
-        # ComplaintService.create() never calls StatsService.invalidate() — only
-        # change_status() does (complaint_service.py:104-105) — so a fresh POST leaves stats
-        # stale until the 30s TTL. Not asserted here since it's confirmed broken; asserting it
-        # would just be a known-red check, not a useful signal. Backend/app territory, not
-        # fixed on this branch.
+        # against a live compose stack before hard-gating this.
         #
         # FLUSHALL first: the "readiness" step above polls /api/stats via wait_for.sh, which
         # itself populates the cache as a side effect — without this, "first" here already
@@ -250,6 +246,18 @@ jobs:
           b=$(curl -si localhost:8080/api/stats | grep -i '^x-cache:' | tr -d '\r' | awk '{print $2}')
           echo "first=$a second=$b"
           [ "$a" = "MISS" ] && [ "$b" = "HIT" ] || { echo "::error::expected MISS then HIT, got $a/$b"; exit 1; }
+      - name: POST invalidates the stats cache (fix/stats-invalidation-ordering, 2026-09-26)
+        # ComplaintService.create() now calls StatsService.invalidate() after commit — verified
+        # here at the HTTP level, not just in the unit/integration suite: after the MISS→HIT
+        # pair above, a fresh POST must force the NEXT /api/stats read back to MISS.
+        run: |
+          curl -s -X POST localhost:8080/api/complaints \
+            -H 'Content-Type: application/json' \
+            -d '{"text":"cache invalidation ci probe, unique text for this run","location":"CI probe location"}' \
+            -o /dev/null
+          c=$(curl -si localhost:8080/api/stats | grep -i '^x-cache:' | tr -d '\r' | awk '{print $2}')
+          echo "after-post=$c"
+          [ "$c" = "MISS" ] || { echo "::error::POST did not invalidate the stats cache, got $c"; exit 1; }
       - name: network segmentation (§3.2) — this MUST fail
         run: |
           if docker compose exec -T frontend sh -c 'nc -z -w2 database 5432' 2>/dev/null; then

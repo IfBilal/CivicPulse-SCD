@@ -11,7 +11,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.domain.errors import InvalidTransition, NotFound, NotReady, RateLimited
+from app.domain.errors import InvalidTransition, NotFound, NotReady
 from app.domain.transitions import TRANSITIONS
 from app.schemas.errors import ErrorBody, ErrorEnvelope, FieldError
 
@@ -122,17 +122,6 @@ async def _on_invalid_transition(request: Request, exc: Exception) -> JSONRespon
     )
 
 
-async def _on_rate_limited(request: Request, exc: Exception) -> JSONResponse:
-    assert isinstance(exc, RateLimited)
-    return error_response(
-        request,
-        429,
-        "rate_limited",
-        "Too many requests.",
-        headers={"Retry-After": str(exc.retry_after_s)},
-    )
-
-
 async def _on_not_ready(request: Request, exc: Exception) -> JSONResponse:
     # 04-CONTRACTS.md §6.8 verbatim shape: error.details.{checks,failed}, message names the
     # failed dependency (the first one, if several — `checks` still carries the full map).
@@ -170,7 +159,6 @@ def register_error_handlers(app: FastAPI) -> None:
     app.add_exception_handler(RequestValidationError, _on_validation_error)
     app.add_exception_handler(InvalidTransition, _on_invalid_transition)
     app.add_exception_handler(NotFound, _on_not_found)
-    app.add_exception_handler(RateLimited, _on_rate_limited)
     app.add_exception_handler(NotReady, _on_not_ready)
     app.add_exception_handler(StarletteHTTPException, _on_starlette_http_exception)
     app.add_exception_handler(Exception, _on_unhandled)

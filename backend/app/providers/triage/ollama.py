@@ -3,10 +3,12 @@
 Same interface as `LLMTriage`, different transport: `POST {OLLAMA_BASE_URL}/api/chat` via
 `httpx.AsyncClient`, `format: "json"`, `stream: false`.
 
-**CODE + UNIT TESTS ONLY.** No live Ollama daemon exists in this sandbox (no Docker, confirmed
-this session) and no live LLM call is made from this session under any circumstance — see
-`docs/AI-USAGE.md`'s 2026-09-25 security-incident entry. Tests use `httpx.MockTransport` to
-fake the HTTP layer, never a real socket.
+Unit tests (this module's own test file) use `httpx.MockTransport` to fake the HTTP layer,
+never a real socket — CLAUDE.md HARD rule 15, no real network in a test. A real, one-off
+buy-vs-host benchmark WAS run against a real local Ollama daemon (2026-09-26, `llama3.2:1b`,
+outside any test/CI path — see `docs/TRIAGE.md` §4/§5 for the numbers and `docs/AI-USAGE.md`
+for how): this module's own tests still never touch a real socket, that benchmark used this
+same code path manually from a scratch script.
 """
 
 from typing import Protocol

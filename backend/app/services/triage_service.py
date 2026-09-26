@@ -28,6 +28,7 @@ from time import monotonic, perf_counter
 from uuid import UUID
 
 import httpx
+from prometheus_client import REGISTRY, Counter
 from pydantic import ValidationError
 
 from app.domain.enums import Category, Priority, TriagedBy
@@ -42,9 +43,39 @@ from app.providers.triage.simulated import (
     SimulatedServerError,
     SimulatedValidationError,
 )
+from app.schemas.meta import CacheStats
 from app.schemas.triage import TriageResult
 
 log = logging.getLogger("app.triage")
+
+# Process-global, not per-instance: `TriageService` is constructed fresh per-request
+# (`app/deps.py::get_complaint_service()`), so `self._cache_hits`/`_cache_misses` alone can't
+# answer "hit rate since the app started" — the same per-request-vs-app-lifetime problem
+# `app.state.ring` already solves for the outcome ring. A module-level `prometheus_client`
+# `Counter` (same pattern as `middleware/prometheus.py`'s `REQUEST_COUNT`) survives across
+# requests by construction, and `/api/meta/providers` reads it back via `REGISTRY.
+# get_sample_value` — the fix `08-AI-TRIAGE.md §6` actually specifies, not a one-line swap
+# (found and left as a disclosed gap in the earlier post-merge audit; closed here, 2026-09-26).
+TRIAGE_CACHE_RESULT = Counter(
+    "triage_cache_result_total",
+    "Triage content-hash cache hits/misses",
+    ["result"],
+)
+
+
+def cache_stats() -> CacheStats:
+    """`08-AI-TRIAGE.md §6`'s own specified read path: `REGISTRY.get_sample_value` against the
+    real counter above (also what `/metrics` itself would expose). `None` (never incremented
+    yet — e.g. right after a fresh app start) means 0, not missing data. Lives here rather than
+    in `routes/meta.py` since this module owns `TRIAGE_CACHE_RESULT`."""
+    hits = REGISTRY.get_sample_value("triage_cache_result_total", {"result": "hit"})
+    misses = REGISTRY.get_sample_value("triage_cache_result_total", {"result": "miss"})
+    hits_i = int(hits) if hits is not None else 0
+    misses_i = int(misses) if misses is not None else 0
+    total = hits_i + misses_i
+    hit_rate = (hits_i / total) if total else 0.0
+    return CacheStats(hits=hits_i, misses=misses_i, hit_rate=hit_rate)
+
 
 # Exceptions that mean "try again, the world may have changed": network hiccups, rate limits,
 # server-side 5xx. Retrying these is the whole point of the ladder.
@@ -224,6 +255,7 @@ class TriageService:
         hit = await self._cache.get(key)
         if hit is not None:
             self._cache_hits += 1
+            TRIAGE_CACHE_RESULT.labels(result="hit").inc()
             self._record(
                 complaint_id=complaint_id,
                 provider=hit.triaged_by,
@@ -239,6 +271,7 @@ class TriageService:
                 cached=True,
             )
         self._cache_misses += 1
+        TRIAGE_CACHE_RESULT.labels(result="miss").inc()
 
         total_budget_s = float(getattr(self._s, "triage_total_budget_ms", 12000)) / 1000
         max_retries = int(getattr(self._s, "triage_max_retries", 1))
