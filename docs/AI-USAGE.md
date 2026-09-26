@@ -2112,3 +2112,52 @@ fix verified for real, not just locally.
   `requirements.lock`, plus a new `tests/conftest.py`) — going on its own branch, its own PR, and
   explicitly **not** self-merged; per `CLAUDE.md §6` rule 5 this needs DEV-A's review even more
   than a same-lane PR would, since it's his logic being changed by someone else.
+
+---
+
+## 2026-09-26 · fix/fastapi-starlette-cve — real dependency bump, not a one-line pin
+
+`scan`'s last remaining real failure on `dev`: 3 HIGH CVEs in `starlette==0.46.2` (the version
+`fastapi==0.115.*` actually resolved to) — CVE-2025-62727, CVE-2026-48818, CVE-2026-54283, all
+fixed upstream (0.49.1/1.1.0/1.3.1 respectively). `orjson` was already fixed by #40's bump.
+
+**Checked before touching anything:** `fastapi==0.115.*` caps starlette below `0.47.0`
+regardless of patch version — confirmed by inspecting each fastapi minor's own
+`Requires-Dist: starlette` bound directly (`0.116`–`0.120` all still cap below `0.49`;
+`0.121.0` is the first to allow `<0.50.0,>=0.40.0`). A standalone starlette pin without a real
+fastapi bump was never going to work; tested it directly to confirm — `starlette==0.49.1`
+alongside the existing `fastapi==0.115.*` pin fails at import time under this repo's
+`filterwarnings = ["error::DeprecationWarning"]` (starlette's own internal deprecation warning
+on `HTTP_422_UNPROCESSABLE_ENTITY`).
+
+**Bumped `fastapi==0.115.*` → `0.121.*`, `pydantic==2.9.*` → `2.11.*`, added an explicit
+`starlette>=0.49.1,<0.50` floor pin** (redundant with fastapi's own transitive bound today, but
+makes the CVE fix durable against a future lockfile regen resolving back down within fastapi's
+wider `<0.50.0` allowance). The pydantic bump was required, not optional: `fastapi==0.121.*`'s
+`jsonable_encoder` uses a pydantic v1-compat code path that trips `pydantic==2.9.*`'s own
+`PydanticDeprecatedSince20` warning under the same `filterwarnings` setting, breaking every
+`tests/contract/test_openapi.py` test — found by actually running the suite after the fastapi
+bump, not assumed safe from the changelog alone.
+
+**Verified, not assumed:** built a genuinely clean venv (not the incrementally-patched one used
+while iterating) and installed via `pip install -e ".[dev]"` from the updated `pyproject.toml`
+— zero dependency conflicts. `pytest -m "unit or contract"` — 271 passed. `ruff check .`,
+`ruff format --check .`, `mypy app` (strict) — all clean. Regenerated `requirements.lock` via
+`uv pip compile --generate-hashes --universal`, diffed it — only `fastapi`, `starlette`,
+`pydantic`, `pydantic-core`, `typing-inspection`, and one new tight transitive
+(`annotated-doc`) moved; nothing unrelated. Installed a second, separate clean venv directly
+from the regenerated lockfile (`pip install -r requirements.lock`, matching exactly what
+`backend/Dockerfile`'s builder stage does with `--require-hashes`) and confirmed the app
+factory still constructs successfully from that install.
+
+**Not verified:** the actual built Docker image against Trivy — this sandbox has no Docker
+socket access (confirmed again: `permission denied` connecting to `unix:///var/run/docker.sock`,
+same gap as every other Docker-dependent check this session). The pip-level verification above
+(clean install, hash-locked, full test suite, working app) is strong evidence, but the real
+confirmation is CI's own `scan` job, which does have Docker, on the next push.
+
+**I changed:** chose the smallest fastapi minor bump that actually clears the CVE floor
+(`0.121.*`) over jumping straight to the latest (`0.140.x`+, seen resolving starlette
+unconstrained), to keep the change reviewable and reduce the surface for an unrelated breaking
+change to hide in. `pydantic==2.11.*` (not `2.13.*`, the latest) for the same reason — the
+minimum bump that made the test suite pass, not the newest available.
