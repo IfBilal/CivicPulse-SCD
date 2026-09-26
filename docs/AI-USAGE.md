@@ -2569,3 +2569,31 @@ is the first real push to `main` that triggers it.
   script runs) before editing, not assumed correct from reading the diff — CLAUDE.md's own
   "run tests after a merge, don't just check for leftover references by eye" discipline applied
   to a script that has no test suite of its own to run.
+
+## 2026-09-26 · docs/runbook-and-viva-notes — writing `docs/RUNBOOK.md` and the §4 viva-question
+answers in `docs/ENGINEERING-NOTES.md`
+
+- **Tool:** Claude Code (rubric-traceability audit fix; no named skill invoked for this session —
+  no design fork with ≥2 defensible options came up, so `ponytail` didn't fire; this was a
+  documentation-writing task against an already-frozen implementation, not new code, so
+  `caveman`'s task-list gate doesn't apply either).
+- **Shaped / Wrote:** Wrote `docs/RUNBOOK.md` from scratch (it did not exist before this branch)
+  and appended a new "§4 viva questions" section to `docs/ENGINEERING-NOTES.md`, answering the
+  eight questions `18-DOCS-EVIDENCE-VIVA.md §4` requires. Every `file:line` citation in both
+  documents was checked by opening the real file at that line on this branch
+  (`docs/runbook-and-viva-notes`, forked from `origin/dev` @ `1fb6d717`) before being written —
+  not reconstructed from a design doc's prose example.
+- **I changed:** `18-DOCS-EVIDENCE-VIVA.md §4` Q1's own worked example cites
+  `k8s/base/backend.yaml:L47` and `backend/Dockerfile:L2` — this repo's real files are
+  `k8s/base/backend-deployment.yaml` (different filename) with the resource block at lines
+  36-37/46-47, and `backend/Dockerfile`'s `FROM` line is at line 3, not 2 (a comment occupies
+  line 1). Cited the real locations instead of the doc's illustrative ones, and said so, per
+  CLAUDE.md's "if a design doc's example doesn't match reality, that's a documented bug, not
+  something to quietly paper over." For Q5 (HPA lag in seconds), gave an honest "not yet
+  measured" answer rather than inventing numbers — `docs/evidence/` has no `hpa-watch.txt`/
+  `hpa-samples.txt`/`k6-summary.json` on this branch (confirmed via `ls`), and
+  `14-LOAD-AUTOSCALING.md §5` itself says its table's numbers are "typical, not yours." Also
+  corrected the RUNBOOK's endpoint name from `providers.recent` (as the task brief for this
+  session phrased it) to the real route, `GET /api/meta/providers` with a `recent` field on the
+  response body (`backend/app/routes/meta.py:11`) — there is no separate `providers.recent`
+  endpoint in this codebase.
