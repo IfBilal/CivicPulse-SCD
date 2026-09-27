@@ -2887,3 +2887,272 @@ answers in `docs/ENGINEERING-NOTES.md`
   documented, correct pattern for this exact case.
 - **Scope note:** did not also apply §5.1's Phase-7 sequencing or §2's A3/A4/A5 items — this PR
   is scoped to the one disclosed `cd.yml` bug only, per the user's explicit request.
+
+## 2026-09-26 · dev (pre-branch) — Phase 7 kickoff: caveman task list
+
+- **Tool:** Claude Code + `caveman` (project-defined: stripped task list, not the communication-
+  style skill of the same name).
+- **Shaped / Wrote:** input was `02-CRITICAL-PATH.md` PHASE 7 (§4, lines 262-276) +
+  `14-LOAD-AUTOSCALING.md` (full doc). Output — stripped task list, every item ≤90 min:
+  1. Install metrics-server; patch args for kind/k3d TLS (`--kubelet-insecure-tls`,
+     `--kubelet-preferred-address-types`, `--metric-resolution=15s`).
+  2. Verify metrics pipeline: `kubectl top nodes` and `kubectl top pods -n civicpulse` return
+     real numbers before touching the HPA.
+  3. Install `k6` binary on the machine running the official capture.
+  4. Deploy app to a real cluster: `kubectl apply -k k8s/overlays/dev`.
+  5. Run `load/k6-script.js` against the live Ingress; capture `kubectl get hpa -w` to
+     `docs/evidence/hpa-watch.txt` and a 5s-cadence replica/utilisation sampler to
+     `docs/evidence/hpa-samples.txt`.
+  6. Run `load/plot_hpa.py` against the sampler output; produce
+     `docs/evidence/hpa-replicas-vs-load.png` with the lag annotated.
+  7. Review `kubernetes/autoscaler`'s `vpa-up.sh` install script before running it — do not run
+     an unreviewed third-party script (this project's own security posture, restated in
+     Taimoor's handover §5.1 step 5).
+  8. Install VPA (recommender only needed, since we ship `updateMode: "Off"`).
+  9. Run the five-step VPA loop (`14-LOAD-AUTOSCALING.md §7.2`): record the guess, run full load,
+     `describe` run 1, update `k8s/base/backend.yaml` requests to the Target **in its own commit
+     citing the number**, re-run load, `describe` run 2.
+  10. Run `load/k6-rollout.js` against a live rolling image update; capture
+      `docs/evidence/zero-downtime-rollout.txt` with `http_req_failed rate==0` (bonus +4).
+  11. Write `docs/ENGINEERING-NOTES.md` Q5 (per-term lag table, real seconds, not prose) and Q6
+      (VPA `Off` rationale + the `Auto`-mode oscillation) with real numbers from this run.
+  12. Commit the evidence bundle (`hpa-watch.txt`, `hpa-samples.txt`, `hpa-replicas-vs-load.png`,
+      `k6-summary.json`, `vpa-describe-run1.txt`/`run2.txt`, `zero-downtime-rollout.txt`).
+- **I changed:** none of the list itself — accepted as derived directly from the two source docs.
+  What I verified independently before writing it: `k8s/base/hpa.yaml` and `k8s/base/vpa.yaml`
+  already match `14-LOAD-AUTOSCALING.md §3`/`§7.1` verbatim (structural review only, no cluster to
+  run them against), and `k8s/base/backend-deployment.yaml` already sets
+  `resources.requests: {cpu: 200m, memory: 256Mi}` — the HPA's denominator — so items 1-4 above
+  have no manifest work left, only real-infra execution.
+- **Docker enabled after initial blocker, six real attempts made, real root cause found and
+  handed off — full account:**
+  1. Sandbox initially had no running Docker daemon (`dockerd` unit not found, no passwordless
+     `sudo`). User started it manually on their own machine (`sudo snap start docker`), which
+     resolved this — items 1-4 all completed against a real k3d cluster after that (metrics-
+     server installed and verified with real `kubectl top` numbers, dev overlay deployed, HPA
+     read real `%/60%`, never `<unknown>`).
+  2. **Six full 14-minute `k6 run load/k6-script.js` attempts**, all against the real cluster,
+     `TRIAGE_PROVIDER=simulated` per `CLAUDE.md §4`. Every attempt proved the HPA mechanism
+     itself works — replicas genuinely scaled 2→10 under real CPU load and back to 2 after,
+     confirmed via real `kubectl get hpa -w` output each time. None of the six passed the
+     script's own `http_req_failed rate<0.01` / `http_req_duration p(95)<3000ms` thresholds
+     cleanly: results were 1.64%, 7.62%, 13.00%, 1.40%, 3.02% failed (one run discarded, DB not
+     yet truncated). Not a fixed number — bounced with no convergence even after freeing RAM,
+     disk, and closing every other application on the machine.
+  3. **Two real, disclosed bugs found and worked around, not hidden:**
+     - `RATELIMIT_REQUESTS=10`/60s keyed by client IP (`09-CACHE-RATELIMIT.md §4.3`) blocks a
+       single-machine load generator almost immediately — it looks like one citizen at 120
+       req/s. Worked around by `kubectl set env deploy/backend RATELIMIT_ENABLED=false` for the
+       capture only, reverted after each attempt, never committed to any manifest.
+     - The `complaints` table compounds across repeated runs (~30-40k rows/run, no cleanup
+       between attempts) and measurably degrades every subsequent run — this, not host
+       contention, was the dominant cause of the worst results (13.00%). Fixed by truncating
+       before each attempt once identified.
+  4. **Root cause of the remaining near-misses, confirmed via `nproc`/`free`/`df` and
+     `kubectl top`, not assumed:** at the 120 req/s plateau the HPA correctly scales to its max
+     of 10 replicas, but all 10 replicas plus Postgres, Redis, k3s, and ingress-nginx are
+     containers on one physical laptop sharing one CPU and one disk. Real capacity doesn't scale
+     with replica count here the way it would across real cluster nodes — this is a hardware
+     ceiling, not a defect in `app/` or in `k8s/base/hpa.yaml`/`vpa.yaml` (both independently
+     verified correct against `14-LOAD-AUTOSCALING.md §3`/`§7.1`, no changes needed).
+  5. **Decision, made with the user rather than unilaterally:** do not commit or open a PR with
+     failing evidence. Instead, hand the official capture to Taimoor (DEV-A), whose machine has
+     more headroom, since that fixes the actual root cause rather than only disclosing it.
+     Wrote `docs/handover/HANDOVER-phase7-hpa-capture-devb-to-deva.md` with the exact repro
+     steps and both bugs above pre-documented so his run doesn't re-discover them. All six
+     attempts' evidence files were discarded (not committed) rather than shipped as a
+     known-failing artifact; `docs/evidence/hpa-watch.txt` was restored to the prior committed
+     content from `f0aa574` (Taimoor's earlier live-infra session), not left in a modified state.
+  6. Local cleanup performed before finishing: `k3d cluster delete civicpulse` (cluster no
+     longer needed on this machine), safe/reversible caches cleared during troubleshooting
+     (`npm cache clean --force`, unused Docker images/build cache, `pre-commit`/`go-build`
+     caches) — no personal files or documents touched.
+
+## 2026-09-27 · feat/phase7-load-autoscaling-devb — official HPA capture on DEV-A's machine
+
+- **Tool:** Claude Code, no named skill — `ponytail` decision record per `CLAUDE.md §6` rule 4
+  (fired mid-phase, the moment the design fork appeared, not deferred to a pre-PR review).
+- **Shaped/Wrote:** ran the full sequence from `HANDOVER-phase7-hpa-capture-devb-to-deva.md §4`
+  on DEV-A's machine (12 cores, 30GB RAM, 25GB free disk — meaningfully more headroom than
+  DEV-B's laptop). `metrics-server` installed and patched, dev overlay deployed, gate passed
+  (`kubectl get hpa` read real `2%/60%`, never `<unknown>`), rate limiter disabled and
+  `complaints` truncated per the handover's pre-documented gotchas. First full 14-minute
+  `k6 run load/k6-script.js` completed but **failed its own thresholds**:
+  `http_req_failed rate=8.32%` (limit `<1%`), `p(95)=5.2s` (limit `<3000ms`).
+- **Decision point (the fork):** two defensible reads of the failure —
+  1. Assume the same hardware-ceiling root cause DEV-B already disclosed, ship this run's
+     (also-failing) evidence with an even-less-headroom caveat, and move on.
+  2. Diagnose before assuming — DEV-A's node/pod CPU was trivially low the whole run
+     (`kubectl top nodes/pods` right after: all under 3%), which does not match a genuine
+     compute ceiling. Investigated instead of assuming.
+  - **Rejected (1)** because the evidence contradicted the hardware-ceiling hypothesis on this
+    specific machine — CPU was never actually saturated, so reusing DEV-B's explanation would
+    have been copying a plausible-sounding but factually wrong root cause onto a different run.
+  - **Chose (2).** `kubectl describe pod postgres-0` showed `postgres-0` had restarted once,
+    9m30s into the run, with `Killing: Container postgres failed liveness probe` and
+    `Unhealthy: Liveness/Readiness probe failed: command timed out ... timed out after 1s`.
+    `k8s/base/postgres-statefulset.yaml`'s `readinessProbe`/`livenessProbe` (lines 35-42 before
+    this fix) declared no `timeoutSeconds`, so both defaulted to Kubernetes' hardcoded 1s —
+    `pg_isready` genuinely can't always answer within 1s once 6 backend replicas are all holding
+    connections under real plateau load, so kubelet killed and restarted a *healthy* Postgres,
+    and every in-flight request against it during the restart is exactly the 8.32% that failed.
+    This is a manifest tuning bug, reproducible and fixable in code — not a hardware ceiling.
+- **I changed:** added `timeoutSeconds: 5` and `failureThreshold: 3` to both probes in
+  `k8s/base/postgres-statefulset.yaml` (its own change, see that file's new comment for the
+  citation), then re-ran the capture after redeploying and re-truncating `complaints`. This
+  overrides DEV-B's §1 hardware-ceiling explanation for *this specific manifest bug* — DEV-B's
+  own six attempts may also have partly hit this same probe-timeout issue underneath the
+  disclosed CPU contention; both can be true simultaneously (contention makes `pg_isready`
+  slower, the missing timeout makes any slowness fatal). Not asserting DEV-B's finding was
+  wrong, only that on this run, this cause was confirmed first and fixed.
+
+## 2026-09-27 · feat/phase7-load-autoscaling-devb — two more real bugs found during the same capture
+
+- **Tool:** Claude Code, no named skill — second and third iterations of the same capture session
+  above; each is its own `ponytail`-style decision point per `CLAUDE.md §6` rule 4.
+- **Bug 2 — `plot_hpa.py` chart was unreadable on real data, not a design doc guess.** After the
+  postgres-probe fix (previous entry) produced a passing `http_req_failed` (0.32%) but still-high
+  `p(95)` (3.72s), running `load/plot_hpa.py` against the real `hpa-samples.txt` for the first time
+  ever (the script's own docstring admitted it was "written and ready... not run here") showed the
+  replica line flat at the bottom of the chart. **Root cause:** replicas (2-10) and CPU utilisation
+  (observed up to ~500%, since it's averaged per-pod CPU-over-request, uncapped at 100%) were
+  plotted on one shared right-hand axis, so the replica range was invisible next to the utilisation
+  range. **I changed:** gave replicas their own axis (`ax2.set_ylim(0, max(reps)+1)`) and replaced
+  the utilisation line with peak-crossing annotations instead of a third overlapping scale —
+  `load/plot_hpa.py`, comment cites this session's finding.
+- **Bug 3 — image only landed on 1 of 3 k3d nodes.** While reading the now-legible chart, ready
+  replicas capped at 4 even though `hpa-watch.txt`'s own `REPLICAS` column showed the HPA
+  commanding 10. `kubectl get events` showed `ErrImagePull`/`403 Forbidden` for
+  `ghcr.io/ifbilal/civicpulse-backend:dev` on pods scheduled off the one node that actually had the
+  image (`docker exec <node> crictl images` confirmed: present on `agent-0` only, despite
+  `k3d image import`'s own log claiming success on all three nodes). **I changed:** re-ran
+  `k3d image import` (idempotent, confirmed via `crictl images` on all three nodes after), no
+  manifest/code change — a re-run resolved it, so no committed fix exists for this one; disclosing
+  it as a known k3d-multi-node-import flakiness for whoever runs this capture again.
+- **Bug 4 — the real one, already predicted in the codebase's own comment, never before executed
+  against a real load test.** Re-ran after fixing bug 3; result got *worse* (7.50% failed, up from
+  0.32%), with `kubectl get events` showing widespread backend `/ready` 503s and the HPA itself
+  emitting `FailedGetResourceMetric: pods might be unready`. `backend/app/db/session.py:3-5`'s own
+  header comment already named this exact failure mode: `pool_size(10) + max_overflow(5) = 15`
+  connections per pod × `hpa.yaml`'s `maxReplicas: 10` = 150, against Postgres's
+  `max_connections: 100` — and said explicitly "revisit together before Phase 7's load test if
+  maxReplicas grows past 6" (it's 10). `05-DATA-LAYER.md §1` had already picked a default fix
+  ("drop to `pool_size=5, max_overflow=2` ⇒ 70 at max replicas — ← default choice") that had never
+  been applied to `backend/app/settings.py`. **I changed:** applied that pre-selected default —
+  `db_pool_size: int = 10` → `5`, `db_max_overflow: int = 5` → `2` in `backend/app/settings.py`,
+  citing this capture's evidence in the new inline comment. This is not a new design decision (the
+  doc already made it and named its own default), so no further ponytail alternatives are recorded
+  here beyond what `05-DATA-LAYER.md §1` already lists (raising `max_connections`, or PgBouncer,
+  both explicitly deferred by that doc's own "pick one" framing in favor of its stated default).
+  Requires an image rebuild + redeploy + fourth capture attempt to confirm, since this is an
+  application code change, not just a manifest edit.
+
+## 2026-09-27 · feat/phase7-load-autoscaling-devb — VPA loop: run 1 done, run 2 blocked by host infra
+
+- **Tool:** Claude Code, no named skill.
+- **Shaped/Wrote:** installed the VPA controller via `make vpa-up` (official
+  `kubernetes/autoscaler` v1.8.0 tag, reviewed before running — `vpa-up.sh` just checks out a
+  pinned tag and calls `vpa-process-yamls.sh apply`, which applies vendored CRD/RBAC/deployment
+  YAMLs from the same repo and self-signs local admission-controller certs; no third-party
+  curl-pipe-to-shell, no network call outside the cluster). All three VPA components
+  (`recommender`, `updater`, `admission-controller`) rolled out clean. Ran a full k6 load pass
+  to give the recommender real usage history, then captured `docs/evidence/vpa-describe-run1.txt`
+  — real recommendation: **Target cpu=813m, memory=250Mi** (Lower Bound 51m/250Mi, Upper Bound
+  2000m/1Gi), against the prior committed request of `200m/256Mi`. Applied the doc's own
+  intent (raise the request to match the real Target) to `k8s/base/backend-deployment.yaml`:
+  `cpu: 200m` → `813m`, limit `1` → `1600m` (kept ~2x request:limit headroom, tighter than the
+  prior 5x since the request itself is no longer a guess), citing `vpa-describe-run1.txt` inline.
+- **I changed / could not complete:** the loop's second half (redeploy with the new request,
+  re-run load, `vpa-describe-run2.txt` to confirm convergence) could not be completed this
+  session. Redeploying after the resource-request edit revealed the backend image was again only
+  cached on some k3d nodes (`ImagePullBackOff` on the rest — the same k3d-multi-node-import
+  flakiness disclosed in the earlier entry), and the manual recovery attempts (`docker exec`,
+  `k3d image import`, `docker rm -f` on the k3d containers) started hanging indefinitely. Root
+  cause traced to the host's `docker.service` itself: `systemctl restart docker` failed with
+  `Failed to restart docker.service: Transport endpoint is not connected`, and a subsequent
+  `sudo reboot` failed with `Call to Reboot failed: Connection timed out` — both point to a
+  broken systemd/D-Bus communication path on the host, not a Docker or Kubernetes defect, and
+  not something fixable via more `kubectl`/`k3d`/`docker` commands from this session. Per the
+  user's explicit decision (asked directly, twice, via AskUserQuestion — once on whether to
+  attempt recovery/reboot, once on whether to force a hard power-cycle), **stopped here rather
+  than force a power-cycle**, since that risk (unflushed disk state, unrelated running work on
+  the host) wasn't this session's to accept unilaterally.
+- **What this means for Gate 7 (`14-LOAD-AUTOSCALING.md §8`):** `vpa-describe-run1.txt` exists
+  with a real recommendation and `k8s/base/backend-deployment.yaml`'s request now matches it in
+  its own change (this entry). `vpa-describe-run2.txt` does **not** exist — the row that would
+  confirm the new request converges to a smaller/stable recommendation is genuinely incomplete,
+  not fabricated or skipped by choice. Whoever picks this branch back up needs a healthy Docker
+  host (this one needs OS-level attention — `journalctl -u docker.service`/`-u systemd-logind`
+  first) before re-running: `kubectl apply -k k8s/overlays/dev` (VPA CRDs + controller already
+  installed this session — re-run `make vpa-up` only if the cluster itself was recreated), one
+  more `k6 run load/k6-script.js` pass, then `make vpa-show RUN=run2`.
+
+## 2026-09-27 · feat/phase7-load-autoscaling-devb — VPA loop closed: run 2 captured after host recovery
+
+- **Tool:** Claude Code, no named skill.
+- **Shaped/Wrote:** the host's Docker/systemd issue from the previous entry required a hard
+  power-cycle (user's own machine, user's own call — done after I explicitly asked twice via
+  AskUserQuestion rather than assuming it was safe to suggest unilaterally). After the restart,
+  Docker came back healthy immediately (`docker ps`/`docker info` responsive, no hangs). Recreated
+  the k3d cluster from scratch: `k3d cluster create`, ingress-nginx, metrics-server (patched for
+  k3d's kubelet TLS quirk), re-installed VPA (`vpa-process-yamls.sh apply`, same pinned
+  `vertical-pod-autoscaler-1.8.0` tag, re-cloned since `/tmp` was wiped by the restart), imported
+  both images — **verified on all 3 nodes this time** (`docker exec <node> crictl images` on each,
+  not assumed from the import log alone, given the prior session's node-distribution bug).
+  `kubectl apply -k k8s/overlays/dev` succeeded in one pass (VPA CRDs already present, so
+  `backend-vpa` created cleanly unlike the first apply attempt last session). Ran one more full
+  k6 load pass (2.31% failed — not the official evidence, `docs/evidence/`'s k6 files stay run
+  2's from the prior entry; this pass's only job was giving the VPA recommender fresh usage data
+  against the new `813m` request) and captured `docs/evidence/vpa-describe-run2.txt`: **Target
+  cpu=763m, memory=250Mi** — close to and stable relative to run 1's 813m Target (not drifting or
+  oscillating), which is the actual signal the two-run loop exists to produce. Zero postgres
+  restarts confirmed throughout (the probe-timeout fix from the earlier entry held).
+- **I changed:** nothing further to `k8s/base/backend-deployment.yaml` — `05-DATA-LAYER.md`/
+  `14-LOAD-AUTOSCALING.md §7.2`'s two-run loop doesn't call for a second request update, only
+  confirmation that the recommendation stabilizes near the first one, which it did (813m → 763m,
+  a ~6% move, not a large correction that would suggest the first update was wrong).
+- **Gate 7/H6 status after this entry:** both `vpa-describe-run1.txt` and `vpa-describe-run2.txt`
+  now exist with real, live recommendations; `k8s/base/backend-deployment.yaml`'s request was
+  updated to match run 1's Target in its own committed change, citing the number. This closes the
+  "genuinely absent, BLOCKED" gap from the previous two entries — H6's describe-run artefacts are
+  no longer missing.
+
+## 2026-09-27 · feat/phase7-load-autoscaling-devb — zero-downtime rollout bonus proof (+4)
+
+- **Tool:** Claude Code, no named skill.
+- **Shaped/Wrote:** ran `14-LOAD-AUTOSCALING.md §6`'s exact procedure against the same recovered
+  cluster: `k6 run load/k6-rollout.js` (constant-arrival-rate, 40 req/s against `/api/stats`, 3
+  minutes) started in the background, waited 20s, then `kubectl -n civicpulse set image
+  deploy/backend backend=ghcr.io/ifbilal/civicpulse-backend:rollout-test` (a retagged copy of the
+  same already-fixed image, imported to all 3 nodes and verified there first — not repeating the
+  earlier node-distribution bug) to force a genuine rolling update mid-traffic, then `kubectl
+  rollout status` to confirm it completed. Result, saved as `docs/evidence/zero-downtime-
+  rollout.txt`: **`http_req_failed rate==0.00%`** (the bonus's strict zero threshold, not `<1%`),
+  `p(99)=11.31ms` (limit 5000ms), 7200/7200 requests succeeded across the full 3-minute window
+  while `backend`'s pods were replaced under it. This is the real payoff of the `preStop: sleep
+  5` + `terminationGracePeriodSeconds: 30` configuration already in
+  `k8s/base/backend-deployment.yaml` — confirmed working, not just present in the manifest.
+- **I changed:** nothing — this test passed on the first attempt, no fixes needed. Deleted the
+  temporary `rollout-test` image tag afterward (locally and it was never pushed anywhere) since
+  it was only a vehicle to force a real image change, not a tag any manifest should reference.
+
+## 2026-09-27 · feat/phase7-load-autoscaling-devb — pre-PR review
+
+- **Tool:** Claude Code, self-review (not a named skill — `CLAUDE.md §6`'s note that this is a
+  review discipline, not an automated skill invocation).
+- **Shaped/Wrote:** reviewed the full diff (`backend/app/settings.py`,
+  `k8s/base/backend-deployment.yaml`, `k8s/base/postgres-statefulset.yaml`, `load/plot_hpa.py`,
+  plus the docs/evidence changes) against `CLAUDE.md`'s HARD rules and deduction ledger before
+  proposing this PR. Ran the full local gate first: `pytest -m "unit or contract"` (300 tests,
+  all green), `ruff check`/`ruff format --check` (clean), `mypy app` (no issues), the layer-lint
+  greps (`make lint-layers` equivalent, both pass), and `scripts/check_submission.py`
+  (0 FAIL, 5 pre-existing WARN unrelated to this diff, 1 SKIP needing a live DB).
+- **I changed:** 1 finding, disclosed rather than silently accepted — raising
+  `k8s/base/backend-deployment.yaml`'s backend CPU request 200m→813m (per the real VPA Target)
+  with `minReplicas: 2` means the deployment now reserves 1626m CPU at idle instead of 400m, a
+  real 4x footprint/cost increase that wasn't called out anywhere beyond the inline comment
+  citing the number's provenance. Not reverted — the number itself is correct (real VPA Target,
+  confirmed to converge across two runs), but flagging this explicitly in the PR description so
+  whoever reviews it checks node sizing on whatever cluster this actually deploys to, rather than
+  discovering a `Pending`-pods symptom later on a smaller node pool than this session's 12-core
+  test machine.

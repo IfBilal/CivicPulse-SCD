@@ -33,13 +33,22 @@ spec:
           ports: [{ name: pg, containerPort: 5432 }]
           volumeMounts: [{ name: pgdata, mountPath: /var/lib/postgresql/data }]
           readinessProbe:
+            # `timeoutSeconds` defaults to 1s, which `pg_isready` can miss under real load
+            # (Gate 7 capture, 2026-09-27: 6 backend replicas at 120 req/s made `pg_isready`
+            # exceed 1s, causing kubelet to kill/restart postgres mid-run — the actual cause of
+            # that capture's failed k6 thresholds, not a hardware ceiling). 5s tolerates a busy
+            # server without meaningfully slowing detection of a genuinely dead one.
             exec: { command: ["sh", "-c", "pg_isready -U $(POSTGRES_USER) -d $(POSTGRES_DB)"] }
             initialDelaySeconds: 5
             periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 3
           livenessProbe:
             exec: { command: ["pg_isready", "-U", "postgres"] }
             initialDelaySeconds: 30
             periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
           resources:
             requests: { cpu: 250m, memory: 256Mi }
             limits: { cpu: "1", memory: 1Gi }
