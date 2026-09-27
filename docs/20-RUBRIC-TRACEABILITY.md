@@ -124,10 +124,10 @@
 | Item | Marks | Implemented in | Evidence | Cut order | Status |
 |---|---|---|---|---|---|
 | Zero-downtime rollout under live load, **zero failed requests** | +4 | `14 §6`, `13 §6` | `zero-downtime-rollout.txt` — real, live (2026-09-27): `http_req_failed rate==0.00%`, 7200/7200 succeeded across a real `kubectl set image` rolling update mid-traffic | keep — it is cheap once `preStop` exists | ☑ |
-| GitOps (Argo CD / Flux) reconciling from the repo | +4 | not in this package — add `k8s/argocd/application.yaml` | Argo UI screenshot | cut 3rd | ☐ |
-| Digest deploy + Cosign sign **and verify** in CI | +3 | `15 §4`, `§4.2` | `cosign verify` step log | cut 2nd | ☐ |
-| Prometheus scraping `/metrics` + Grafana dashboard | +2 | `10 §5` | `grafana.png`, `docs/dashboards/civicpulse.json` | cut 1st | ☐ |
-| OpenTelemetry tracing frontend → backend → LLM | +2 | `10 §6` | trace screenshot | **cut first** | ☐ |
+| GitOps (Argo CD / Flux) reconciling from the repo | +4 | `k8s/argocd/application.yaml` (2026-09-27) — points at `k8s/overlays/prod`, `syncPolicy.automated` with `prune`+`selfHeal` | manifest itself; controller install is a one-time out-of-band cluster step (same pattern as `make vpa-up`), not run this session — no cluster with Argo installed was available to apply it against and capture a UI screenshot | cut 3rd | ☑ manifest, ☐ live UI screenshot |
+| Digest deploy + Cosign sign **and verify** in CI | +3 | `cd.yml`'s `build-push` job (keyless `cosign sign`) and `deploy-k8s` job (`cosign verify` before deploying) — already present, predates this session | code read confirms both steps exist and are wired correctly; **never actually run** — `cd.yml` only triggers on push to `main`, which is 82+ commits stale (same root cause as I4/I5) | cut 2nd | ☑ code, ☐ a real run's log |
+| Prometheus scraping `/metrics` + Grafana dashboard | +2 | `10 §5`, compose path — `compose.observability.yaml`, `observability/`, `docs/dashboards/civicpulse.json` (2026-09-27) | real, live (2026-09-27): dashboard stood up against a real compose stack, real traffic, 5 of 6 panels showing real data (panel 6, replicas vs CPU, is disclosed as Kubernetes-only, points at `hpa-replicas-vs-load.png` instead of faking a query) | cut 1st | ☑ |
+| OpenTelemetry tracing frontend → backend → LLM | +2 | `10 §6` — `backend/app/tracing.py`, `frontend/src/lib/tracing.ts`, both off by default (2026-09-27) | real, live (2026-09-27): `jaeger-trace.png` (backend chain: server span → `triage.cache.get` → `triage.llm.call` [real provider/attempt/outcome attrs] → `INSERT civicpulse`) and `jaeger-e2e-trace.png` (full chain: `civicpulse-frontend: GET` → `civicpulse-backend: GET /api/complaints` → `SELECT civicpulse`, one trace ID, real `traceparent` propagation through nginx, not two disconnected traces) | **cut first** | ☑ |
 
 ---
 
@@ -137,7 +137,7 @@ Tick means *the guard exists **and** its detector runs in CI*.
 
 | § | Violation | −  | Guard | Detector | Safe? |
 |---|---|---|---|---|---|
-| 5.3 | secret anywhere in git history | 20 | `.gitignore` first commit + pre-commit gitleaks | `make history-scan`, `SEC-ENV-HISTORY` | ☐ — gitleaks not installed in this sandbox, could not run a real history scan; `precommit-secret-block.txt` proves the pre-commit hook itself works, but that is a different guard from a full-history scan |
+| 5.3 | secret anywhere in git history | 20 | `.gitignore` first commit + pre-commit gitleaks | `make history-scan`, `SEC-ENV-HISTORY` | ☑ — real gitleaks v8.30.1 installed and run for real, 2026-09-27 (`docs/evidence/gitleaks-history-scan.txt`): 92 commits, 4.5MB scanned, zero leaks found; `check_submission.py::SEC-ENV-HISTORY` now PASSes (was WARN) |
 | 5.3 | key in a committed k8s manifest | 15 | `stringData` placeholders; deploy-time secret creation | `k8s-secret-nonplaceholder`, `manifests` grep | ☑ — read `secret.yaml` directly, every value is a literal placeholder string; `check_submission.py::SEC-K8S-SECRET` PASS |
 | 5.3 | unpinned base image | 8 | explicit minor tags everywhere; digests for bonus | `IMG-UNPINNED` | ☑ — `check_submission.py::IMG-UNPINNED` PASS, 23 manifests all pinned; both Dockerfiles read directly, confirmed pinned |
 | 5.3 | `localhost` service-to-service | 8 | service names; `.env.example` defaults | `make lint-localhost` in pre-commit **and** CI | ☑ — ran `make lint-localhost` live, exit 0, no hits outside healthchecks/comments |
@@ -147,7 +147,7 @@ Tick means *the guard exists **and** its detector runs in CI*.
 | 5.3 | deploying `:latest` | 8 | `kustomize edit set image` to SHA/digest | `kustomize build \| grep :latest` | ☑ — `check_submission.py::CD-LATEST-DEPLOY` PASS; `cd.yml`'s deploy step pins to a content digest via `kustomize edit set image`, not the `:latest` tag it also pushes for informational purposes |
 | 5.3 | Postgres as a Deployment with no PVC | 8 | StatefulSet + `volumeClaimTemplates` | `K8S-DB-DEPLOYMENT` | ☑ — `check_submission.py::K8S-DB-DEPLOYMENT` PASS; code read confirms `kind: StatefulSet` + `volumeClaimTemplates` |
 | 5.3 | commits direct to `main` | 5 | protection with **no bypass** | `VCS-DIRECT-MAIN` | ☑ — `check_submission.py::VCS-DIRECT-MAIN` PASS; live ruleset API confirms `current_user_can_bypass: "never"` |
-| 5.3 | README quickstart fails from clean clone | 5 | `make up` is the quickstart; CI runs it | `DOC-QUICKSTART` + cross-executed test | ☐ — `check_submission.py::DOC-QUICKSTART` only confirms the commands resolve against the Makefile; a REAL clean-clone `make up` was never executed (no Docker in this sandbox) — see handover for the exact command to close this |
+| 5.3 | README quickstart fails from clean clone | 5 | `make up` is the quickstart; CI runs it | `DOC-QUICKSTART` + cross-executed test | ☑ — real `git clone` from GitHub into `/tmp` (genuinely fresh, no prior Docker state) + `make up`, 2026-09-27: succeeded end to end, `curl localhost:8080/api/stats` returned real data (`docs/evidence/clean-clone-quickstart.txt`) |
 
 ---
 
