@@ -43,8 +43,15 @@ spec:
             - configMapRef: { name: app-config }
             - secretRef: { name: app-secrets }
           resources:
-            requests: { cpu: 200m, memory: 256Mi }   # mandatory — HPA reads <unknown> without this
-            limits: { cpu: "1", memory: 512Mi }
+            # cpu request raised 200m -> 813m per `vpa-describe-run1.txt`'s real Target
+            # (Gate 7 capture, 2026-09-27, under actual 120 req/s load) — 200m was set before any
+            # load test ran and materially undersized the HPA's own denominator (utilisation =
+            # usage/request, so an undersized request makes the HPA look busier than it is).
+            # limit raised to 1600m to keep ~2x burst headroom above the new request, matching
+            # the prior request:limit ratio (200m:1000m was 5x; 813m:1600m is ~2x, deliberately
+            # tighter since the request itself is no longer a guess).
+            requests: { cpu: 813m, memory: 256Mi }   # mandatory — HPA reads <unknown> without this
+            limits: { cpu: 1600m, memory: 512Mi }
           startupProbe:
             httpGet: { path: /health, port: http }
             failureThreshold: 30
