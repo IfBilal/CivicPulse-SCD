@@ -3262,3 +3262,25 @@ answers in `docs/ENGINEERING-NOTES.md`
   `compose.observability.yaml` doesn't exist (`docker pull` failed: "not found") — corrected to
   the real, verified-pullable `1.65.0` before bringing the stack up, rather than leaving a tag
   that would fail for the next person to run `make observability-up`.
+
+## 2026-09-27 · docs/argocd-live-proof — real GitOps reconciliation, closing the last open bonus gap
+
+- **Tool:** Claude Code, no named skill.
+- **Shaped/Wrote:** stood up a fresh k3d cluster (`argocp`), installed the real Argo CD controller
+  from official upstream manifests (`argoproj/argo-cd` stable install.yaml). Hit and fixed a real
+  bug: the `applicationsets.argoproj.io` CRD is too large for `kubectl apply`'s last-applied-
+  config annotation (>262144 bytes) — worked around with `kubectl create` for that one resource
+  (bypasses the annotation entirely), then re-ran the full `apply` for everything else
+  idempotently. Installed VPA CRDs/controller too (same `vpa-process-yamls.sh apply` as Phase 7),
+  since `k8s/overlays/prod` references a `VerticalPodAutoscaler` object Argo CD correctly refused
+  to sync without it. Applied `k8s/argocd/application.yaml` — Argo CD cloned the real GitHub repo
+  at `main` and synced for real: `docs/evidence/argocd-ui.png` shows `SYNC STATUS: Synced to
+  main (37cd8d1)`, the full resource tree, postgres/redis/HPA healthy. `APP HEALTH: Degraded` is
+  the accurate, correctly-reported state — backend/frontend pods can't pull images because
+  `cd.yml` has never pushed one (same root cause as I4/I5, not a defect in the GitOps wiring
+  itself).
+- **I changed:** enabled `server.insecure: true` on `argocd-cmd-params-cm` for this ephemeral,
+  throwaway demo cluster only, to get a plain-HTTP UI screenshot without fighting a self-signed
+  cert in the headless browser tool — never a configuration this project's real/production Argo
+  install should use, and the cluster was deleted immediately after capturing the evidence.
+- Cluster torn down cleanly afterward (`k3d cluster delete argocp`) — no leftover state.
