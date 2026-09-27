@@ -3284,3 +3284,28 @@ answers in `docs/ENGINEERING-NOTES.md`
   cert in the headless browser tool — never a configuration this project's real/production Argo
   install should use, and the cluster was deleted immediately after capturing the evidence.
 - Cluster torn down cleanly afterward (`k3d cluster delete argocp`) — no leftover state.
+
+## 2026-09-27 · fix/cd-workflow-call-permissions — cd.yml's real first-ever run failed, root cause found and fixed
+
+- **Tool:** Claude Code, no named skill.
+- **Shaped/Wrote:** PR #62 (dev→main promotion) merged, and `cd.yml` ran for the very first time
+  ever on the resulting `main` commit — immediately failed with `startup_failure` at 1 second,
+  zero jobs scheduled. Diagnosed via `gh api .../actions/runs/<id>/jobs` (returned `total_count: 0`,
+  confirming the failure was at workflow-parse/permission-grant time, before any job could start)
+  and by re-reading `ci.yml`'s `scan` job, which needs a job-level `security-events: write`
+  override to upload SARIF results. **Root cause, confirmed against GitHub's own documented
+  behavior, not guessed:** when a workflow is invoked via `uses: ./...` (`workflow_call`), the
+  calling workflow's own top-level `permissions:` caps what ANY job inside the callee can be
+  granted — a callee job's own `permissions:` override cannot escalate past what the caller
+  allows. `cd.yml`'s `permissions: { contents: read }` silently capped `ci.yml`'s `scan` job at
+  read-only, which GitHub Actions reports as a hard `startup_failure` for the whole invocation
+  rather than a partial success. This is a different bug from the `workflow_call` trigger fix an
+  earlier session already made to `ci.yml` — that fix (declaring the trigger) was necessary but
+  not sufficient; this permissions cap is what actually blocked the very first real invocation.
+- **I changed:** added `security-events: write` to `cd.yml`'s top-level `permissions:` block and
+  to the `test:` job's own explicit `permissions:` override (added, since none existed before —
+  the job previously relied entirely on the top-level grant), citing this exact live failure in
+  the comment rather than a hypothetical. Not run again against a live `main` push this session
+  (would require another real promotion, which is not this session's call to make) — the fix is
+  validated by YAML-parsing it and by the documented GitHub Actions permissions-inheritance rule,
+  not by a second live run.
