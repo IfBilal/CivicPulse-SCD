@@ -7,6 +7,7 @@ export interface RuntimeConfig {
   version: string;
   statsPollMs: number;
   showCacheBadge: boolean;
+  tracingEnabled: boolean;
 }
 
 declare global {
@@ -15,7 +16,13 @@ declare global {
   }
 }
 
-const DEFAULTS: RuntimeConfig = { env: "dev", version: "dev", statsPollMs: 15000, showCacheBadge: true };
+const DEFAULTS: RuntimeConfig = {
+  env: "dev",
+  version: "dev",
+  statsPollMs: 15000,
+  showCacheBadge: true,
+  tracingEnabled: false,
+};
 
 /** Non-URL runtime flags from /config.js (written at container start). Typed defaults if absent. */
 export function runtimeConfig(): RuntimeConfig {

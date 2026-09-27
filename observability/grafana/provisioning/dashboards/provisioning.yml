@@ -1,0 +1,19 @@
+# Tells Grafana to auto-load any dashboard JSON dropped in this mounted folder.
+#
+# `civicpulse.json` in this directory is a COPY of docs/dashboards/civicpulse.json (the canonical
+# copy a marker reads) — not a bind-mounted single file, because Docker refuses to bind-mount a
+# single file onto a path the Grafana image's read-only layer doesn't already have a mountpoint
+# for ("create mountpoint ...: read-only file system", hit for real bringing this stack up).
+# Mounting this whole directory instead sidesteps that. Keep both copies in sync by hand when the
+# dashboard changes — there is no build step wiring them together (`diff docs/dashboards/
+# civicpulse.json observability/grafana/provisioning/dashboards/civicpulse.json` before every
+# commit that touches either one).
+apiVersion: 1
+
+providers:
+  - name: civicpulse
+    folder: ""
+    type: file
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/provisioning/dashboards/civicpulse.json

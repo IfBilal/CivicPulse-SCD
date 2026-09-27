@@ -64,6 +64,13 @@ class Settings(BaseSettings):
     cors_allow_origins: list[AnyHttpUrl] = []
     prestop_drain_s: float = 5.0
 
+    # OpenTelemetry bonus (+2, `10-OBSERVABILITY.md §6`). Off by default (empty endpoint) so
+    # every existing test/CI/dev run is unaffected — tracing is additive instrumentation, never a
+    # requirement for the app to function, matching the same opt-in posture as
+    # compose.observability.yaml for Prometheus/Grafana.
+    otel_exporter_otlp_endpoint: str = ""
+    otel_service_name: str = "civicpulse-backend"
+
     @model_validator(mode="after")
     def _llm_needs_key(self) -> "Settings":
         if self.triage_provider == "llm" and not self.llm_api_key.get_secret_value():

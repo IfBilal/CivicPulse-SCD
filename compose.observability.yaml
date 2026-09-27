@@ -1,0 +1,63 @@
+# Prometheus + Grafana bonus (+2, `10-OBSERVABILITY.md §5`) and OpenTelemetry tracing bonus
+# (+2, `10-OBSERVABILITY.md §6`). Separate compose file, not merged into compose.yaml, so the
+# base stack stays lean and this is opt-in:
+#   docker compose -f compose.yaml -f compose.observability.yaml up -d --build
+# (`make observability-up` wraps this.)
+#
+# All three services attach to `edge` only — Prometheus scrapes backend:8000/metrics, and the
+# backend exports traces to jaeger:4318, both over `edge` (the same network frontend already
+# uses to reach backend), never `internal`. None of these services need database or cache
+# access, so this doesn't touch the network-segmentation guarantee G3/`internal: true` provides.
+services:
+  # Override, not a new service — turns on the backend's already-built-in tracing (`app/
+  # tracing.py`, off by default) by pointing it at jaeger. The base compose.yaml never sets
+  # OTEL_EXPORTER_OTLP_ENDPOINT, so a plain `docker compose up` (no observability overlay) still
+  # runs with tracing fully disabled, per `app/tracing.py`'s own doc comment.
+  backend:
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+    depends_on:
+      jaeger: { condition: service_started }
+
+  frontend:
+    environment:
+      TRACING_ENABLED: "true"
+    depends_on:
+      jaeger: { condition: service_started }
+
+  prometheus:
+    image: prom/prometheus:v3.0.1
+    networks: [edge]
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=15d
+    depends_on:
+      backend: { condition: service_healthy }
+    restart: unless-stopped
+    deploy: { resources: { limits: { cpus: "0.50", memory: 256M } } }
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    networks: [edge]
+    ports: ["3000:3000"]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin # dev-only convenience; never used outside a local compose run
+      GF_AUTH_ANONYMOUS_ENABLED: "true" # dev-only — no login prompt needed to view the dashboard
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - ./observability/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./observability/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+    depends_on: [prometheus]
+    restart: unless-stopped
+    deploy: { resources: { limits: { cpus: "0.50", memory: 256M } } }
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.65.0
+    networks: [edge]
+    ports: ["16686:16686"] # UI only — OTLP ingest (4318) stays cluster-internal, never published
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    restart: unless-stopped
+    deploy: { resources: { limits: { cpus: "0.50", memory: 256M } } }

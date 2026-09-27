@@ -3191,3 +3191,74 @@ answers in `docs/ENGINEERING-NOTES.md`
   was entirely a documentation/rendering-fidelity pass against already-real, already-committed
   data, done because the user explicitly asked for no detail left unchecked before moving to
   Phase 8.
+
+## 2026-09-27 · dev — full end-to-end push: release.yml, GitOps, Prometheus/Grafana, OpenTelemetry, gitleaks
+
+- **Tool:** Claude Code, no named skill. Executed at the user's explicit direction to complete
+  "everything except A3/A4/A5 and the demo video, including the bonus items and Phase 8, fully
+  implemented, end to end."
+- **Shaped/Wrote:**
+  1. `.github/workflows/release.yml` — `15-CICD.md §5`'s exact spec, semver-tag-triggered,
+     SBOM attached to the GitHub Release.
+  2. `k8s/argocd/application.yaml` — GitOps bonus (+4). Points at `k8s/overlays/prod`,
+     `syncPolicy.automated` with `selfHeal: true`. Controller install itself is documented as a
+     one-time out-of-band cluster step (same pattern as `make vpa-up`), not run this session
+     (no cluster with an Argo controller available to apply it against).
+  3. **Prometheus + Grafana bonus (+2).** `compose.observability.yaml` (opt-in overlay, never
+     merged into the base stack), `observability/prometheus/prometheus.yml` (static scrape
+     config), `observability/grafana/provisioning/*` (auto-provisioned datasource + dashboard),
+     `docs/dashboards/civicpulse.json` (6 panels per `10-OBSERVABILITY.md §5` — panel 6, replicas
+     vs CPU, is disclosed as Kubernetes-only and not reproducible from compose, pointing at the
+     real `hpa-replicas-vs-load.png` instead of faking a query with no data). Added two new
+     Prometheus metrics to close panels 3-4 (`triage_latency_seconds`, `triage_fallback_total`)
+     in `backend/app/services/triage_service.py`'s single `_record()` call site. **Real bug hit
+     and fixed**: Grafana refuses to bind-mount a single file onto a path its image's read-only
+     layer has no existing mountpoint for — worked around by mounting the whole provisioning
+     directory instead of one file, with both copies kept in sync by hand (documented in that
+     directory's own `provisioning.yml` comment, since there's no build step wiring them
+     together). Brought the full stack up for real, posted real complaints, captured
+     `docs/evidence/grafana.png` from a live dashboard with real traffic via Playwright.
+  4. **OpenTelemetry tracing bonus (+2).** `backend/app/tracing.py` (new — SDK setup, off by
+     default unless `OTEL_EXPORTER_OTLP_ENDPOINT` is set, matching the same opt-in posture as
+     Prometheus/Grafana), three manual spans added at the existing `_record()`/cache/LLM-call
+     sites in `triage_service.py` (`triage.cache.get`, `triage.llm.call` with
+     provider/attempt/outcome attributes, `triage.fallback.rules`), FastAPI/httpx/SQLAlchemy
+     auto-instrumentation wired into `main.py`'s lifespan. Frontend: `frontend/src/lib/
+     tracing.ts` (new — WebTracerProvider + FetchInstrumentation, same off-by-default posture via
+     a new `tracingEnabled` runtime-config flag, `docker-entrypoint.d/10-config.sh`), `nginx.conf`
+     propagates `traceparent` on the `/api/` proxy and adds a same-origin `/v1/traces` proxy to
+     jaeger so the browser never gets a collector URL baked into the bundle (ADR-0002 posture).
+     **Two real bugs hit and fixed, not smoothed over:**
+     - `FastAPIInstrumentor.instrument_app()` inserts its own `OpenTelemetryMiddleware` outermost
+       of the app's entire middleware stack, which broke the existing `test_middleware_order.py`
+       contract test (it now asserts a 6-item list including the OTel middleware, with a comment
+       explaining why that position is correct — a trace's server span must wrap
+       `RequestIDMiddleware` setting `X-Request-ID`, not sit inside it).
+     - `SQLAlchemyInstrumentor().instrument()` called with no `engine=` argument is a no-op
+       against `app/db/session.py`'s already-constructed module-level engine — confirmed live
+       (zero `db.insert`/`SELECT` spans in a real trace) before fixing it by passing
+       `engine.sync_engine` explicitly. Re-verified live afterward: a real trace now shows
+       `INSERT civicpulse` as a child span.
+     Captured three real trace screenshots via Playwright against a live stack:
+     `docs/evidence/jaeger-trace.png` (backend-only: `POST /api/complaints` → `triage.cache.get`
+     → `triage.llm.call` [provider=simulated, attempt=1, outcome=success] → `INSERT civicpulse`),
+     `docs/evidence/jaeger-e2e-trace.png` (the full required chain: `civicpulse-frontend: GET` →
+     `civicpulse-backend: GET /api/complaints` → `SELECT civicpulse`, one trace ID, 2 services,
+     depth 3 — real `traceparent` propagation through nginx, not two disconnected traces).
+     Attempted a real UI form submission to also capture the LLM leg on a frontend-rooted trace;
+     the button my script clicked turned out to be a decorative scroll affordance ("Start your
+     report ↓") on this app's story-scroll landing layout, not the real submit button — didn't
+     chase the correct selector further since the propagation mechanism was already proven by the
+     GET trace via the identical code path a POST would use.
+  5. **Gitleaks full-history scan, for real** — installed the official `gitleaks` v8.30.1 binary
+     (this environment never had it; every prior session's disclosure said so honestly rather
+     than skip the check silently). `gitleaks detect --log-opts="--all"`: **92 commits scanned,
+     4.5MB, zero leaks** — closes the largest unverified item in the deduction-armour column
+     (secret-in-history, −20 if ever tripped). Saved as `docs/evidence/gitleaks-history-scan.txt`.
+  6. `docs/AUDIT-2026-09-27-full-assignment-status.md` — a full phase-by-phase, section-by-section
+     rubric audit written at the user's explicit request before this push started, so the "what's
+     left" baseline this session worked from is itself a committed, checkable artefact.
+- **I changed:** the `jaegertracing/all-in-one:1.62` tag I first wrote in
+  `compose.observability.yaml` doesn't exist (`docker pull` failed: "not found") — corrected to
+  the real, verified-pullable `1.65.0` before bringing the stack up, rather than leaving a tag
+  that would fail for the next person to run `make observability-up`.

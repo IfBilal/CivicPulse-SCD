@@ -28,7 +28,7 @@ from time import monotonic, perf_counter
 from uuid import UUID
 
 import httpx
-from prometheus_client import REGISTRY, Counter
+from prometheus_client import REGISTRY, Counter, Histogram
 from pydantic import ValidationError
 
 from app.domain.enums import Category, Priority, TriagedBy
@@ -45,6 +45,7 @@ from app.providers.triage.simulated import (
 )
 from app.schemas.meta import CacheStats
 from app.schemas.triage import TriageResult
+from app.tracing import tracer
 
 log = logging.getLogger("app.triage")
 
@@ -60,6 +61,22 @@ TRIAGE_CACHE_RESULT = Counter(
     "triage_cache_result_total",
     "Triage content-hash cache hits/misses",
     ["result"],
+)
+
+# `10-OBSERVABILITY.md §5` bonus dashboard panel 3 (triage latency by provider and outcome) and
+# panel 4 (fallback rate, "the single most important panel in this system, since it is the health
+# of the thesis"). `fallback` is a bool-as-string label (bounded cardinality: exactly "true"/
+# "false"), same pattern as every other label in this module — never `error_class` or
+# `complaint_id` here, both stay in the ring buffer per CLAUDE.md HARD rule 8.
+TRIAGE_LATENCY = Histogram(
+    "triage_latency_seconds",
+    "Triage call latency by provider and outcome",
+    ["provider", "fallback"],
+)
+TRIAGE_FALLBACK_TOTAL = Counter(
+    "triage_fallback_total",
+    "Count of triage calls that ended in rules:fallback, labeled by the provider that failed",
+    ["original_provider"],
 )
 
 
@@ -226,6 +243,15 @@ class TriageService:
             "error_class": error_class,
             "at": datetime.now(UTC),
         }
+        # Prometheus bonus (`10-OBSERVABILITY.md §5` panels 3-4) — the single label set that
+        # matters is (provider, fallback), never `complaint_id` or `error_class` (CLAUDE.md HARD
+        # rule 8: bounded cardinality only; error_class is already unbounded-ish across provider
+        # SDKs, so it stays in the ring buffer's per-request detail, not a metric label).
+        TRIAGE_LATENCY.labels(provider=provider, fallback=str(fallback).lower()).observe(
+            latency_ms / 1000
+        )
+        if fallback:
+            TRIAGE_FALLBACK_TOTAL.labels(original_provider=self._primary.name).inc()
         self._ring.append(entry)
         max_len = self._ring_size() * 4  # bound memory; `recent` still only ever returns last N
         if len(self._ring) > max_len:
@@ -252,7 +278,8 @@ class TriageService:
         )
         key = content_key(text, location, model)
 
-        hit = await self._cache.get(key)
+        with tracer.start_as_current_span("triage.cache.get"):
+            hit = await self._cache.get(key)
         if hit is not None:
             self._cache_hits += 1
             TRIAGE_CACHE_RESULT.labels(result="hit").inc()
@@ -285,38 +312,47 @@ class TriageService:
         while attempts <= max_retries:
             attempts += 1
             t0 = perf_counter()
-            try:
-                attempt_timeout = min(per_attempt_timeout_s, self._remaining(deadline))
-                async with asyncio.timeout(attempt_timeout):
-                    raw = await self._primary.triage(text=text, location=location)
-                result = self._postvalidate(raw)
-                ms = int((perf_counter() - t0) * 1000)
-                await self._cache.set(key, result, self._primary.name, ms)
-                self._record(
-                    complaint_id=complaint_id,
-                    provider=self._primary.name,
-                    latency_ms=ms,
-                    fallback=False,
-                    cached=False,
-                    error_class=None,
-                )
-                return TriageOutcome(
-                    result=result, triaged_by=self._primary.name, latency_ms=ms, cached=False
-                )
-            except Exception as exc:  # the fallback boundary intentionally catches everything
-                last_exc = exc
-                verdict = classify(exc)
-                if verdict == "non_retryable":
-                    break
-                # retryable
-                if attempts > max_retries or monotonic() >= deadline:
-                    break
-                await asyncio.sleep(random.uniform(0, jitter_ms / 1000))  # noqa: S311 — jitter, not crypto
+            # `triage.llm.call` wraps every attempt, not just the first — a span per retry
+            # (rather than one span for the whole loop) is what actually shows a jittered retry
+            # happened when reading the trace, not just when reading the log line.
+            with tracer.start_as_current_span("triage.llm.call") as span:
+                span.set_attribute("provider", self._primary.name)
+                span.set_attribute("attempt", attempts)
+                try:
+                    attempt_timeout = min(per_attempt_timeout_s, self._remaining(deadline))
+                    async with asyncio.timeout(attempt_timeout):
+                        raw = await self._primary.triage(text=text, location=location)
+                    result = self._postvalidate(raw)
+                    ms = int((perf_counter() - t0) * 1000)
+                    span.set_attribute("outcome", "success")
+                    await self._cache.set(key, result, self._primary.name, ms)
+                    self._record(
+                        complaint_id=complaint_id,
+                        provider=self._primary.name,
+                        latency_ms=ms,
+                        fallback=False,
+                        cached=False,
+                        error_class=None,
+                    )
+                    return TriageOutcome(
+                        result=result, triaged_by=self._primary.name, latency_ms=ms, cached=False
+                    )
+                except Exception as exc:  # the fallback boundary intentionally catches everything
+                    last_exc = exc
+                    verdict = classify(exc)
+                    span.set_attribute("outcome", verdict)
+                    if verdict == "non_retryable":
+                        break
+                    # retryable
+                    if attempts > max_retries or monotonic() >= deadline:
+                        break
+                    await asyncio.sleep(random.uniform(0, jitter_ms / 1000))  # noqa: S311 — jitter, not crypto
 
         # ── FALLBACK ─────────────────────────────────────────────────────────────────────
-        t0 = perf_counter()
-        result = await self._fallback.triage(text=text, location=location)  # cannot raise
-        ms = int((perf_counter() - t0) * 1000)
+        with tracer.start_as_current_span("triage.fallback.rules"):
+            t0 = perf_counter()
+            result = await self._fallback.triage(text=text, location=location)  # cannot raise
+            ms = int((perf_counter() - t0) * 1000)
         error_class = type(last_exc).__name__ if last_exc is not None else "unknown"
         log.warning(
             "triage.fallback",
