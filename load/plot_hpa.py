@@ -19,11 +19,19 @@ ts: list[int] = []
 reps: list[int] = []
 util: list[int] = []
 for line in open("docs/evidence/hpa-samples.txt"):
-    s, r, u = line.split()
+    # The sampler's jsonpath queries can both return empty in the ~5-10s window right after a
+    # rollout, before readyReplicas/currentMetrics populate (the same `<unknown>/60%` transition
+    # HPA itself shows) — skip those rather than crash the whole chart over a startup artifact.
+    fields = line.split()
+    if len(fields) != 3:
+        continue
+    s, r, u = fields
+    if not r or not u:
+        continue
     t0 = t0 or int(s)
     ts.append(int(s) - t0)
     reps.append(int(r))
-    util.append(int(u or 0))
+    util.append(int(u))
 
 with open("docs/evidence/k6-summary.json") as f:
     k6_summary = json.load(f)
@@ -42,14 +50,31 @@ for t in ts:
     offered.append(rate)
 
 fig, ax1 = plt.subplots(figsize=(11, 5))
-ax1.plot(ts, offered, label="offered load (req/s)", linewidth=2)
+ax1.plot(ts, offered, label="offered load (req/s)", linewidth=2, color="tab:blue")
 ax1.set_xlabel("seconds since start")
 ax1.set_ylabel("offered load (req/s)")
+
+# `reps` (2-10) and `util` (observed up to ~500%, since it's averaged CPU-over-request across
+# all pods, not capped at 100%) are different orders of magnitude — sharing one right axis with
+# util makes the replica line invisible (confirmed: first real render of this chart, Gate 7
+# capture 2026-09-27, replicas plotted flat at ~0 against a 0-500 axis). Replicas get their own
+# axis; utilisation is annotated as text at its peaks instead of a third overlapping scale.
 ax2 = ax1.twinx()
-ax2.step(ts, reps, where="post", label="ready replicas", linewidth=2, linestyle="--")
-ax2.plot(ts, util, label="CPU utilisation %", alpha=0.5)
-ax2.axhline(60, linestyle=":", label="HPA target 60%")
-ax2.set_ylabel("replicas / utilisation %")
+ax2.step(ts, reps, where="post", label="ready replicas", linewidth=2.5, linestyle="--", color="tab:red")
+ax2.set_ylabel("ready replicas")
+ax2.set_ylim(0, max(reps) + 1)
+
+for i in range(1, len(util)):
+    if util[i] >= 60 > util[i - 1] or (i in (0,) and util[i] >= 60):
+        ax2.annotate(
+            f"{util[i]}% CPU",
+            xy=(ts[i], reps[i]),
+            xytext=(ts[i], reps[i] + 1),
+            fontsize=8,
+            color="tab:orange",
+            arrowprops=dict(arrowstyle="->", color="tab:orange", lw=1),
+        )
+
 fig.legend(loc="upper left", bbox_to_anchor=(0.1, 0.95))
 plt.title("CivicPulse backend: offered load vs HPA replica count")
 plt.tight_layout()
