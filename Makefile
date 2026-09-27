@@ -98,6 +98,14 @@ vpa-up: ## install the VPA controller itself (14-LOAD-AUTOSCALING.md §7.1) — 
 	cd /tmp/autoscaler/vertical-pod-autoscaler && ./hack/vpa-up.sh
 	kubectl -n kube-system get pods | grep vpa
 
+## ── observability (bonus +2, 10-OBSERVABILITY.md §5) ───────────────────────
+observability-up: ## Prometheus + Grafana against the compose stack — http://localhost:3000
+	$(COMPOSE) -f compose.yaml -f compose.observability.yaml up -d --build
+	@./scripts/wait_for.sh http://localhost:3000/api/health 60
+	@echo "→ Grafana: http://localhost:3000 (anonymous viewer access, dashboard auto-provisioned)"
+	@echo "→ Prometheus: http://localhost:9090 (docker compose exec prometheus wget -qO- localhost:9090 from inside the edge network — no host port published)"
+observability-down: ; $(COMPOSE) -f compose.yaml -f compose.observability.yaml down
+
 ## ── load ──────────────────────────────────────────────────────────────────
 load:      ; k6 run load/k6-script.js
 load-rollout: ## 14-LOAD-AUTOSCALING.md §6 — zero-downtime rollout proof (bonus +4)
