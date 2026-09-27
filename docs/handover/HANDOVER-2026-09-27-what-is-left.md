@@ -53,6 +53,52 @@ Current honest score if frozen today: **164–166 / 190 (86–87%)**. Full break
 
 ---
 
+## 1.5 "Why does GitHub say `dev` is both ahead of AND behind `main`?" — solved, don't touch it
+
+This came up directly (Taimoor, in conversation) after seeing the GitHub UI banner
+`"This branch is 87 commits ahead of and 4 commits behind main"` and asking why that isn't zero
+given the two branches are supposed to hold the same product. Answering it here so it doesn't
+get re-litigated later.
+
+**The files are identical.** `git diff origin/main origin/dev` returns **0 lines** — verified
+directly, not assumed. A marker cloning either branch gets byte-for-byte the same codebase.
+
+**Why the counts aren't zero anyway:** every `dev`→`main` promotion (PR #48, #55, #62, and one
+earlier one before this handover's timeframe) creates a **merge commit that lands on `main` but
+is never replayed back onto `dev`**. So after each promotion:
+- `main` gets +1 commit `dev` never sees → this is the "N commits behind" number, and it grows by
+  one on every single future promotion, forever
+- `dev` keeps accumulating its own new commits after the promotion → this is the "N commits
+  ahead" number, and it also grows forever
+
+Both numbers are permanent and unavoidable under a promote-via-PR workflow. They measure **commit
+graph distance**, not file difference — `git merge-base --is-ancestor origin/main origin/dev`
+returns false (main is genuinely not an ancestor of dev in the graph), even though the trees they
+point at are identical.
+
+**The only way to make the counts hit zero** is to force one branch's HEAD to literally equal the
+other's SHA (a force-push), which requires either:
+1. Force-pushing `main` to `dev`'s SHA — destroys `main`'s unique promotion merge commits,
+   blocked outright by this repo's branch-protection ruleset (`non_fast_forward` rule,
+   `bypass_actors: None` — confirmed via `gh api .../rulesets/23726494`), and requires `admin` on
+   the repo to even temporarily disable that rule (confirmed: the Claude Code session's own token
+   has `push: true, admin: false` — cannot do this even if asked to)
+2. Force-pushing `dev` to `main`'s SHA — would delete real commits (and real work) from `dev`
+
+**Neither is a normal PR.** A `main`→`dev` PR proposes nothing, because there's no file diff for
+it to contain — GitHub would show "no changes to merge." This was explicitly discussed and
+**declined** (Taimoor's call, 2026-09-27): don't force-push, don't rewrite history, leave the
+cosmetic number alone.
+
+**Why this is genuinely safe to leave:** `scripts/check_submission.py` doesn't check it, no row
+in `docs/20-RUBRIC-TRACEABILITY.md` references it, and `check_submission.py::VCS-DIRECT-MAIN`
+(the actual rubric-relevant check on `main`'s history) only verifies every commit on `main`
+arrived via a PR — it doesn't care about the ahead/behind count at all. If a marker asks about it
+at viva, the honest one-sentence answer is exactly this section's title claim: the files match,
+the counts are a cosmetic artefact of squash-promotion, verified and left alone on purpose.
+
+---
+
 ## 2. The single highest-leverage action — two GitHub secrets (5 minutes, +7 marks minimum)
 
 **Confirmed right now:** `gh api repos/IfBilal/CivicPulse-SCD/actions/secrets` returns
