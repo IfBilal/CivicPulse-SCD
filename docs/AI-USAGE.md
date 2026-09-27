@@ -3156,3 +3156,38 @@ answers in `docs/ENGINEERING-NOTES.md`
   whoever reviews it checks node sizing on whatever cluster this actually deploys to, rather than
   discovering a `Pending`-pods symptom later on a smaller node pool than this session's 12-core
   test machine.
+
+## 2026-09-27 · dev (post-PR #58 merge) — Gate 7 checklist audit, two real gaps found and closed
+
+- **Tool:** Claude Code, no named skill — a line-by-line audit of `14-LOAD-AUTOSCALING.md §8`'s
+  10-item Gate 7 checklist against what actually merged in PR #58, per the user's explicit
+  "leaving no minute detail" instruction rather than assuming the PR's own description covered
+  everything.
+- **Shaped/Wrote:** checked all 10 checklist items individually. 8 were already genuinely
+  satisfied by PR #58. Two gaps found:
+  1. **Checklist item 4** ("target line drawn") — `load/plot_hpa.py`'s axis-bug fix from the PR
+     had removed the 60% HPA target line entirely while fixing the replicas-vs-utilisation
+     scale-collision bug, rather than giving it its own correctly-scaled axis. Fixed: added a
+     third, offset y-axis (`ax3`, `spines["right"].set_position(("axes", 1.12))`) carrying CPU
+     utilisation and the `axhline(60, ...)` target line, so all three series (load, replicas,
+     utilisation+target) are each legible on their own scale. Regenerated
+     `hpa-replicas-vs-load.png` against the same committed `hpa-samples.txt` — no new capture
+     needed, this was a rendering-only fix.
+  2. **Checklist item 9** ("per-term seconds table, not a paragraph of prose") — `ENGINEERING-
+     NOTES.md`'s Q5 had the right real numbers (measured, not templated) but was written as prose
+     bullets, not the literal markdown table the checklist item and `§5`'s own example both show.
+     Fixed: restructured into a `| # | Term | Measured | Where the number comes from |` table,
+     keeping every number and citation from the prose version — no data changed, only the format.
+  3. **Incidental finding while re-verifying item 3**: `docs/evidence/hpa-watch.txt` as merged in
+     PR #58 contained **three concatenated load-test cycles** (2→10→2, repeated three times, one
+     continuous `kubectl get hpa -w` session spanning ~45 minutes across multiple k6 runs), not
+     the single cycle matching the officially-cited `k6-run.log`/`k6-summary.json` (run 2).
+     Traced the correct window by matching the CPU-percentage sequence between `hpa-samples.txt`
+     (already trimmed to run 2 in the PR) and `hpa-watch.txt` — found run 2's exact cycle at lines
+     2-59, trimmed the file to just that window. `hpa-samples.txt` itself (which the chart script
+     actually reads) was already correctly trimmed in the PR, so the chart needed no data change,
+     only the rendering fix above.
+- **I changed:** nothing beyond what's described above — no new load-test run was needed, this
+  was entirely a documentation/rendering-fidelity pass against already-real, already-committed
+  data, done because the user explicitly asked for no detail left unchecked before moving to
+  Phase 8.
