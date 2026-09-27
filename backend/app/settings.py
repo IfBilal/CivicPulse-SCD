@@ -19,8 +19,16 @@ class Settings(BaseSettings):
     log_format: Literal["json", "console"] = "json"
 
     database_url: str = "postgresql+psycopg://civicpulse:civicpulse@database:5432/civicpulse"
-    db_pool_size: int = 10
-    db_max_overflow: int = 5
+    # `05-DATA-LAYER.md §1` fix #1 (the doc's own default choice): pool_size + max_overflow = 7
+    # per pod * HPA maxReplicas=10 = 70 connections, under Postgres's max_connections=100. The
+    # prior 10+5=15 (150 at 10 replicas) was confirmed live during Gate 7's load capture
+    # (2026-09-27): backend pods failed their own `/ready` check under real 120 req/s load
+    # (readiness depends on `check_connection()`'s `SELECT 1`, which can't acquire a pool
+    # connection once Postgres is near its connection ceiling), which cascaded into the HPA
+    # itself losing CPU metrics for "unready" pods (`FailedGetResourceMetric`) and 7-12% failed
+    # k6 requests — exactly the outage this doc's comment predicted before any load test ran.
+    db_pool_size: int = 5
+    db_max_overflow: int = 2
     db_pool_timeout_s: int = 5
 
     redis_url: RedisDsn = RedisDsn("redis://cache:6379/0")
@@ -55,6 +63,13 @@ class Settings(BaseSettings):
 
     cors_allow_origins: list[AnyHttpUrl] = []
     prestop_drain_s: float = 5.0
+
+    # OpenTelemetry bonus (+2, `10-OBSERVABILITY.md §6`). Off by default (empty endpoint) so
+    # every existing test/CI/dev run is unaffected — tracing is additive instrumentation, never a
+    # requirement for the app to function, matching the same opt-in posture as
+    # compose.observability.yaml for Prometheus/Grafana.
+    otel_exporter_otlp_endpoint: str = ""
+    otel_service_name: str = "civicpulse-backend"
 
     @model_validator(mode="after")
     def _llm_needs_key(self) -> "Settings":

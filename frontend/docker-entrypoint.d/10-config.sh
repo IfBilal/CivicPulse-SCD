@@ -15,15 +15,20 @@ GIT_SHA="${GIT_SHA:-dev}"
 STATS_POLL_MS="${STATS_POLL_MS:-15000}"
 SHOW_CACHE_BADGE="${SHOW_CACHE_BADGE:-true}"
 BACKEND_UPSTREAM="${BACKEND_UPSTREAM:-backend:8000}"
+# OpenTelemetry bonus (+2, `10-OBSERVABILITY.md §6`) — off by default, same posture as the
+# backend's `OTEL_EXPORTER_OTLP_ENDPOINT` (`app/tracing.py`). Empty string means "don't start
+# the browser tracer at all", not "start it and point nowhere".
+TRACING_ENABLED="${TRACING_ENABLED:-false}"
 
 is_word "$APP_ENV" || fail "APP_ENV must match [A-Za-z0-9._-]+"
 is_word "$GIT_SHA" || fail "GIT_SHA must match [A-Za-z0-9._-]+"
 is_int "$STATS_POLL_MS" || fail "STATS_POLL_MS must be an integer (ms)"
 case "$SHOW_CACHE_BADGE" in true|false) ;; *) fail "SHOW_CACHE_BADGE must be true|false" ;; esac
 case "$BACKEND_UPSTREAM" in ''|*[!A-Za-z0-9.:-]*) fail "BACKEND_UPSTREAM must be host:port" ;; esac
+case "$TRACING_ENABLED" in true|false) ;; *) fail "TRACING_ENABLED must be true|false" ;; esac
 
 cat > /usr/share/nginx/html/config.js <<JS
-window.__CIVICPULSE__ = { env: "${APP_ENV}", version: "${GIT_SHA}", statsPollMs: ${STATS_POLL_MS}, showCacheBadge: ${SHOW_CACHE_BADGE} };
+window.__CIVICPULSE__ = { env: "${APP_ENV}", version: "${GIT_SHA}", statsPollMs: ${STATS_POLL_MS}, showCacheBadge: ${SHOW_CACHE_BADGE}, tracingEnabled: ${TRACING_ENABLED} };
 JS
 
 mkdir -p /tmp/nginx

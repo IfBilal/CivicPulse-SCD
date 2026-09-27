@@ -1,0 +1,92 @@
+{
+  "title": "CivicPulse",
+  "uid": "civicpulse",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "15s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "1. Request rate by status",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum by (status_code) (rate(http_requests_total[1m]))",
+          "legendFormat": "{{status_code}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "2. Latency p50 / p95 / p99",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(http_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "p50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "p95"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "p99"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "3. Triage latency by provider and outcome",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": { "defaults": { "custom": { "stacking": { "mode": "normal" } } } },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, provider, fallback) (rate(triage_latency_seconds_bucket[5m])))",
+          "legendFormat": "{{provider}} (fallback={{fallback}})"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "4. Fallback rate — the health of the thesis",
+      "type": "timeseries",
+      "description": "The single most important panel in this system: what fraction of triage calls ended in rules:fallback. This is the number that answers 'does the system fall over when the classifier is rate-limited, slow, or wrong?' It should stay near zero under normal operation and rise visibly during a provider outage without ever producing a 500.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "expr": "sum(rate(triage_fallback_total[5m])) / sum(rate(triage_latency_seconds_count[5m]))",
+          "legendFormat": "fallback rate"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "5. Cache hit rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "targets": [
+        {
+          "expr": "sum(rate(triage_cache_result_total{result=\"hit\"}[5m])) / sum(rate(triage_cache_result_total[5m]))",
+          "legendFormat": "hit rate"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "6. Replicas vs CPU utilisation (Kubernetes only — not reproducible from compose)",
+      "type": "text",
+      "description": "This panel needs kube-state-metrics/cAdvisor and the HPA's own CPU-utilisation series, which only exist on a real Kubernetes cluster (see docs/evidence/hpa-replicas-vs-load.png for the real, live-captured equivalent from Gate 7's k6 run against k3d). Disclosed honestly as out of scope for this compose-based Grafana instance rather than faked with a placeholder query that would return no data.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "options": {
+        "content": "**Not reproducible from compose.** This panel requires `kube_pod_container_resource_requests` + the HPA's own CPU metric, both Kubernetes-only. See `docs/evidence/hpa-replicas-vs-load.png` for the real, live equivalent captured against k3d during Gate 7 (offered load vs ready replicas vs CPU utilisation, with the 60% HPA target line drawn).",
+        "mode": "markdown"
+      }
+    }
+  ]
+}

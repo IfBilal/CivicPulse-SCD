@@ -1,0 +1,12 @@
+# `10-OBSERVABILITY.md §5`'s "compose (fast)" path — a static scrape config, no service
+# discovery needed for a single backend instance in dev. Scrapes the same `/metrics` endpoint
+# `backend/app/middleware/prometheus.py` already exposes, over the `edge` network (Prometheus
+# itself never needs `internal` — it only ever calls the backend, never the database or cache).
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: civicpulse-backend
+    static_configs:
+      - targets: ["backend:8000"]
+    metrics_path: /metrics

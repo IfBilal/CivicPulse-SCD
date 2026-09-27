@@ -182,8 +182,21 @@ not mocked.
 **Backend API — live Swagger UI**
 ![Swagger UI](docs/evidence/screenshots/swagger-docs.png)
 
-Grafana dashboard screenshot is still pending — Prometheus/Grafana is a bonus item, not part of
-the core rubric, and is genuinely not stood up yet.
+**Grafana — the six-panel dashboard, real traffic**
+![Grafana dashboard](docs/evidence/grafana.png)
+
+**Jaeger — a real distributed trace, frontend → backend → database, one trace ID**
+![Jaeger end-to-end trace](docs/evidence/jaeger-e2e-trace.png)
+
+## Bonus items (capped at +15, per `20-RUBRIC-TRACEABILITY.md`)
+
+| Item | Status | How to see it |
+|---|---|---|
+| Zero-downtime rollout, zero failed requests | ✅ | `docs/evidence/zero-downtime-rollout.txt` |
+| Prometheus + Grafana | ✅ | `make observability-up`, then `http://localhost:3000` (dashboard auto-provisioned, anonymous viewer access) |
+| OpenTelemetry tracing (frontend → backend → LLM → db) | ✅ | Same `make observability-up`; set `TRACING_ENABLED=true` on `frontend` and `OTEL_EXPORTER_OTLP_ENDPOINT` on `backend` (both wired in `compose.observability.yaml`), then `http://localhost:16686` (Jaeger UI) |
+| Digest deploy + Cosign sign/verify in CI | ✅ | `cd.yml`'s `build-push` job signs both images keylessly; `deploy-k8s` verifies the signature before deploying — see that file directly |
+| GitOps (Argo CD) | ✅ (manifest ready, controller install is a one-time out-of-band cluster step) | `k8s/argocd/application.yaml` |
 
 ## Configuration
 

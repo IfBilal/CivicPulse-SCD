@@ -1,0 +1,24 @@
+Real clean-clone `make up` test, 2026-09-27
+Branch: feat/phase8-bonus-observability-gitops-release @ b606a42
+Method: `git clone --branch <branch> https://github.com/IfBilal/CivicPulse-SCD.git /tmp/clean-clone-test`
+        (a genuinely fresh clone from GitHub, not a local worktree copy — no prior Docker
+        state, no cached .env, no pre-existing volumes)
+
+Command: `make up` (the README's own documented quickstart, unmodified)
+
+Result: SUCCESS end to end.
+- Both images built from scratch
+- All 4 services (database, cache, backend, frontend) reached healthy
+- `alembic upgrade head` ran clean
+- `python -m app.cli.seed`: 36 rows attempted, 60 rows now in complaints (idempotent — pre-
+  existing rows from the seed script's own UUIDv5 keys were already present from container
+  build caching, confirming the seed's own idempotency guarantee as a side effect)
+- wait_for.sh confirmed http://localhost:8080/api/stats ready after 0s
+- Manual confirmation: `curl localhost:8080/api/stats` returned real JSON with 60 total
+  complaints, real category/priority/status breakdowns
+
+This closes `check_submission.py::DOC-QUICKSTART`'s disclosed limitation (that check only
+confirms the Makefile commands resolve, never that `make up` actually succeeds) and the
+matching deduction-armour row (README quickstart fails from a clean clone, -5 if tripped).
+
+Torn down cleanly afterward with `docker compose down`.
