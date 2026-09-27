@@ -12,7 +12,17 @@ name: cd
 on:
   push: { branches: [main] }
 
-permissions: { contents: read }
+# A caller's top-level `permissions:` caps what any job inside a reusable workflow it invokes
+# (`uses: ./...`) can be granted, even if that callee job has its own job-level override — a
+# real GitHub Actions constraint that only surfaces on an actual `workflow_call` invocation, not
+# on ci.yml's own direct `push`/`pull_request` runs. Confirmed live: this workflow's first-ever
+# real run (2026-09-27, first push to `main` after PR #62) failed with `startup_failure` before
+# any job started, because `ci.yml`'s `scan` job needs `security-events: write` and this
+# workflow's own `contents: read`-only cap silently denied it at call time. `security-events:
+# write` added here so the callee's own already-correct job-level grant can actually take effect.
+permissions:
+  contents: read
+  security-events: write
 
 concurrency:
   group: cd-main
@@ -26,6 +36,9 @@ jobs:
   test:
     uses: ./.github/workflows/ci.yml # reuse — the suite runs on the MERGED result on main
     secrets: inherit
+    permissions:
+      contents: read
+      security-events: write
 
   build-push:
     needs: test # §5.3 −8 if absent — never publish an image from code already known broken
