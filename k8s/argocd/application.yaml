@@ -1,0 +1,42 @@
+# GitOps bonus (+4). Argo CD Application pointing at this repo's prod overlay — the repo becomes
+# the single source of truth for what's running, and Argo continuously reconciles the live
+# cluster to match it, catching (and correcting) drift instead of only pushing on deploy.
+#
+# This does NOT replace cd.yml's push-based deploy — `07-CICD.md §7.3`'s decision rule is explicit
+# that once GitOps is reconciling, `kubectl rollout undo` alone gets silently reverted at the next
+# sync interval, so the declarative rollback path (re-pin the overlay's image tag, commit, let
+# Argo reconcile) becomes the ONLY correct rollback mechanism — the imperative `rollout undo` is
+# still useful to buy time during an active incident, but the fix must still land in git.
+#
+# Not wired into cd.yml or any CI job — installing the Argo CD controller itself is a one-time,
+# out-of-band cluster operation (`kubectl create namespace argocd && kubectl apply -n argocd -f
+# https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml`, official
+# upstream manifests, not run here), analogous to how vpa-up installs the VPA controller once
+# before any VPA object can do anything. Apply this Application manifest against a cluster that
+# already has the Argo CD controller installed:
+#   kubectl apply -f k8s/argocd/application.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: civicpulse-prod
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/IfBilal/CivicPulse-SCD
+    targetRevision: main # GitOps tracks main, the same branch cd.yml deploys from
+    path: k8s/overlays/prod
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: civicpulse
+  syncPolicy:
+    automated:
+      prune: true # remove resources deleted from the overlay
+      selfHeal: true # revert manual kubectl edits that drift from git — the actual GitOps promise
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 5
+      backoff: { duration: 5s, factor: 2, maxDuration: 3m }
