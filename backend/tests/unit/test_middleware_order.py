@@ -1,7 +1,14 @@
 """Middleware order is a contract — `06-BACKEND-CORE.md §3`:
-RequestID (outermost) -> AccessLog -> Prometheus -> CORS -> RateLimit (innermost)."""
+RequestID (outermost of the app's own middleware) -> AccessLog -> Prometheus -> CORS ->
+RateLimit (innermost).
+
+`OpenTelemetryMiddleware` sits outside even `RequestIDMiddleware` — `FastAPIInstrumentor.
+instrument_app()` (`app/tracing.py`, `10-OBSERVABILITY.md §6` bonus) inserts it there itself, and
+that is correct: a trace's server span needs to wrap the ENTIRE request/response cycle, including
+`RequestIDMiddleware` setting `X-Request-ID`, not sit inside it and miss part of the timing."""
 
 import pytest
+from opentelemetry.instrumentation.asgi import OpenTelemetryMiddleware
 from starlette.middleware.cors import CORSMiddleware
 
 from app.main import create_app
@@ -13,6 +20,7 @@ from app.middleware.request_id import RequestIDMiddleware
 pytestmark = pytest.mark.unit
 
 _EXPECTED_OUTERMOST_FIRST = [
+    OpenTelemetryMiddleware,
     RequestIDMiddleware,
     AccessLogMiddleware,
     PrometheusMiddleware,

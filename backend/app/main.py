@@ -23,6 +23,7 @@ from app.middleware.request_id import RequestIDMiddleware
 from app.providers.triage.factory import build_triage_provider
 from app.routes import complaints, meta, ops, stats
 from app.settings import settings
+from app.tracing import configure_tracing, instrument_app
 
 _REQUEST_ID_HEADER = {
     "description": "Echoed from the request, or generated (UUIDv4) if absent/invalid",
@@ -33,6 +34,7 @@ _REQUEST_ID_HEADER = {
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     configure_logging(settings)
+    configure_tracing(settings)
     app.state.ready = False
     app.state.started_at = time.monotonic()
     app.state.redis = Redis.from_url(
@@ -63,7 +65,7 @@ def register_middleware(app: FastAPI) -> None:
         allow_origins=[str(o) for o in settings.cors_allow_origins],
         allow_credentials=False,
         allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
-        allow_headers=["Content-Type", "X-Request-ID"],
+        allow_headers=["Content-Type", "X-Request-ID", "traceparent"],
         expose_headers=["X-Cache", "X-Request-ID", "Retry-After"],
         max_age=600,
     )
@@ -89,6 +91,7 @@ def create_app() -> FastAPI:
     register_error_handlers(app)
     register_middleware(app)
     register_routers(app)
+    instrument_app(app)
     app.openapi = lambda: _contract_openapi(app)  # type: ignore[method-assign]
     return app
 

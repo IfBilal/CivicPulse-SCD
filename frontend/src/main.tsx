@@ -10,6 +10,9 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 
 import App from "./App";
+import { setupTracing } from "./lib/tracing";
+
+setupTracing(); // no-op unless runtimeConfig().tracingEnabled — see lib/tracing.ts
 
 async function enableMocks(): Promise<void> {
   // `npm run dev` runs in mode "mock": every /api call is answered by MSW in a service worker,
