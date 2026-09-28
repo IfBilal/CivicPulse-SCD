@@ -3362,16 +3362,22 @@ answers in `docs/ENGINEERING-NOTES.md`
 ## 2026-09-28 · fix/cd-smoke-test-timeout — diagnose the new CD hang
 
 - **Tool:** Codex + `diagnosing-bugs`.
-- **Shaped/Wrote:** inspected live CD run `36402494560`. Cluster creation, ingress, VPA, manifest
-  apply and Postgres rollout passed; the smoke-test step stayed active for over 30 minutes. The
-  live runner did not expose partial step logs, so the exact blocked curl could not be identified.
-- **I changed:** the likely hang path is an unbounded `curl`: both `scripts/wait_for.sh` and the
-  three smoke-test API calls lacked response deadlines. Added connect/total request limits,
-  redirected and trapped the background port-forward, and made the readiness timeout measure
-  elapsed wall time. Added an engineering note and a handover with the remaining verification.
-  Also removed the stale VPA handover whose PR had already merged. I cancelled the stuck run after
-  confirming it had been idle in the same smoke-test step for over 30 minutes. No tests were run
-  locally; the next CI/CD run is the integration feedback loop.
+- **Shaped/Wrote:** inspected CD run `36402494560` and its logs after cancellation. Cluster setup,
+  ingress, VPA, manifest apply and rollouts passed. The logs show `/api/stats` requested every 31
+  seconds. `wait_for.sh` counted requests as seconds, and nginx's default DNS resolver timeout is
+  30 seconds. Static inspection found the concrete enforced-network defect: frontend pods had no
+  egress allowance for CoreDNS or the backend, despite nginx resolving `backend:8000` at request
+  time. This breaks the `/api` proxy when the CNI enforces the repo's default-deny policy. Kind's
+  default kindnet does not enforce NetworkPolicies, so the exact upstream fault in this CI run is
+  still to be confirmed from the next bounded run's status and logs.
+- **I changed:** PR #78 added request deadlines, a wall-clock readiness timeout, and port-forward
+  cleanup. PR #79 adds frontend-only DNS/backend egress, matching backend ingress, a five-second
+  nginx resolver timeout, HTTP status reporting, and frontend failure logs. PR #79's CI checks
+  passed. Local `bash -n`, `git diff --check`, and both overlay Kustomize/kubeconform validations
+  passed (22 resources valid per overlay; the VPA custom resource schema was skipped). A focused
+  policy-enforcement probe could not run: the isolated k3d node hit host disk pressure, leaving its
+  test pods Pending. I deleted that isolated cluster afterward. The next main CD run is still
+  required to confirm the Ingress path in CI.
 - **Pre-PR hardening findings (all fixed):** `scripts/wait_for.sh` could hang in a single curl;
   subsequent smoke-test curls had no maximum time; and the background port-forward had no output
   redirection or cleanup. `caveman` and `ponytail` are project-mandated but were not present in the

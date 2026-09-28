@@ -1,7 +1,8 @@
 # Not in §3.3's spec, shipped anyway (13-KUBERNETES.md §9, contradiction A13) — the direct
 # Kubernetes translation of compose's `internal: true` segmentation (12-DOCKER-COMPOSE.md §4):
-# only the backend gets egress, and only to what it actually needs, including one narrow egress
-# to the internet (443, RFC1918-excluded) for the hosted LLM provider.
+# only the backend gets external egress, and only to what it actually needs, including one narrow
+# egress to the internet (443, RFC1918-excluded) for the hosted LLM provider. Frontend egress is
+# limited to CoreDNS and the backend service so nginx can resolve and proxy `/api` requests.
 #
 # CAVEAT THAT MUST BE TRUE OR THE POLICY IS THEATRE: NetworkPolicy is enforced by the CNI, not
 # the API server. kind's default CNI (kindnet) does NOT enforce it — these objects would apply
@@ -31,6 +32,32 @@ spec:
   ingress:
     - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: ingress-nginx } } }]
       ports: [{ protocol: TCP, port: 8080 }, { protocol: TCP, port: 8000 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: frontend-egress
+  namespace: civicpulse
+spec:
+  podSelector: { matchLabels: { app: frontend } }
+  policyTypes: [Egress]
+  egress:
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } } }]
+      ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+    - to: [{ podSelector: { matchLabels: { app: backend } } }]
+      ports: [{ protocol: TCP, port: 8000 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: frontend-to-backend
+  namespace: civicpulse
+spec:
+  podSelector: { matchLabels: { app: backend } }
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ podSelector: { matchLabels: { app: frontend } } }]
+      ports: [{ protocol: TCP, port: 8000 }]
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
