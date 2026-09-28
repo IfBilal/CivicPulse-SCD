@@ -3448,3 +3448,48 @@ answers in `docs/ENGINEERING-NOTES.md`
   applied (proving those two alone didn't cause or fix the triad — correctly pointed at bug 3
   instead of stopping early), **final run with all three fixes: 18/18 passed**, including every
   test that had never once passed in any earlier run this session.
+
+## 2026-09-28 · fix/cd-smoke-test-networkpolicy-dns — real root cause of every cd.yml 502, found by reproducing it live
+
+- **Tool:** Claude Code, no named skill.
+- **Shaped/Wrote:** `cd.yml`'s smoke test consistently 502'd for the full 90s window on every
+  real run against `main`. Initial hypothesis (a `rollout status` vs Service-Endpoints timing
+  race) was tested and **disproven** — added an explicit Endpoints-wait step, then reproduced the
+  exact deploy sequence live on an isolated `kind` cluster with real images, real NetworkPolicy
+  enforcement, and the real prod overlay. The 502 reproduced even with endpoints fully populated,
+  ruling out the timing theory.
+  - **Real bug #1, confirmed by `kubectl exec deploy/frontend -- wget backend:8000`**: `bad
+    address 'backend:8000'` — no NetworkPolicy in `k8s/base/networkpolicy.yaml` permitted
+    `frontend` -> `backend` traffic at all. Under `default-deny`, only `backend-egress` existed
+    (backend's own egress to postgres/redis/DNS/hosted-LLM); nothing granted `frontend` DNS
+    egress or egress to `backend:8000`, and nothing on `backend`'s ingress side permitted traffic
+    *from* `frontend` (only from `ingress-nginx`). This is a real, permanent gap that predates
+    this session — every prior `cd.yml` run that got this far would have hit it too, on any
+    cluster where NetworkPolicy is actually enforced (which `kind`'s default CNI does).
+  - **Real bug #2, found immediately after fixing #1**: with NetworkPolicy fixed, `wget
+    backend:8000` from inside the frontend pod worked, but the actual smoke test (through nginx's
+    `/api/` proxy) still 502'd. `kubectl logs deploy/frontend` showed the precise nginx error:
+    `backend could not be resolved (2: Server failure)`. Root cause: nginx's `resolver` directive
+    (`frontend/docker-entrypoint.d/10-config.sh`) does not consult `/etc/resolv.conf`'s `search`
+    domains the way a normal OS resolver does — `wget` (libc/musl resolver, uses `search`) can
+    resolve a bare `backend`; nginx's own resolver, given the same bare name, cannot. Confirmed
+    directly: `wget http://backend.civicpulse.svc.cluster.local:8000/...` succeeded instantly.
+    Compose never surfaced this (Docker's embedded DNS resolves bare service names directly), so
+    the manifest's own prior comment ("no override needed, one fewer place to typo it") was
+    correct for compose and silently wrong for Kubernetes.
+- **I changed:**
+  1. `.github/workflows/cd.yml` — added a "wait for Service Endpoints" step before the smoke
+     test. Kept even though it wasn't the actual root cause, since it's still a real, legitimate
+     synchronization gap `rollout status` doesn't cover (pods Ready != Endpoints populated) —
+     cheap insurance against a genuinely different future race, not dead code.
+  2. `k8s/base/networkpolicy.yaml` — added `backend-allow-frontend` (ingress) and
+     `frontend-egress` (egress, DNS + backend:8000), mirroring the existing `backend-egress`
+     pattern exactly, including its own "forget this, nothing resolves" DNS comment.
+  3. `k8s/base/frontend-deployment.yaml` — added `BACKEND_UPSTREAM=backend.civicpulse.svc.
+     cluster.local:8000` as an explicit env var, overriding the (compose-only-correct) default.
+- **Verified for real, not asserted**: rebuilt real backend/frontend images, loaded them into a
+  fresh `kind` cluster (matching `cd.yml`'s actual environment), applied the real rendered prod
+  overlay with both NetworkPolicy fixes and the frontend env fix, ran the exact smoke-test
+  sequence (`port-forward` + `curl /api/stats` + `POST /api/complaints` + `GET` the created
+  complaint) — all passed, `HTTP 200` throughout, real JSON matching the schema. Cluster and test
+  images deleted afterward.

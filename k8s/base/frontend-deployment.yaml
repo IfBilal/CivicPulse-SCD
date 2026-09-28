@@ -1,8 +1,18 @@
 # Probes hit /healthz (nginx's own `return 200`), not `/` — a broken SPA bundle then doesn't
 # mark the pod unready, since nginx being up is exactly what "frontend liveness" means
-# (13-KUBERNETES.md §5). BACKEND_UPSTREAM is left unset deliberately: its default
-# (frontend/docker-entrypoint.d/10-config.sh) is `backend:8000`, which is exactly this
-# manifest's backend Service name and port — no override needed, one fewer place to typo it.
+# (13-KUBERNETES.md §5).
+#
+# BACKEND_UPSTREAM IS set here, overriding its `backend:8000` default — real, live-reproduced
+# bug (2026-09-28), the actual cause of every `cd.yml` smoke-test 502 against `main`: nginx's own
+# `resolver` directive (frontend/docker-entrypoint.d/10-config.sh) does NOT consult
+# `/etc/resolv.conf`'s `search` domains the way a normal libc/musl resolver does — a bare
+# `backend` name fails against it with "backend could not be resolved (2: Server failure)" even
+# though `wget backend:8000` from the exact same pod, using the OS resolver, works fine. Compose
+# never hit this (Docker's embedded DNS resolves bare service names directly), so the prior
+# `backend:8000` default was correct there and silently wrong here. Fully-qualifying the name is
+# the standard fix for nginx's resolver in Kubernetes; confirmed live on a real cluster with
+# NetworkPolicy enforced (`k8s/base/networkpolicy.yaml`'s `frontend-egress`/`backend-allow-
+# frontend`, added in the same fix) before shipping this.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -37,6 +47,8 @@ spec:
           env:
             - name: APP_ENV
               valueFrom: { configMapKeyRef: { name: app-config, key: APP_ENV } }
+            - name: BACKEND_UPSTREAM
+              value: "backend.civicpulse.svc.cluster.local:8000"
           resources:
             requests: { cpu: 50m, memory: 64Mi }
             limits: { cpu: "0.5", memory: 128Mi }
