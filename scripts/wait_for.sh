@@ -5,15 +5,16 @@ set -euo pipefail
 
 url="${1:?usage: wait_for.sh <url> <timeout_seconds>}"
 timeout="${2:?usage: wait_for.sh <url> <timeout_seconds>}"
-elapsed=0
+started=$SECONDS
 
-until curl -sf -o /dev/null "$url"; do
+until curl --connect-timeout 2 --max-time 5 -sf -o /dev/null "$url"; do
+  elapsed=$((SECONDS - started))
   if [ "$elapsed" -ge "$timeout" ]; then
-    echo "wait_for.sh: $url not ready after ${timeout}s" >&2
+    echo "wait_for.sh: $url not ready after ${elapsed}s (limit ${timeout}s)" >&2
     exit 1
   fi
   sleep 1
-  elapsed=$((elapsed + 1))
 done
 
+elapsed=$((SECONDS - started))
 echo "wait_for.sh: $url ready after ${elapsed}s"
