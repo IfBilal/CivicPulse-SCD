@@ -1240,9 +1240,11 @@ suite and hoping a plausible-sounding cause was the real one.
 
 The CD smoke-test readiness loop and its API requests must have individual network deadlines as
 well as an overall readiness deadline. The cancelled run showed `kubectl port-forward` handling
-one `/api/stats` connection every 31 seconds; frontend nginx has a `proxy_read_timeout` of 30
-seconds, while `wait_for.sh` counted each failed request as only one second. Its nominal 90-second
-limit could therefore allow about 45 minutes of retries. PR #78 fixed the wall-clock limit and
-bounded each request. A follow-up reports the last HTTP status and captures frontend/backend logs
-on failure. The run was cancelled before it recorded nginx's upstream error, so the underlying API
-failure still needs to be identified from the next bounded run before Gate 8 is green.
+one `/api/stats` connection every 31 seconds; nginx's default DNS `resolver_timeout` is 30 seconds,
+while `wait_for.sh` counted each failed request as only one second. Its nominal 90-second limit
+could therefore allow about 45 minutes of retries. The frontend's runtime nginx config resolves
+`backend:8000`, but the default-deny policy gave frontend pods neither DNS egress nor a backend
+connection allowance. This is a concrete break on policy-enforcing CNIs, including the project's
+k3d target. PR #79 adds those two narrow paths and lowers nginx's resolver timeout to 5 seconds.
+Kind's default kindnet does not enforce NetworkPolicies, so the original CI run's precise upstream
+failure still needs to be confirmed from the new status/log diagnostics before Gate 8 is green.

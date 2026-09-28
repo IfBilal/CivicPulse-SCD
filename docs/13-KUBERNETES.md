@@ -22,7 +22,7 @@
 | HPA v2 | `backend-hpa` | `14-LOAD-AUTOSCALING.md` |
 | VPA | `backend-vpa` | `updateMode: "Off"` |
 | PDB | `backend-pdb` | `minAvailable: 1` |
-| NetworkPolicy ×4 | default-deny + allows | §9 — not in the spec, shipped anyway (contradiction A13) |
+| NetworkPolicy ×7 | default-deny + narrow ingress/egress allows | §9 — not in the spec, shipped anyway (contradiction A13) |
 
 ## 2. Kustomize structure
 
@@ -348,6 +348,28 @@ spec: {podSelector: {}, policyTypes: [Ingress, Egress]}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
+metadata: {name: frontend-egress, namespace: civicpulse}
+spec:
+  podSelector: {matchLabels: {app: frontend}}
+  policyTypes: [Egress]
+  egress:
+    - to: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}}]
+      ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
+    - to: [{podSelector: {matchLabels: {app: backend}}}]
+      ports: [{protocol: TCP, port: 8000}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: frontend-to-backend, namespace: civicpulse}
+spec:
+  podSelector: {matchLabels: {app: backend}}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{podSelector: {matchLabels: {app: frontend}}}]
+      ports: [{protocol: TCP, port: 8000}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
 metadata: {name: postgres-allow-backend, namespace: civicpulse}
 spec:
   podSelector: {matchLabels: {app: postgres}}
@@ -374,8 +396,11 @@ spec:
 ```
 
 The last rule is `internal: true` expressed in Kubernetes: **only the backend has egress, and only
-to 443 outside the cluster RFC1918 ranges.** Frontend, postgres and redis have none. Identical
-intent, two systems — put that sentence in ENGINEERING-NOTES Q7.
+to 443 outside the cluster RFC1918 ranges.** The frontend has only cluster-local egress to CoreDNS
+and the backend on TCP 8000, plus a matching backend ingress allowance; without these, nginx's
+runtime DNS resolver and `/api` proxy fail whenever the CNI enforces the default-deny policy.
+Postgres and Redis have no egress. Identical intent, two systems — put that sentence in
+ENGINEERING-NOTES Q7.
 
 > **The caveat that must be written down, or the policy is theatre:** NetworkPolicy is enforced by
 > the **CNI**, not by the API server. **kind's default CNI (kindnet) does not enforce it** — the
