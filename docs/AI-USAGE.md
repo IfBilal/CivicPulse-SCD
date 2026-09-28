@@ -3362,16 +3362,18 @@ answers in `docs/ENGINEERING-NOTES.md`
 ## 2026-09-28 · fix/cd-smoke-test-timeout — diagnose the new CD hang
 
 - **Tool:** Codex + `diagnosing-bugs`.
-- **Shaped/Wrote:** inspected live CD run `36402494560`. Cluster creation, ingress, VPA, manifest
-  apply and Postgres rollout passed; the smoke-test step stayed active for over 30 minutes. The
-  live runner did not expose partial step logs, so the exact blocked curl could not be identified.
-- **I changed:** the likely hang path is an unbounded `curl`: both `scripts/wait_for.sh` and the
-  three smoke-test API calls lacked response deadlines. Added connect/total request limits,
-  redirected and trapped the background port-forward, and made the readiness timeout measure
-  elapsed wall time. Added an engineering note and a handover with the remaining verification.
-  Also removed the stale VPA handover whose PR had already merged. I cancelled the stuck run after
-  confirming it had been idle in the same smoke-test step for over 30 minutes. No tests were run
-  locally; the next CI/CD run is the integration feedback loop.
+- **Shaped/Wrote:** inspected CD run `36402494560` and its logs after cancellation. Cluster setup,
+  ingress, VPA, manifest apply and rollouts passed. The logs show `/api/stats` requested every 31
+  seconds; nginx's `proxy_read_timeout` is 30 seconds, while `wait_for.sh` counted each failed
+  request as one elapsed second. Its nominal 90-second deadline could take about 45 minutes.
+  Cancellation happened before the nginx upstream error or response status was recorded, so the
+  downstream API failure still needs diagnosis on the next run.
+- **I changed:** PR #78 added request deadlines, a wall-clock readiness timeout, and port-forward
+  cleanup. This follow-up makes the helper report the last HTTP status and adds frontend logs to
+  failure diagnostics so the next run exposes the upstream failure. Also removed the stale VPA
+  handover whose PR had already merged. I cancelled the stuck run after confirming it had remained
+  in the same smoke-test step for over 30 minutes. No tests were run locally; CI will validate this
+  follow-up.
 - **Pre-PR hardening findings (all fixed):** `scripts/wait_for.sh` could hang in a single curl;
   subsequent smoke-test curls had no maximum time; and the background port-forward had no output
   redirection or cleanup. `caveman` and `ponytail` are project-mandated but were not present in the

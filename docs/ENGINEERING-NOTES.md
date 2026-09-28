@@ -1239,8 +1239,10 @@ suite and hoping a plausible-sounding cause was the real one.
 ### CD smoke-test requests are bounded
 
 The CD smoke-test readiness loop and its API requests must have individual network deadlines as
-well as an overall readiness deadline. `curl` can connect to a local port-forward and then wait
-indefinitely for response bytes; a loop that only counts retries does not bound that case. The
-workflow redirects the background port-forward's output and cleans it up with an exit trap, while
-all smoke-test requests use explicit connect and response limits. This makes endpoint failures
-fail visibly and lets the temporary runner process exit.
+well as an overall readiness deadline. The cancelled run showed `kubectl port-forward` handling
+one `/api/stats` connection every 31 seconds; frontend nginx has a `proxy_read_timeout` of 30
+seconds, while `wait_for.sh` counted each failed request as only one second. Its nominal 90-second
+limit could therefore allow about 45 minutes of retries. PR #78 fixed the wall-clock limit and
+bounded each request. A follow-up reports the last HTTP status and captures frontend/backend logs
+on failure. The run was cancelled before it recorded nginx's upstream error, so the underlying API
+failure still needs to be identified from the next bounded run before Gate 8 is green.
