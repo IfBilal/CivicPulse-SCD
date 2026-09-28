@@ -156,6 +156,25 @@ jobs:
           kubectl -n civicpulse rollout status statefulset/postgres --timeout=300s
           kubectl -n civicpulse rollout status deployment/backend --timeout=300s
           kubectl -n civicpulse rollout status deployment/frontend --timeout=300s
+      - name: wait for Service Endpoints (not just pod Ready)
+        # `rollout status` only guarantees pods pass their own readiness probe — it does NOT
+        # guarantee the Service's Endpoints object has caught up yet, and frontend's nginx
+        # resolver (frontend/docker-entrypoint.d/10-config.sh, `valid=10s`) resolves `backend`
+        # against that Endpoints object. Confirmed live (2026-09-28): ingress-nginx's own
+        # controller logged "Service civicpulse/backend does not have any active Endpoint" for
+        # a real ~30s window even after `rollout status deployment/backend` had already
+        # returned success — any nginx DNS resolution landing inside that window 502s until the
+        # next 10s TTL refresh, which the smoke test's fixed 90s budget doesn't reliably outlast
+        # under CI's own scheduling jitter. Waiting on the Endpoints object directly closes the
+        # actual race instead of padding a timeout and hoping.
+        run: |
+          for svc in backend frontend; do
+            for i in $(seq 1 30); do
+              n=$(kubectl -n civicpulse get endpoints "$svc" -o jsonpath='{.subsets[*].addresses[*].ip}' | wc -w)
+              [ "$n" -gt 0 ] && { echo "$svc: $n endpoint(s) ready"; break; }
+              sleep 2
+            done
+          done
       - name: smoke test through the Ingress
         run: |
           kubectl -n civicpulse port-forward svc/frontend 8080:8080 \
