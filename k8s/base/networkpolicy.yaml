@@ -36,32 +36,6 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: frontend-egress
-  namespace: civicpulse
-spec:
-  podSelector: { matchLabels: { app: frontend } }
-  policyTypes: [Egress]
-  egress:
-    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } } }]
-      ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
-    - to: [{ podSelector: { matchLabels: { app: backend } } }]
-      ports: [{ protocol: TCP, port: 8000 }]
----
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: frontend-to-backend
-  namespace: civicpulse
-spec:
-  podSelector: { matchLabels: { app: backend } }
-  policyTypes: [Ingress]
-  ingress:
-    - from: [{ podSelector: { matchLabels: { app: frontend } } }]
-      ports: [{ protocol: TCP, port: 8000 }]
----
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
   name: postgres-allow-backend
   namespace: civicpulse
 spec:
@@ -70,6 +44,28 @@ spec:
   ingress:
     - from: [{ podSelector: { matchLabels: { app: backend } } }]
       ports: [{ protocol: TCP, port: 5432 }]
+---
+# Real, live-reproduced bug (2026-09-28): frontend's nginx proxies /api/* to backend (frontend/
+# nginx.conf's `location /api/`, ADR-0002's same-origin architecture) — this is a real pod-to-pod
+# connection under `default-deny`, not just traffic that happened to arrive via the Ingress. No
+# rule permitted it: `allow-ingress-controller` only covers ingress-nginx -> {frontend,backend},
+# never frontend -> backend directly. Confirmed with `kubectl exec deploy/frontend -- wget
+# backend:8000` on a real kind cluster with NetworkPolicy actually enforced: `bad address
+# 'backend:8000'` (DNS blocked, see frontend-egress below) and, once DNS-egress is separately
+# proven, a real 502 from nginx (the TCP connection itself still refused) — the exact 502 every
+# `cd.yml` smoke-test run hit against `main`, root-caused here instead of guessed at from CI log
+# archaeology.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: backend-allow-frontend
+  namespace: civicpulse
+spec:
+  podSelector: { matchLabels: { app: backend } }
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ podSelector: { matchLabels: { app: frontend } } }]
+      ports: [{ protocol: TCP, port: 8000 }]
 ---
 # Also beyond the doc's literal sample: backend-egress (below) allows egress to redis:6379, but
 # under default-deny that traffic still needs a matching INGRESS allow on the redis pod itself,
@@ -104,3 +100,24 @@ spec:
       ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]   # DNS — forget this, nothing resolves
     - to: [{ ipBlock: { cidr: 0.0.0.0/0, except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16] } }]
       ports: [{ protocol: TCP, port: 443 }]   # the hosted LLM, and ONLY the backend
+---
+# The other half of backend-allow-frontend above: frontend needs its own DNS egress (to resolve
+# `backend`, same "forget this, nothing resolves" trap backend-egress already names) AND explicit
+# egress to backend:8000 itself — an Ingress rule on the destination pod is necessary but not
+# sufficient under NetworkPolicy; the source pod's own Egress side is evaluated independently, so
+# both must exist or the connection blackholes with no error at the K8s API level (only a 502 at
+# the application layer, discovered by testing the actual smoke-test path, not by reading the
+# manifest and assuming it was already correct).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: frontend-egress
+  namespace: civicpulse
+spec:
+  podSelector: { matchLabels: { app: frontend } }
+  policyTypes: [Egress]
+  egress:
+    - to: [{ podSelector: { matchLabels: { app: backend } } }]
+      ports: [{ protocol: TCP, port: 8000 }]
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } } }]
+      ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]   # DNS — forget this, nothing resolves
