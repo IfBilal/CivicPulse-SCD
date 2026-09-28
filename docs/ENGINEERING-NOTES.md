@@ -1235,3 +1235,16 @@ mechanism — the tell that the first fix was incomplete was that the *same* tes
 after it shipped, not different ones. Confirming a fix against the *specific* failure mode (here:
 instrumenting the actual attribute suspected, inside the actual failing run) beats re-running the
 suite and hoping a plausible-sounding cause was the real one.
+
+### CD smoke-test requests are bounded
+
+The CD smoke-test readiness loop and its API requests must have individual network deadlines as
+well as an overall readiness deadline. The cancelled run showed `kubectl port-forward` handling
+one `/api/stats` connection every 31 seconds; nginx's default DNS `resolver_timeout` is 30 seconds,
+while `wait_for.sh` counted each failed request as only one second. Its nominal 90-second limit
+could therefore allow about 45 minutes of retries. The frontend's runtime nginx config resolves
+`backend:8000`, but the default-deny policy gave frontend pods neither DNS egress nor a backend
+connection allowance. This is a concrete break on policy-enforcing CNIs, including the project's
+k3d target. PR #79 adds those two narrow paths and lowers nginx's resolver timeout to 5 seconds.
+Kind's default kindnet does not enforce NetworkPolicies, so the original CI run's precise upstream
+failure still needs to be confirmed from the new status/log diagnostics before Gate 8 is green.

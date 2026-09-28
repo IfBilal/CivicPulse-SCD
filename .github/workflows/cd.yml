@@ -174,5 +174,6 @@ jobs:
           kubectl -n ingress-nginx logs deployment/ingress-nginx-controller --tail=200 || true
           kubectl -n kube-system describe deployment/vpa-recommender || true
           kubectl -n kube-system logs deployment/vpa-recommender --tail=200 || true
+          kubectl -n civicpulse logs -l app=frontend --tail=200 --all-containers || true
           kubectl -n civicpulse describe pods || true
           kubectl -n civicpulse logs -l app=backend --tail=200 --all-containers || true

@@ -37,6 +37,7 @@ NAMESERVER="$(awk '/^nameserver/ { print $2; exit }' /etc/resolv.conf)"
 case "$NAMESERVER" in *:*) NAMESERVER="[$NAMESERVER]" ;; esac
 cat > /tmp/nginx/runtime.conf <<CONF
 resolver ${NAMESERVER} valid=10s ipv6=off;
+resolver_timeout 5s;
 set \$backend_upstream ${BACKEND_UPSTREAM};
 CONF
 echo "10-config.sh: env=${APP_ENV} version=${GIT_SHA} upstream=${BACKEND_UPSTREAM} resolver=${NAMESERVER}"
