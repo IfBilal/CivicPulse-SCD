@@ -3309,3 +3309,36 @@ answers in `docs/ENGINEERING-NOTES.md`
   (would require another real promotion, which is not this session's call to make) — the fix is
   validated by YAML-parsing it and by the documented GitHub Actions permissions-inheritance rule,
   not by a second live run.
+
+## 2026-09-28 · fix/cd-ingress-nginx-version — real fix for cd.yml's ingress-nginx/kind version drift, verified live
+
+- **Tool:** Claude Code, no named skill.
+- **Shaped/Wrote:** `cd.yml`'s `deploy-k8s` job was hanging at the `ingress-nginx` step —
+  `kubectl -n ingress-nginx wait --for=condition=ready` timing out at 300s on every real run.
+  Root cause, confirmed by direct testing, not guessed: `helm/kind-action@v1` with no
+  `node_image` pinned defaults to whatever Kubernetes version is current when the action runs
+  (`v1.35.0` at the time), and `ingress-nginx controller-v1.11.3` (pinned in this workflow since
+  it was written) predates that by four minor releases — genuine version drift between two
+  independently-floating/pinned versions, not a logic bug.
+- **I changed:** pinned `node_image: "kindest/node:v1.31.4"` on the `kind-action` step and bumped
+  the ingress-nginx manifest URL to `controller-v1.15.1`. **Verified for real, not just by
+  reading the YAML**, on a genuinely isolated `kind` cluster (not k3d — k3d's own load-balancer
+  container adds a `hostPort: 80` conflict that doesn't exist in `cd.yml`'s actual `kind`-based
+  CI environment, confirmed as a red herring after it produced a `FailedScheduling` on a first,
+  wrong test attempt): `kubectl wait --for=condition=ready` returned `condition met` well inside
+  the 300s budget on the pinned version combination.
+- **Real incident during this fix, disclosed in full:** while testing, a `kubectl config
+  use-context kind-cd-test` command failed silently (the context name didn't match what `kind
+  create cluster` actually registered), and the next commands in the same call fell through to
+  whatever kubectl context was already active on this machine — a real, pre-existing 27-day-old
+  k3s cluster unrelated to this session, not a throwaway test cluster. `ingress-nginx v1.15.1`'s
+  manifest got applied to it, its controller pod started crash-looping (real symptom, later
+  traced to stale RBAC objects left over from a prior, different ingress-nginx version on that
+  same cluster — not a v1.15.1 defect), and a subsequent `kubectl delete namespace ingress-nginx`
+  got stuck in `Terminating` behind a stale `ValidatingWebhookConfiguration` and an unrelated,
+  pre-existing `metrics.k8s.io` discovery failure on that cluster (27 days old, not caused this
+  session). Cleaned up what a permission check allowed (deleted the stale webhook config); the
+  final finalizer-clearing step was correctly blocked by the harness's own safety classifier
+  (irreversible low-level namespace API surgery) and left for the user to run themselves after
+  disclosure, rather than pushed through. Confirmed with the user directly that this cluster
+  wasn't in active use before doing any of the cleanup.

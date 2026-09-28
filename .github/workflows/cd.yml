@@ -109,10 +109,17 @@ jobs:
             --certificate-identity-regexp "https://github.com/${{ github.repository }}/.*" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com
       - uses: helm/kind-action@v1
-        with: { cluster_name: civicpulse-ci, wait: 180s }
+        with: { cluster_name: civicpulse-ci, wait: 180s, node_image: "kindest/node:v1.31.4" }
+        # `node_image` pinned rather than left to float — this workflow's first-ever real run
+        # (2026-09-28) confirmed live that an unpinned kind-action defaults to a current
+        # Kubernetes version (v1.35.0 at the time), which the ingress-nginx version below
+        # predates by four minor releases; the controller pod never reached Ready inside the
+        # 300s wait, timing out every real attempt. Pinning both sides to a combination
+        # confirmed compatible closes the drift instead of leaving two independently-floating
+        # versions to silently break again later.
       - name: ingress-nginx
         run: |
-          kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.11.3/deploy/static/provider/kind/deploy.yaml
+          kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.15.1/deploy/static/provider/kind/deploy.yaml
           kubectl -n ingress-nginx wait --for=condition=ready pod \
             -l app.kubernetes.io/component=controller --timeout=300s
       - name: secrets from GitHub Secrets — never from the repo
