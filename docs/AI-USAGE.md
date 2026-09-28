@@ -3372,8 +3372,12 @@ answers in `docs/ENGINEERING-NOTES.md`
   still to be confirmed from the next bounded run's status and logs.
 - **I changed:** PR #78 added request deadlines, a wall-clock readiness timeout, and port-forward
   cleanup. PR #79 adds frontend-only DNS/backend egress, matching backend ingress, a five-second
-  nginx resolver timeout, HTTP status reporting, and frontend failure logs. No tests were run
-  locally; PR CI is validating these changes.
+  nginx resolver timeout, HTTP status reporting, and frontend failure logs. PR #79's CI checks
+  passed. Local `bash -n`, `git diff --check`, and both overlay Kustomize/kubeconform validations
+  passed (22 resources valid per overlay; the VPA custom resource schema was skipped). A focused
+  policy-enforcement probe could not run: the isolated k3d node hit host disk pressure, leaving its
+  test pods Pending. I deleted that isolated cluster afterward. The next main CD run is still
+  required to confirm the Ingress path in CI.
 - **Pre-PR hardening findings (all fixed):** `scripts/wait_for.sh` could hang in a single curl;
   subsequent smoke-test curls had no maximum time; and the background port-forward had no output
   redirection or cleanup. `caveman` and `ponytail` are project-mandated but were not present in the

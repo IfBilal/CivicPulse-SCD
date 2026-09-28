@@ -32,10 +32,16 @@ failure still needs its HTTP status and nginx/backend logs from the next bounded
 
 - Stuck CD run `36402494560` was cancelled after its smoke-test step had run for over 30 minutes.
 - PR #78 merged to `dev`; its CI passed.
+- PR #79 is open against `dev`; all eight required CI/Trivy checks passed at head
+  `32fc1bf619e04912f32b1e2282a80fc1c5beb20d`. Partner review is still pending.
 - The blocked call was `/api/stats`; the last HTTP status and nginx/backend error were not recorded.
 - The frontend NetworkPolicy omission is fixed for enforcing CNIs, but the exact error in the
   kindnet CI cluster still needs confirmation.
-- `bash -n scripts/wait_for.sh` and `git diff --check` passed on PR #78. No local tests were run.
+- `bash -n`, `git diff --check`, and both overlay Kustomize/kubeconform validations passed
+  locally (22 resources valid per overlay; one VPA custom resource schema skipped).
+- The isolated k3d policy probe was blocked by host disk pressure; node DiskPressure kept probe
+  pods Pending. The isolated cluster was deleted afterward. The probe did not validate policy
+  enforcement.
 
 ## 5. Next commands
 
@@ -44,7 +50,8 @@ bash -n scripts/wait_for.sh
 git diff --check
 ```
 
-After this PR passes review and merges into `dev`, promote `dev` to `main` through the usual
-reviewed PR. Use the HTTP status and frontend/backend logs from the next bounded CD run to confirm
-the `/api/stats` path; fix any remaining kindnet-specific fault before marking Gate 8 green. Delete
-this handover in the final merge commit.
+After PR #79 receives partner review and merges into `dev`, promote `dev` to `main` through the
+usual reviewed PR. PR #78 fixed the excessive smoke wait; PR #79 adds the missing policy path and
+diagnostics. Use the bounded CD run's HTTP status and frontend/backend logs to confirm `/api/stats`,
+and fix any remaining kindnet-specific fault before marking Gate 8 green. Delete this handover in
+the final merge commit.
