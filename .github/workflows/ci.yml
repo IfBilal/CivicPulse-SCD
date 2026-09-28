@@ -167,7 +167,14 @@ jobs:
         with: { image-ref: "civicpulse-frontend:ci", severity: "HIGH,CRITICAL", ignore-unfixed: true, exit-code: "1", format: table }
       - uses: aquasecurity/trivy-action@v0.36.0   # SARIF for the Security tab
         if: always()
-        with: { image-ref: "civicpulse-backend:ci", format: sarif, output: trivy.sarif, exit-code: "0" }
+        # Match the gate above: show actionable high/critical findings, not 100s of unfixed CVEs.
+        with:
+          image-ref: civicpulse-backend:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          format: sarif
+          output: trivy.sarif
+          exit-code: "0"
       - uses: github/codeql-action/upload-sarif@v3
         if: always()
         with: { sarif_file: trivy.sarif }
