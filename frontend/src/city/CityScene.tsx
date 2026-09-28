@@ -422,11 +422,18 @@ export default function CityScene() {
     };
 
     // ── camera: journey path (Report page) or calm orbit (everywhere else) ─
-    const camPos = new THREE.Vector3(...CAMERA_PATH[CAMERA_PATH.length - 1]!.pos);
+    // `camPos`/`smooth.p` need no real initial value — `primed` (below) makes the first real
+    // frame snap directly to the correct spot instead of lerping/easing in from a placeholder,
+    // so a wrong construction-time guess can never produce a visible camera jump. That guess
+    // would otherwise be likely to be wrong: CityScene is lazy-loaded behind a Suspense boundary,
+    // so there's no guarantee Journey.tsx's own journey.set(0) call has run by the time this
+    // effect runs on a cold load.
+    const camPos = new THREE.Vector3();
     let orbit = 0;
     let spin = 0;
     const final = CAMERA_PATH[CAMERA_PATH.length - 1]!.pos;
-    const smooth = { p: journey.get() ?? 1 };
+    const smooth = { p: 1 };
+    let primed = false;
     const target = new THREE.Vector3();
     const look = new THREE.Vector3();
 
@@ -437,13 +444,30 @@ export default function CityScene() {
       renderer.setPixelRatio(1);
       shared.uPixelRatio.value = 1;
       traffic.count = Math.floor(CARS / 3);
-      haze.visible = false;
     };
     const degradeMore = () => {
       degradeTier = 2;
       (buildingMat.uniforms.uCheap as { value: number }).value = 1; // drop the per-fragment windows
       blocks.count = Math.floor(buildings.length * 0.6);
       traffic.count = Math.floor(CARS / 6);
+    };
+    // Symmetric recovery — a brief stutter (tab backgrounded, a GC pause, a one-off asset load)
+    // used to degrade quality permanently for the rest of the session, which read as "the city's
+    // window lights are just gone" with no way back. Recovery thresholds sit a few fps above the
+    // degrade thresholds (hysteresis) so a borderline framerate can't flap between tiers every
+    // ~700ms window.
+    const restoreTier1 = () => {
+      degradeTier = 1;
+      (buildingMat.uniforms.uCheap as { value: number }).value = 0;
+      blocks.count = buildings.length;
+      traffic.count = Math.floor(CARS / 3);
+    };
+    const restoreFull = () => {
+      degradeTier = 0;
+      pixelRatio = Math.min(window.devicePixelRatio, small ? 1.25 : 1.6);
+      renderer.setPixelRatio(pixelRatio);
+      shared.uPixelRatio.value = pixelRatio;
+      traffic.count = CARS;
     };
 
     let last = performance.now();
@@ -464,8 +488,9 @@ export default function CityScene() {
 
       const jp = journey.get();
       const story = jp !== null && document.documentElement.dataset.scene !== "calm";
-      smooth.p += ((story ? jp : 1) - smooth.p) * (reduced ? 1 : 0.075);
-      const p = smooth.p;
+      const targetP = story ? jp : 1;
+      const p = primed ? smooth.p + (targetP - smooth.p) * (reduced ? 1 : 0.075) : targetP;
+      smooth.p = p;
       const settled = !story || p > 0.985; // the calm state the app is used in
 
       // galaxy spin while in orbit, easing to a stop as you descend
@@ -483,9 +508,18 @@ export default function CityScene() {
       }
       target.x += pointer.x * (settled ? 10 : 4);
       target.y += -pointer.y * (settled ? 6 : 3);
-      camPos.lerp(target, reduced ? 1 : settled ? 0.03 : 0.12);
+      if (!primed) {
+        // First real frame: snap straight to the correct spot instead of lerping in from
+        // camPos's placeholder construction value — otherwise every fresh load of the story page
+        // visibly flies in from the calm/final resting position no matter what `p` resolves to.
+        camPos.copy(target);
+        lookAt.copy(look);
+        primed = true;
+      } else {
+        camPos.lerp(target, reduced ? 1 : settled ? 0.03 : 0.12);
+        lookAt.lerp(look, reduced ? 1 : 0.12);
+      }
       camera.position.copy(camPos);
-      lookAt.lerp(look, reduced ? 1 : 0.12);
       camera.lookAt(lookAt);
 
       // intensity: full city on the story, dimmer + calmer behind data pages
@@ -509,12 +543,14 @@ export default function CityScene() {
 
       renderer.render(scene, camera);
 
-      if (degradeTier < 2 && !reduced) {
+      if (!reduced) {
         windowFrames += 1;
         if (now - windowStart > 700) {
           const fps = (windowFrames * 1000) / (now - windowStart);
           if (degradeTier === 0 && fps < 48) degradeOnce();
           else if (degradeTier === 1 && fps < 40) degradeMore();
+          else if (degradeTier === 2 && fps > 55) restoreTier1();
+          else if (degradeTier === 1 && fps > 58) restoreFull();
           windowStart = now;
           windowFrames = 0;
         }
