@@ -101,6 +101,8 @@ jobs:
     permissions: { contents: read, packages: read, id-token: write }
     steps:
       - uses: actions/checkout@v4
+      - name: install cosign for signature verification
+        uses: sigstore/cosign-installer@v3
       - name: verify signatures before deploying (bonus)
         run: |
           cosign verify "${{ env.IMAGE_BASE }}-backend@${{ needs.build-push.outputs.backend-digest }}" \
