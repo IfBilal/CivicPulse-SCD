@@ -122,6 +122,19 @@ jobs:
           kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.15.1/deploy/static/provider/kind/deploy.yaml
           kubectl -n ingress-nginx wait --for=condition=ready pod \
             -l app.kubernetes.io/component=controller --timeout=300s
+      - name: install VPA CRDs and recommender
+        run: |
+          git clone --depth 1 --branch vertical-pod-autoscaler-1.8.0 \
+            https://github.com/kubernetes/autoscaler.git /tmp/kubernetes-autoscaler
+          cd /tmp/kubernetes-autoscaler/vertical-pod-autoscaler/deploy
+          # This workload uses VPA updateMode=Off, so it needs the CRD and recommender only.
+          # Do not install the updater/admission webhook into this ephemeral smoke-test cluster.
+          kubectl apply -f vpa-v1-crd-gen.yaml
+          kubectl apply -f vpa-rbac.yaml
+          kubectl apply -f recommender-deployment.yaml
+          kubectl wait --for=condition=established \
+            crd/verticalpodautoscalers.autoscaling.k8s.io --timeout=120s
+          kubectl -n kube-system rollout status deployment/vpa-recommender --timeout=180s
       - name: secrets from GitHub Secrets — never from the repo
         run: |
           kubectl create namespace civicpulse --dry-run=client -o yaml | kubectl apply -f -
@@ -153,7 +166,13 @@ jobs:
           curl -sf "localhost:8080/api/complaints/$id" | jq -e '.category != null'
       - run: kubectl -n civicpulse get hpa # §3.4 — "print kubectl get hpa"
       - if: failure()
+        name: diagnose cluster failure (best effort)
         run: |
-          kubectl -n civicpulse get pods -o wide
-          kubectl -n civicpulse describe pods -l app=backend
-          kubectl -n civicpulse logs -l app=backend --tail=200 --all-containers
+          kubectl get pods -A -o wide || true
+          kubectl get events -A --sort-by=.metadata.creationTimestamp | tail -n 100 || true
+          kubectl -n ingress-nginx describe pods -l app.kubernetes.io/component=controller || true
+          kubectl -n ingress-nginx logs deployment/ingress-nginx-controller --tail=200 || true
+          kubectl -n kube-system describe deployment/vpa-recommender || true
+          kubectl -n kube-system logs deployment/vpa-recommender --tail=200 || true
+          kubectl -n civicpulse describe pods || true
+          kubectl -n civicpulse logs -l app=backend --tail=200 --all-containers || true
