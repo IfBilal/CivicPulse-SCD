@@ -278,7 +278,10 @@ before the catch-all. **`/metrics` is deliberately absent** — it is reachable 
 Service, scraped in-cluster by Prometheus. Exposing `/metrics` publicly leaks your internal
 topology, your traffic volume and your provider mix to anyone who curls it.
 
-**Service-to-service DNS is `http://backend:8000`, never `localhost`.** §5.3 −8. The
+**Service-to-service DNS is `http://backend:8000`, never `localhost`.** §5.3 −8. For the
+frontend's nginx runtime resolver, configure `BACKEND_UPSTREAM` as the fully qualified service
+name `backend.civicpulse.svc.cluster.local:8000`; nginx's resolver does not apply pod DNS search
+domains. The Kubernetes frontend Deployment sets this value. The
 `make lint-localhost` grep covers `k8s/` for exactly this.
 
 ---

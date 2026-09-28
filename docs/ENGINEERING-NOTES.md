@@ -162,7 +162,8 @@ host is resolved once at startup, so nginx **exits** if `backend` isn't resolvab
 `docker run` for the build-once-deploy-many evidence, compose restarts, k8s rollouts), and nginx's
 resolver ignores DNS search domains, so the short name fails inside Kubernetes.
 **Chosen:** `proxy_pass http://$backend_upstream;` with `resolver` taken from `/etc/resolv.conf`
-and `BACKEND_UPSTREAM` (default `backend:8000`; k8s sets the FQDN) written at boot by
+and `BACKEND_UPSTREAM` (default `backend:8000`; Kubernetes must set
+`backend.civicpulse.svc.cluster.local:8000`) written at boot by
 `10-config.sh`, which validates every value before writing it (config.js is served to browsers).
 **Rejected:** (a) the spec's static `proxy_pass` — crash-on-boot coupling; (b) a hard-coded
 `resolver 127.0.0.11` (Docker's DNS) — wrong inside Kubernetes.

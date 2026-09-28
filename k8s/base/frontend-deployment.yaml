@@ -1,8 +1,7 @@
 # Probes hit /healthz (nginx's own `return 200`), not `/` — a broken SPA bundle then doesn't
 # mark the pod unready, since nginx being up is exactly what "frontend liveness" means
-# (13-KUBERNETES.md §5). BACKEND_UPSTREAM is left unset deliberately: its default
-# (frontend/docker-entrypoint.d/10-config.sh) is `backend:8000`, which is exactly this
-# manifest's backend Service name and port — no override needed, one fewer place to typo it.
+# (13-KUBERNETES.md §5). Set BACKEND_UPSTREAM to the backend Service FQDN because nginx's
+# asynchronous resolver does not use the pod's DNS search domains.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -37,6 +36,8 @@ spec:
           env:
             - name: APP_ENV
               valueFrom: { configMapKeyRef: { name: app-config, key: APP_ENV } }
+            - name: BACKEND_UPSTREAM
+              value: backend.civicpulse.svc.cluster.local:8000
           resources:
             requests: { cpu: 50m, memory: 64Mi }
             limits: { cpu: "0.5", memory: 128Mi }

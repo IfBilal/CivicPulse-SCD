@@ -3382,3 +3382,19 @@ answers in `docs/ENGINEERING-NOTES.md`
   subsequent smoke-test curls had no maximum time; and the background port-forward had no output
   redirection or cleanup. `caveman` and `ponytail` are project-mandated but were not present in the
   available skill catalog for this session.
+
+## 2026-09-28 · fix/cd-backend-fqdn — diagnose the remaining main CD failure
+
+- **Tool:** Codex + `diagnosing-bugs`.
+- **Shaped/Wrote:** inspected the first bounded main CD run `36410195951`. The Ingress smoke test
+  now stopped at its 90-second wall-clock deadline and reported HTTP 502. Nginx logged
+  `backend could not be resolved (2: Server failure)`; frontend startup logged
+  `upstream=backend:8000`. The repo's own engineering note says nginx's asynchronous resolver
+  ignores pod DNS search domains and Kubernetes must configure the backend FQDN, but the actual
+  frontend Deployment left `BACKEND_UPSTREAM` unset. Backend init-container events also showed
+  migration retries while Postgres was starting; one migration subsequently completed. The
+  persistent `/api/stats` failure matched the resolver's short service name.
+- **I changed:** set `BACKEND_UPSTREAM=backend.civicpulse.svc.cluster.local:8000` in the Kubernetes
+  frontend Deployment and corrected the Kubernetes and engineering docs to match. The failure
+  exposed by run `36410195951` confirms the exact resolver issue; the next main CD run must confirm
+  the FQDN fix reaches a successful `/api/stats` smoke test.
