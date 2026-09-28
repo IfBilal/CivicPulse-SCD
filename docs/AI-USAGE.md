@@ -3493,3 +3493,42 @@ answers in `docs/ENGINEERING-NOTES.md`
   sequence (`port-forward` + `curl /api/stats` + `POST /api/complaints` + `GET` the created
   complaint) — all passed, `HTTP 200` throughout, real JSON matching the schema. Cluster and test
   images deleted afterward.
+
+## 2026-09-28 · docs/close-cd-evidence-and-rubric-refresh — captured the first green cd.yml run
+
+- **Tool:** Claude Code, no skill invocation — pure evidence-capture and doc-refresh, not a new
+  phase and not a design fork.
+- **Context:** per user request ("do what u can do and then tell whats left"), audited current
+  live state against the 2026-09-27 handover docs rather than trusting their (by-then-stale)
+  snapshot. Found real, new progress since they were written: `cd.yml` run #36425116508
+  (triggered by PR #84) is the **first successful end-to-end run ever** — `docs/20-RUBRIC-
+  TRACEABILITY.md`'s I4/I5 rows and the Cosign-sign-and-verify bonus row still said "never run."
+- **Shaped / Wrote:** `docs/evidence/cd-run-green.txt` (real digests, real cosign sign+verify
+  transcript excerpts, real rollout/smoke-test/`kubectl get hpa` output, all pulled from
+  `gh run view --log`, not summarized from memory). Updated `docs/20-RUBRIC-TRACEABILITY.md`:
+  I4/I5 and the Cosign bonus row flipped ☐→☑ citing that file; A3's PR-review audit numbers
+  refreshed from a fresh live count (42→70 merged PRs; 6/42→11/70 real reviews — ratio holding,
+  not improving, row stays ☐ since it's genuinely unfixable retroactively).
+- **I changed / disclosed:**
+  1. Could not capture a literal GHCR package-page screenshot (§5.8 item 3's original ask) — this
+     session's `gh` token lacks `read:packages` scope (confirmed: `403` on the packages API).
+     Used the `build-push` job's own log instead, which proves the identical fact (both images
+     pushed under real SHA tags with real digests) with equal or stronger rigor than a
+     screenshot — disclosed as a substitution, not silently treated as equivalent without saying
+     so.
+  2. Did **not** attempt to close `RUBRIC-EVIDENCE`'s remaining 9/30 WARN. Checked each missing
+     filename against `docs/20-RUBRIC-TRACEABILITY.md`'s actual citations first: `ci-red.png`,
+     `ci-green.png`, `ci-gate-pr-url.txt`, and `vpa-step1-guess.txt` aren't cited by any row
+     anymore — the real evidence for those rubric lines already exists under different filenames
+     the work actually produced (e.g. `ci-red-then-green.txt` for I7). `scripts/check_submission
+     .py`'s manifest is stale relative to how evidence got organized, not a real gap — did not
+     edit the shared checker script to chase a non-blocking WARN (`0 FAIL`, exit 0 either way),
+     since that's separate scope from what was asked. The remaining missing files (A5's
+     `merge-conflict-*`, `provider-limits-groq.png`) are the already-known human-only blockers.
+  3. Did not touch `main`/`dev`'s 12-commit cosmetic gap — unchanged reasoning from the earlier
+     handover (`HANDOVER-2026-09-27-what-is-left.md §1.5`): files are identical, no rubric check
+     depends on the count, explicitly declined by Taimoor already.
+- **Verified:** `python3 scripts/check_submission.py` — `0 FAIL, 5 WARN, 1 SKIP`, exit 0
+  (unchanged from before this pass except the local-venv-only `RUBRIC-TESTS` false-WARN this
+  session's own stale `.venv` was producing, fixed by a `pip install -e ".[dev]"` refresh — 299
+  backend tests collect cleanly, well over the 14-test floor; this was never a real repo defect).
