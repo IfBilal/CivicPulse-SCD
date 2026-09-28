@@ -33,21 +33,18 @@ The prod overlay includes `k8s/base/vpa.yaml`, but CD did not install VPA before
 
 ## 4. Verification state
 
-- `git diff --check`: passed.
-- CI and CD have **not** run on this branch yet.
+- Commit `6251a88` is pushed on this branch; `git diff --check` and all pre-commit hooks passed.
+- PR #75 CI passed: backend/frontend tests, build, integration, lint/type, manifests, Trivy scan.
+- CD has **not** rerun with this change; the CD workflow runs only after the fix reaches `main`.
 - Latest successful upstream steps: CD run `36399497619` passed ingress setup; app apply failed
   because the VPA CRD was missing.
 
 ## 5. Next commands
 
 ```bash
-git diff --check
-git add .github/workflows/cd.yml docs/AI-USAGE.md docs/handover/HANDOVER-fix-cd-install-vpa-crd.md
-git commit -m "fix: install VPA before CD manifest apply"
-git push -u origin fix/cd-install-vpa-crd
-gh pr create --base dev --head fix/cd-install-vpa-crd \
-  --title "fix: install VPA CRD before CD deployment" \
-  --body "CD run 36399497619 passed ingress setup but failed applying backend-vpa because the ephemeral kind cluster lacked the VPA CRD. This installs the pinned official CRD/RBAC/recommender before applying prod manifests and makes failure diagnostics cover the relevant namespaces."
+gh pr view 75 --web
+# After Taimoor's substantive review, squash-merge #75 into dev.
+# Then open/review/squash-merge dev -> main to trigger the CD workflow.
 ```
 
 After partner review and merge to `dev`, promote `dev` to `main` through the required reviewed
