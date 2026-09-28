@@ -3,17 +3,31 @@
 FROM python:3.12.14-slim-bookworm AS builder
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_NO_CACHE_DIR=1 PYTHONDONTWRITEBYTECODE=1
 WORKDIR /app
+# Refresh Debian's security updates; the pinned Python base image may predate OS CVE fixes.
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
+ && rm -rf /var/lib/apt/lists/* \
+ && python -m pip install --no-cache-dir --upgrade pip==26.2.1
 # deps BEFORE source: cache-correct
 COPY backend/requirements.lock ./
 RUN python -m venv /opt/venv \
+ && /opt/venv/bin/pip install --no-cache-dir --upgrade pip==26.2.1 \
  && /opt/venv/bin/pip install --require-hashes --no-deps -r requirements.lock
 
 # ── stage 2: runtime — venv + app code only, non-root ──────────────────────
 FROM python:3.12.14-slim-bookworm AS runtime
 ENV PATH="/opt/venv/bin:$PATH" PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
-RUN groupadd -g 10001 -r app && useradd -u 10001 -r -g app -s /usr/sbin/nologin app
+# pip is not needed in the runtime image; remove the copy bundled by python:slim.
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
+ && rm -rf /var/lib/apt/lists/* \
+ && groupadd -g 10001 -r app \
+ && useradd -u 10001 -r -g app -s /usr/sbin/nologin app
 WORKDIR /app
 COPY --from=builder /opt/venv /opt/venv
+# pip is build tooling; its bundled msgpack/setuptools are not app dependencies.
+RUN /usr/local/bin/python -m pip uninstall -y pip \
+ && /opt/venv/bin/python -m pip uninstall -y pip
 # The ignore file allow-lists app/, alembic/, alembic.ini — so the Alembic tree (DEV-A, Phase 2)
 # is picked up automatically once it exists, without this line changing.
 COPY --chown=app:app backend/ ./
