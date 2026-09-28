@@ -3342,3 +3342,19 @@ answers in `docs/ENGINEERING-NOTES.md`
   (irreversible low-level namespace API surgery) and left for the user to run themselves after
   disclosure, rather than pushed through. Confirmed with the user directly that this cluster
   wasn't in active use before doing any of the cleanup.
+
+## 2026-09-28 · fix/cd-install-vpa-crd — fix the next CD failure from the live logs
+
+- **Tool:** Codex + `diagnosing-bugs`.
+- **Shaped/Wrote:** traced CD run `36399497619` after the ingress/kind fix. Ingress and secrets
+  now pass; `kubectl apply` rejects `backend-vpa` because the ephemeral cluster has no
+  `verticalpodautoscalers.autoscaling.k8s.io` CRD. Added a pinned VPA 1.8.0 bootstrap for the
+  CRD, RBAC and recommender before applying the app overlay; expanded failure diagnostics to
+  report all namespaces and events without masking the original error. The CI jobs passed; CD
+  failed only at applying the missing VPA kind.
+- **I changed:** chose to install only the CRDs, RBAC and recommender rather than call the full
+  `vpa-up.sh`: the workload uses `updateMode: "Off"`, so it needs recommendations but no updater
+  or admission webhook. This keeps the ephemeral deployment aligned with `14-LOAD-AUTOSCALING.md
+  §7.1` while removing unrelated webhook startup from the smoke-test path. PR #75's full CI and
+  Trivy checks passed on `6251a88`; the deploy fix still needs a new `main` CD run before I5 can
+  be marked fully proven.
