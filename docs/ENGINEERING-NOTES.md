@@ -1235,3 +1235,12 @@ mechanism — the tell that the first fix was incomplete was that the *same* tes
 after it shipped, not different ones. Confirming a fix against the *specific* failure mode (here:
 instrumenting the actual attribute suspected, inside the actual failing run) beats re-running the
 suite and hoping a plausible-sounding cause was the real one.
+
+### CD smoke-test requests are bounded
+
+The CD smoke-test readiness loop and its API requests must have individual network deadlines as
+well as an overall readiness deadline. `curl` can connect to a local port-forward and then wait
+indefinitely for response bytes; a loop that only counts retries does not bound that case. The
+workflow redirects the background port-forward's output and cleans it up with an exit trap, while
+all smoke-test requests use explicit connect and response limits. This makes endpoint failures
+fail visibly and lets the temporary runner process exit.

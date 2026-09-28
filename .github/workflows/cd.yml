@@ -158,12 +158,28 @@ jobs:
           kubectl -n civicpulse rollout status deployment/frontend --timeout=300s
       - name: smoke test through the Ingress
         run: |
-          kubectl -n civicpulse port-forward svc/frontend 8080:8080 &
+          kubectl -n civicpulse port-forward svc/frontend 8080:8080 \
+            >/tmp/frontend-port-forward.log 2>&1 &
+          port_forward_pid=$!
+          cleanup_port_forward() {
+            status=$?
+            trap - EXIT
+            kill "$port_forward_pid" 2>/dev/null || true
+            wait "$port_forward_pid" 2>/dev/null || true
+            if [ "$status" -ne 0 ]; then
+              cat /tmp/frontend-port-forward.log || true
+            fi
+            exit "$status"
+          }
+          trap cleanup_port_forward EXIT
+
           ./scripts/wait_for.sh http://localhost:8080/api/stats 90
-          curl -sf localhost:8080/api/stats | jq -e '.total >= 0'
-          id=$(curl -sf -XPOST localhost:8080/api/complaints -H 'content-type: application/json' \
-                 -d @fixtures/one.json | jq -r .id)
-          curl -sf "localhost:8080/api/complaints/$id" | jq -e '.category != null'
+          curl --connect-timeout 2 --max-time 10 -sf localhost:8080/api/stats | jq -e '.total >= 0'
+          id=$(curl --connect-timeout 2 --max-time 10 -sf -XPOST \
+            localhost:8080/api/complaints -H 'content-type: application/json' \
+            -d @fixtures/one.json | jq -er .id)
+          curl --connect-timeout 2 --max-time 10 -sf \
+            "localhost:8080/api/complaints/$id" | jq -e '.category != null'
       - run: kubectl -n civicpulse get hpa # §3.4 — "print kubectl get hpa"
       - if: failure()
         name: diagnose cluster failure (best effort)

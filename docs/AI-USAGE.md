@@ -3358,3 +3358,21 @@ answers in `docs/ENGINEERING-NOTES.md`
   §7.1` while removing unrelated webhook startup from the smoke-test path. PR #75's full CI and
   Trivy checks passed on `6251a88`; the deploy fix still needs a new `main` CD run before I5 can
   be marked fully proven.
+
+## 2026-09-28 · fix/cd-smoke-test-timeout — diagnose the new CD hang
+
+- **Tool:** Codex + `diagnosing-bugs`.
+- **Shaped/Wrote:** inspected live CD run `36402494560`. Cluster creation, ingress, VPA, manifest
+  apply and Postgres rollout passed; the smoke-test step stayed active for over 30 minutes. The
+  live runner did not expose partial step logs, so the exact blocked curl could not be identified.
+- **I changed:** the likely hang path is an unbounded `curl`: both `scripts/wait_for.sh` and the
+  three smoke-test API calls lacked response deadlines. Added connect/total request limits,
+  redirected and trapped the background port-forward, and made the readiness timeout measure
+  elapsed wall time. Added an engineering note and a handover with the remaining verification.
+  Also removed the stale VPA handover whose PR had already merged. I cancelled the stuck run after
+  confirming it had been idle in the same smoke-test step for over 30 minutes. No tests were run
+  locally; the next CI/CD run is the integration feedback loop.
+- **Pre-PR hardening findings (all fixed):** `scripts/wait_for.sh` could hang in a single curl;
+  subsequent smoke-test curls had no maximum time; and the background port-forward had no output
+  redirection or cleanup. `caveman` and `ponytail` are project-mandated but were not present in the
+  available skill catalog for this session.
