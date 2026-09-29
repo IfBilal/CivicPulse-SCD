@@ -14,6 +14,24 @@ import { emitPulse } from "../../lib/pulse";
 import { BEACONS } from "../../city/layout";
 import { INTRO_DONE } from "./Intro";
 
+// Document-flow Y position, ignoring any CSS transform on an ancestor — `getBoundingClientRect()`
+// is transform-aware, which makes it the wrong tool here: Layout.tsx's own page-transition tween
+// puts a real matrix3d() on an ancestor of this element for its first ~0.95s on every mount
+// (confirmed live via getComputedStyle on that ancestor), and that's a time-based animation, not
+// an event — there's no resize/load/fonts/intro event to hang a corrective refresh() off that's
+// guaranteed to land after it clears. offsetTop/offsetParent walk the same as "top top" is
+// supposed to mean (this element's position in normal document flow) and simply don't see
+// transforms at all, so the measurement can't be raced by one in the first place.
+function docTop(node: HTMLElement): number {
+  let y = 0;
+  let n: HTMLElement | null = node;
+  while (n) {
+    y += n.offsetTop;
+    n = n.offsetParent as HTMLElement | null;
+  }
+  return y;
+}
+
 const TYPED = "Pani ka pipe burst ho gaya hai near the masjid — water on the road since fajr.";
 const PROBLEM =
   "A burst pipe. A dead streetlight. Garbage for three days. Every complaint is a signal — and most of them are lost before anyone reads them.";
@@ -69,14 +87,10 @@ export function Journey() {
         defaults: { ease: "none" },
         scrollTrigger: {
           trigger: el,
-          start: "top top",
-          // A function, not the "bottom bottom" shorthand — computed fresh on every refresh from
-          // the element's actual rendered height. The shorthand's own cached/parsed value has been
-          // observed to go wildly wrong (~20x too large) after React StrictMode's dev-only double
-          // mount/unmount/remount of this effect, which silently breaks the whole journey (the
-          // scrub barely advances no matter how far you scroll). Computing it ourselves in plain
-          // JS removes any dependency on however that internal cache gets keyed/invalidated.
-          end: () => el.offsetHeight - window.innerHeight,
+          // Both bounds are functions, not the "top top"/"bottom bottom" shorthands, and use
+          // docTop() rather than getBoundingClientRect() — see its own comment for why.
+          start: () => docTop(el),
+          end: () => docTop(el) + el.offsetHeight - window.innerHeight,
           scrub: 0.8,
           onUpdate: (self) => journey.set(self.progress),
         },
@@ -156,6 +170,9 @@ export function Journey() {
     window.visualViewport?.addEventListener("resize", refresh, { passive: true });
     window.addEventListener("load", refresh, { once: true });
     void document.fonts?.ready.then(refresh);
+    // Also refresh once the intro overlay is dismissed — its exit can be the last layout-relevant
+    // change before the journey becomes scrollable.
+    window.addEventListener(INTRO_DONE, refresh, { once: true });
     refresh();
 
     return () => {
@@ -164,6 +181,7 @@ export function Journey() {
       window.removeEventListener("resize", refresh);
       window.visualViewport?.removeEventListener("resize", refresh);
       window.removeEventListener("load", refresh);
+      window.removeEventListener(INTRO_DONE, refresh);
       ctx.revert();
       el.classList.remove("live");
       journey.set(null);

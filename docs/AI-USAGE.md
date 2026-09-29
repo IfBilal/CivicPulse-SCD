@@ -3383,6 +3383,72 @@ answers in `docs/ENGINEERING-NOTES.md`
   redirection or cleanup. `caveman` and `ponytail` are project-mandated but were not present in the
   available skill catalog for this session.
 
+## 2026-09-28 · fix/city-scroll-journey-init — two real frontend bugs, both found and fixed live
+
+- **Tool:** Claude Code, no skill invocation — a reported user-facing bug (bug fix task, not a new
+  phase), not a design fork with ≥2 defensible answers.
+- **User report, verbatim substance:** the Report page's 3D city scene "starts at a random place"
+  on load, corrects itself if DevTools is opened/closed, and "sometimes the lights of the city are
+  gone" while scrolling.
+- **Bug 1 — camera-init race, `frontend/src/city/CityScene.tsx`:** `CityScene` is lazy-loaded
+  behind a `Suspense` boundary (`Layout.tsx`); its camera state (`smooth.p`, `camPos`) used to seed
+  itself from `journey.get() ?? 1` and the `CAMERA_PATH` **final** resting position at construction
+  time, with no guarantee `Journey.tsx`'s own `journey.set(0)` had run first on a cold load. Even
+  once primed correctly, `camPos` still *eased in* from that placeholder toward the real target
+  every load, since `CAMERA_PATH[0].pos = [0,640,90]` (high orbit) and the resting position is
+  `[180,200,-30]` — a large, real, visible discrepancy, not a rounding artifact. Fixed by adding a
+  `primed` flag: the first real frame snaps `camPos`/`smooth.p` directly to the correct target
+  instead of lerping in from a placeholder, so neither the race nor the placeholder can ever
+  produce a visible jump, regardless of load order.
+- **Bug 2 — one-way quality degrade, same file:** the auto-quality system (`degradeOnce`/
+  `degradeMore`, triggered by measured fps) permanently stripped the building window-light shader
+  to a flat cheap mode after a single 700ms low-fps window, with no recovery path even after fps
+  recovered — a brief stutter (GC pause, backgrounded tab) reads to the user as "the lights are
+  just gone" for the rest of the session. Added symmetric `restoreTier1`/`restoreFull` with
+  hysteresis (recovery thresholds a few fps above the degrade thresholds, to avoid flapping).
+- **Bug 3 — found only by testing live, not in the original report:** `Journey.tsx`'s
+  `ScrollTrigger` used `start: "top top"` (a string shorthand) while `end` was already a function
+  (an earlier session's fix for the same *class* of shorthand-caching bug, per that code's own
+  surviving comment — it only ever fixed `end`, not `start`). Confirmed live via `getComputedStyle`
+  on the DOM ancestor chain at the exact moment of measurement: `Layout.tsx`'s own route-change
+  GSAP tween puts a real `matrix3d(...)` (`z:-140, rotateX:7`) on an ancestor of the journey
+  element for its first ~0.95s on every mount — a **time-based** transform, not an event, so no
+  amount of resize/load/fonts/intro-dismiss refresh listeners can reliably land after it clears.
+  `getBoundingClientRect()` is transform-aware and measured `start` as **-109906** while real
+  `scrollY` was 0 (confirmed via direct instrumentation, not inferred) — GSAP's own progress math
+  then reads as if the page were already ~88% scrolled at rest. This fully explains the user's
+  report on its own: DevTools open/close forces a `resize` → `ScrollTrigger.refresh()`, which by
+  then usually lands after the transform has cleared, making it *look* fixed by the inspect action
+  when it was really just timing. Root-fixed by replacing `getBoundingClientRect()` with a small
+  `docTop()` helper (`offsetTop`/`offsetParent` walk) for both `start` and `end` — that measurement
+  is transform-agnostic by construction, so it cannot be raced by one, present or future.
+- **I changed / disclosed:** none of these three were guessed — each was confirmed by live
+  instrumentation (temporary `console.log`s behind a `window.__dbg` flag, removed before commit,
+  none left in the diff) against a real running dev server, not reasoned from source alone. Also
+  disclosing a dead end in my own process, not the product: my first two "verification" screenshots
+  after fixing bug 3 looked unchanged only because my own throwaway Playwright check script had
+  its screenshot loop silently dropped a few edits earlier while I was adding debug logging — not
+  a product regression. Caught by restarting the dev server fresh and re-diffing my own script
+  before concluding the fix didn't work.
+- **Pre-PR hardening findings:**
+  1. `frontend/src/components/journey/Journey.tsx` `docTop()` walks `offsetParent`, which returns
+     `null` for a `position: fixed` ancestor — if a future edit ever puts a `fixed` element between
+     `.journey` and `<body>`, the walk would silently truncate short. Not currently triggered (no
+     such ancestor exists today), disclosed rather than pre-solved for a case that doesn't exist.
+  2. `frontend/src/city/CityScene.tsx` recovery hysteresis (55fps/58fps thresholds) is a reasoned
+     estimate (a few fps of margin above the 48/40 degrade thresholds), not measured against real
+     low-end hardware — noted as an estimate, not a measured constant.
+  3. Removed the now-redundant `haze.visible = false;` line from `degradeOnce()` — confirmed
+     harmless: the per-frame `haze.visible = degradeTier < 1 && ...` line already overrides it
+     every frame regardless, this was dead/duplicate, not a behavior change.
+- **Verified:** `npm run lint` / `npm run typecheck` / `npm run test` all clean (14/14 unit tests).
+  `npm run e2e` (real Playwright against a real dev server, real Chrome, `--use-angle=swiftshader`)
+  run 6 times total across the session: baseline (unfixed) 10/18, first attempts 13-14/18 with the
+  "home renders"/"story"/"journey" triad failing identically whether or not bug 1/2's fix was
+  applied (proving those two alone didn't cause or fix the triad — correctly pointed at bug 3
+  instead of stopping early), **final run with all three fixes: 18/18 passed**, including every
+  test that had never once passed in any earlier run this session.
+
 ## 2026-09-28 · fix/cd-smoke-test-networkpolicy-dns — real root cause of every cd.yml 502, found by reproducing it live
 
 - **Tool:** Claude Code, no named skill.
@@ -3427,3 +3493,42 @@ answers in `docs/ENGINEERING-NOTES.md`
   sequence (`port-forward` + `curl /api/stats` + `POST /api/complaints` + `GET` the created
   complaint) — all passed, `HTTP 200` throughout, real JSON matching the schema. Cluster and test
   images deleted afterward.
+
+## 2026-09-28 · docs/close-cd-evidence-and-rubric-refresh — captured the first green cd.yml run
+
+- **Tool:** Claude Code, no skill invocation — pure evidence-capture and doc-refresh, not a new
+  phase and not a design fork.
+- **Context:** per user request ("do what u can do and then tell whats left"), audited current
+  live state against the 2026-09-27 handover docs rather than trusting their (by-then-stale)
+  snapshot. Found real, new progress since they were written: `cd.yml` run #36425116508
+  (triggered by PR #84) is the **first successful end-to-end run ever** — `docs/20-RUBRIC-
+  TRACEABILITY.md`'s I4/I5 rows and the Cosign-sign-and-verify bonus row still said "never run."
+- **Shaped / Wrote:** `docs/evidence/cd-run-green.txt` (real digests, real cosign sign+verify
+  transcript excerpts, real rollout/smoke-test/`kubectl get hpa` output, all pulled from
+  `gh run view --log`, not summarized from memory). Updated `docs/20-RUBRIC-TRACEABILITY.md`:
+  I4/I5 and the Cosign bonus row flipped ☐→☑ citing that file; A3's PR-review audit numbers
+  refreshed from a fresh live count (42→70 merged PRs; 6/42→11/70 real reviews — ratio holding,
+  not improving, row stays ☐ since it's genuinely unfixable retroactively).
+- **I changed / disclosed:**
+  1. Could not capture a literal GHCR package-page screenshot (§5.8 item 3's original ask) — this
+     session's `gh` token lacks `read:packages` scope (confirmed: `403` on the packages API).
+     Used the `build-push` job's own log instead, which proves the identical fact (both images
+     pushed under real SHA tags with real digests) with equal or stronger rigor than a
+     screenshot — disclosed as a substitution, not silently treated as equivalent without saying
+     so.
+  2. Did **not** attempt to close `RUBRIC-EVIDENCE`'s remaining 9/30 WARN. Checked each missing
+     filename against `docs/20-RUBRIC-TRACEABILITY.md`'s actual citations first: `ci-red.png`,
+     `ci-green.png`, `ci-gate-pr-url.txt`, and `vpa-step1-guess.txt` aren't cited by any row
+     anymore — the real evidence for those rubric lines already exists under different filenames
+     the work actually produced (e.g. `ci-red-then-green.txt` for I7). `scripts/check_submission
+     .py`'s manifest is stale relative to how evidence got organized, not a real gap — did not
+     edit the shared checker script to chase a non-blocking WARN (`0 FAIL`, exit 0 either way),
+     since that's separate scope from what was asked. The remaining missing files (A5's
+     `merge-conflict-*`, `provider-limits-groq.png`) are the already-known human-only blockers.
+  3. Did not touch `main`/`dev`'s 12-commit cosmetic gap — unchanged reasoning from the earlier
+     handover (`HANDOVER-2026-09-27-what-is-left.md §1.5`): files are identical, no rubric check
+     depends on the count, explicitly declined by Taimoor already.
+- **Verified:** `python3 scripts/check_submission.py` — `0 FAIL, 5 WARN, 1 SKIP`, exit 0
+  (unchanged from before this pass except the local-venv-only `RUBRIC-TESTS` false-WARN this
+  session's own stale `.venv` was producing, fixed by a `pip install -e ".[dev]"` refresh — 299
+  backend tests collect cleanly, well over the 14-test floor; this was never a real repo defect).

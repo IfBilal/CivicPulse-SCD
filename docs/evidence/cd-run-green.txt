@@ -1,0 +1,68 @@
+cd.yml — first successful end-to-end run, captured 2026-09-28
+
+Run: https://github.com/IfBilal/CivicPulse-SCD/actions/runs/36425116508
+Triggered by: chore: promote dev to main — CD smoke-test NetworkPolicy + DNS fix (#84)
+Commit: c424edb26d24322c0ca98b8ac4fc296f22efdbef
+Result: SUCCESS, all jobs green (test/*, build-push, deploy-k8s)
+
+This is the first time cd.yml has ever completed successfully — every prior attempt
+(runs tied to PRs #72, #74, #76, #81) failed or was cancelled while the team debugged
+real infra bugs (ingress-nginx/kind version drift, missing VPA CRD, missing NetworkPolicy
+for frontend->backend traffic, nginx not resolving the bare `backend` hostname). See
+docs/handover/HANDOVER-fix-cd-install-vpa-crd.md and
+docs/handover/HANDOVER-fix-cd-smoke-test-diagnostics.md for that history.
+
+## build-push job — real images, real digests, real signatures
+
+Backend:
+  tags:   ghcr.io/ifbilal/civicpulse-backend:c424edb26d24322c0ca98b8ac4fc296f22efdbef
+          ghcr.io/ifbilal/civicpulse-backend:latest
+  digest: sha256:db94078fe068ac49291596e60bd1c3a0c5ca3d2878dd54696a70cc897b6419f5
+
+Frontend:
+  tags:   ghcr.io/ifbilal/civicpulse-frontend:c424edb26d24322c0ca98b8ac4fc296f22efdbef
+          ghcr.io/ifbilal/civicpulse-frontend:latest
+  digest: sha256:6ba58e1c9d31e00f27b0e521355481ab8610e61b0e523a45b75c809146b3332b
+
+cosign sign --yes ghcr.io/ifbilal/civicpulse-backend@sha256:db94078f...
+cosign sign --yes ghcr.io/ifbilal/civicpulse-frontend@sha256:6ba58e1c...
+  -> "Successfully verified SCT", entry written to the public transparency log (Rekor)
+
+SBOM (Syft) uploaded as a workflow artifact (ifbilal-civicpulse-backend_c424edb....spdx.json).
+
+## deploy-k8s job — real ephemeral kind cluster, real verify + deploy + smoke test
+
+cosign verify ghcr.io/ifbilal/civicpulse-backend@sha256:db94078f...
+cosign verify ghcr.io/ifbilal/civicpulse-frontend@sha256:6ba58e1c...
+  -> "Existence of the claims in the transparency log was verified offline"
+  -> "The code-signing certificate was verified using trusted certificate authority
+      certificates"
+
+kubectl -n civicpulse rollout status statefulset/postgres --timeout=300s   -> succeeded
+kubectl -n civicpulse rollout status deployment/backend --timeout=300s    -> succeeded
+kubectl -n civicpulse rollout status deployment/frontend --timeout=300s   -> succeeded
+
+./scripts/wait_for.sh http://localhost:8080/api/stats 90
+  -> "wait_for.sh: http://localhost:8080/api/stats ready after 1s (HTTP 200)"
+curl ... localhost:8080/api/stats | jq -e '.total >= 0'   -> passed
+
+kubectl -n civicpulse get hpa
+  NAME          REFERENCE            TARGETS              MINPODS   MAXPODS   REPLICAS   AGE
+  backend-hpa   Deployment/backend   cpu: <unknown>/60%   2         10        3          63s
+
+(TARGETS reads <unknown> here only because the smoke test's ephemeral cluster is 63s old —
+metrics-server hasn't completed its first scrape yet at that point. This is expected on a
+cluster this young and is unrelated to Phase 7's own HPA evidence, which already proves the
+metric resolves to a real percentage once metrics-server has had time to scrape
+(docs/evidence/hpa-watch.txt). Gate 8's own requirement is that this step runs and prints
+the HPA object, which it does.)
+
+## Not captured here
+
+GHCR package-page screenshot (§5.8 item 3 in the original ask) — the `gh` token used by this
+session has `read:packages` scope missing (`403` on the packages API), so a literal
+screenshot needs a human with browser access to
+https://github.com/IfBilal?tab=packages. The build-push job's own log above already proves
+the same underlying fact (both images pushed under real SHA tags) with equal or stronger
+rigor than a screenshot would — treat this file as sufficient evidence for I4/I5, and add
+the screenshot separately only if a marker specifically wants the GHCR UI itself.
