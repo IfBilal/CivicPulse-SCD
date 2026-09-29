@@ -1,0 +1,13 @@
+diff --cc backend/app/schemas/stats.py
+index a3a7afb,fe66f7e..0000000
+--- a/backend/app/schemas/stats.py
++++ b/backend/app/schemas/stats.py
+@@@ -14,4 -14,4 +14,8 @@@ class StatsOut(BaseModel)
+      by_status: dict[Status, int]
+      generated_at: datetime
+      cache_age_seconds: int | None  # 0 on a MISS
+++<<<<<<< HEAD
+ +    resolved_last_24h: int  # complaints resolved in the last day — throughput signal
+++=======
++     open_over_48h: int  # complaints still open past 48h — surfaces backlog risk
+++>>>>>>> origin/feat/stats-overdue-count
