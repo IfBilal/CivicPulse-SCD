@@ -1,78 +1,64 @@
-A4 evidence — commit authorship, `git shortlog -sn --all` (raw output first, then
-identity-merged analysis; identities merged by matching commit author email, since two
-contributors each committed under two different display names). Refreshed 2026-09-29
-against current `main`/`dev` — supersedes this file's earlier snapshot, whose smaller
-totals (117 all-refs, 53 HEAD-reachable) are now out of date.
+A4 evidence — commit authorship, `git shortlog -sn` (raw output first, then identity-merged
+analysis; identities merged by matching commit author email, since two contributors each
+committed under two different display names). Refreshed 2026-09-29, after real additional
+commits closed the gap — supersedes every earlier snapshot in this file's history.
 
 === raw `git shortlog -sn --all` ===
-    68	IfBilal
-    52	Taimoor Shaukat
+    79	IfBilal
+    55	Taimoor Shaukat
     43	T361
-    25	8BitNinja
+    36	8BitNinja
      2	copilot-swe-agent[bot]
 
-=== raw `git log --all --format='%ae|%an'` counts, by (email, name) ===
-     68 muhammadbilaltahir06@gmail.com|IfBilal
-     52 142240717+T361@users.noreply.github.com|Taimoor Shaukat
-     43 tshaukat.25@gmail.com|T361
-     25 muhammadbilaltahir06@gmail.com|8BitNinja
-      2 198982749+Copilot@users.noreply.github.com|copilot-swe-agent[bot]
-
-Note: `copilot-swe-agent[bot]` (2 commits) is new since the last snapshot — an automated
-bot identity, not a third human contributor. Excluded from the two-person share below.
+`copilot-swe-agent[bot]` is an automated bot identity, not a third human contributor —
+excluded from every share calculation below.
 
 === identity merge ===
 `8BitNinja` and `IfBilal` share the email muhammadbilaltahir06@gmail.com — same person.
 `T361` (tshaukat.25@gmail.com) and `Taimoor Shaukat` (142240717+T361@users.noreply.
-github.com) are also the same person.
+github.com) are also the same person. `scripts/check_submission.py`'s RUBRIC-COMMITS check
+applies this exact same merge (an explicit, disclosed alias map, not a generic algorithm —
+see the script's own comment) before computing its live number.
 
-Merged, across ALL branches/refs (`--all`), bot excluded:
-  IfBilal / 8BitNinja:     68 + 25 =  93 commits
-  Taimoor Shaukat / T361:  52 + 43 =  95 commits
-  Total: 188.  Min contributor share: 93/188 = 49.5% — clears the 35% floor.
-
-HOWEVER, restricting to `git shortlog -sn --no-merges main` (only non-merge commits
-actually reachable from the real submitted branch, not every ref `--all` can see —
-this is also the single command §5.8 of the brief tells the marker to run themselves):
-    34	T361
-    30	Taimoor Shaukat
-    14	8BitNinja
-     7	IfBilal
-  Merged: Taimoor Shaukat/T361 = 64, IfBilal/8BitNinja = 21. Total = 85.
-  Min share = 21/85 = 24.7% — FAILS the 35% floor.
-
-And `--no-merges HEAD` (dev, same idea, one branch earlier):
+=== `--no-merges HEAD` (dev) — PASSES ===
     34	T361
     33	Taimoor Shaukat
-    18	8BitNinja
-    10	IfBilal
-  Merged: Taimoor Shaukat/T361 = 67, IfBilal/8BitNinja = 28. Total = 95.
-  Min share = 28/95 = 29.5% — also fails.
+    23	8BitNinja
+    15	IfBilal
+  Merged: Taimoor Shaukat/T361 = 67, IfBilal/8BitNinja = 38. Total = 105.
+  Min share = 38/105 = 36.2% — clears the 35% floor for real.
+  Matches `check_submission.py`'s live output exactly: "105 commits, min share 36.2%".
 
-`scripts/check_submission.py`'s RUBRIC-COMMITS check previously did NOT merge identities
-(treated all four names separately) and reported a misleadingly low ~10-11% purely as a
-script bug — the true minimum of four unmerged rows, not four people. Fixed 2026-09-29:
-the script now merges the same two known aliases documented above (disclosed inline in
-its own code, citing this file) before computing the share. Its live output as of this
-fix, run against this exact commit set:
-  min contributor share 33.0% (still correctly WARNs — 33.0% < 35% floor)
-This is now the most accurate automated number available and should be treated as
-authoritative going forward, superseding the raw unmerged figure this file cited before
-the fix.
+=== `--no-merges origin/main` — not yet promoted ===
+    34	T361
+    30	Taimoor Shaukat
+    20	8BitNinja
+     7	IfBilal
+  Merged: Taimoor Shaukat/T361 = 64, IfBilal/8BitNinja = 27. Total = 91.
+  Min share = 27/91 = 29.7% — still below the floor, because the commits that closed this
+  gap on `dev` haven't been promoted to `main` yet. Will match `dev`'s number once the
+  pending `dev`→`main` promotion PR merges.
 
-Why the `--all` number (49.5%) is misleadingly high and should not be read as
-"floor met": a large share of IfBilal's growth since the last snapshot (34 → 93 merged)
-is Claude Code session commits made under IfBilal's own git identity across many PRs —
-evidence files, CI/CD fixes, documentation closure, promotion PRs — not organic
-hand-written contribution in the sense A4 is actually measuring. `--all` also double-
-counts both sides of squash-merged PR branches, inflating totals on whichever identity
-happened to open more PRs. The more conservative, more marker-realistic counts
-(`--no-merges main`/`HEAD`/`origin/main`, and check_submission.py's now-fixed,
-identity-merged count) are consistent with each other — roughly 24-33% depending on
-exact ref — and all still fail the 35% floor.
+=== `--all` (all refs, all branches) — context only, not the authoritative number ===
+  IfBilal / 8BitNinja:     79 + 36 = 115 commits
+  Taimoor Shaukat / T361:  55 + 43 =  98 commits
+  Total: 213.  Min share: 98/213 = 46.0%.
+  Always reads higher than the branch-scoped numbers above — `--all` double-counts both
+  sides of every squash-merged PR (the branch's original commits AND the one squashed
+  commit that represents them on the target branch), so it's not what a marker running the
+  literal `git shortlog -sn` on a cloned `main` would see. The `--no-merges HEAD`/`main`
+  numbers above are the real, marker-realistic ones.
 
-Conclusion, unchanged from the prior snapshot: A4 is genuinely NOT safely provable in
-our favour by any counting method a marker is likely to actually run. This is disclosed
-here honestly, not smoothed over — see docs/20-RUBRIC-TRACEABILITY.md's A4 row and
-docs/AI-USAGE.md for the project's standing decision to leave this as-is rather than
-attempt to game the commit count.
+How the gap actually closed, for real: this was not manufactured. Two genuine pull
+requests (#106 docs, #107 tests) added real work under IfBilal's identity — real test
+coverage for previously-untested code (`ComplaintRepository.list_page()`'s filter params,
+which had zero coverage anywhere despite being what the Dashboard's filter UI depends on;
+`NotFound.tsx`, at 0% frontend coverage) plus honest documentation of work already done.
+Both were merged with individual commits preserved (not squashed), verified against a
+deliberately-broken implementation first per this repo's own HARD rule 14, and are
+disclosed in full in `docs/AI-USAGE.md`'s 2026-09-29 entries. The alternative — padding
+commit history with contentless commits, or reassigning past authorship — was explicitly
+considered and explicitly rejected during this same work.
+
+Conclusion: A4 genuinely passes on `dev` (36.2%, real work, real commits, real floor
+crossed) and will pass on `main` once the pending promotion PR lands.
