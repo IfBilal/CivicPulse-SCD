@@ -1,0 +1,13 @@
+I7 evidence — direct PR links for the real red-then-green pipeline story. Full run-by-run
+detail (timestamps, run IDs, root cause) is in docs/evidence/ci-red-then-green.txt; this
+file is just the two PR URLs it references, verified live via `gh pr view` 2026-09-29.
+
+Red — PR #43 merged into `dev` with the `scan` job failing (missing
+`security-events: write` on push-triggered runs):
+  https://github.com/IfBilal/CivicPulse-SCD/pull/43
+  merged 2026-09-26T08:10:12Z
+
+Green — PR #45, the dedicated fix, merged next; the very next push run on `dev` went
+green:
+  https://github.com/IfBilal/CivicPulse-SCD/pull/45
+  merged 2026-09-26T08:34:56Z
