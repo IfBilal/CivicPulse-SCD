@@ -300,6 +300,10 @@ export interface components {
              * Format: date-time
              */
             generated_at: string;
+            /** Open Over 48H */
+            open_over_48h: number;
+            /** Resolved Last 24H */
+            resolved_last_24h: number;
             /** Total */
             total: number;
         };
