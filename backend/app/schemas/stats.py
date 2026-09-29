@@ -14,4 +14,5 @@ class StatsOut(BaseModel):
     by_status: dict[Status, int]
     generated_at: datetime
     cache_age_seconds: int | None  # 0 on a MISS
+    open_over_48h: int  # complaints still open past 48h — surfaces backlog risk
     resolved_last_24h: int  # complaints resolved in the last day — throughput signal
