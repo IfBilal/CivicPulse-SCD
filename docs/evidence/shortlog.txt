@@ -1,56 +1,69 @@
 A4 evidence — commit authorship, `git shortlog -sn --all` (raw output first, then
 identity-merged analysis; identities merged by matching commit author email, since two
-contributors each committed under two different display names).
+contributors each committed under two different display names). Refreshed 2026-09-29
+against current `main`/`dev` — supersedes this file's earlier snapshot, whose smaller
+totals (117 all-refs, 53 HEAD-reachable) are now out of date.
 
 === raw `git shortlog -sn --all` ===
-    52	T361
-    34	IfBilal
-    23	Taimoor Shaukat
-     8	8BitNinja
+    68	IfBilal
+    52	Taimoor Shaukat
+    43	T361
+    25	8BitNinja
+     2	copilot-swe-agent[bot]
 
 === raw `git log --all --format='%ae|%an'` counts, by (email, name) ===
-     52 tshaukat.25@gmail.com|T361
-     34 muhammadbilaltahir06@gmail.com|IfBilal
-     23 142240717+T361@users.noreply.github.com|Taimoor Shaukat
-      8 muhammadbilaltahir06@gmail.com|8BitNinja
+     68 muhammadbilaltahir06@gmail.com|IfBilal
+     52 142240717+T361@users.noreply.github.com|Taimoor Shaukat
+     43 tshaukat.25@gmail.com|T361
+     25 muhammadbilaltahir06@gmail.com|8BitNinja
+      2 198982749+Copilot@users.noreply.github.com|copilot-swe-agent[bot]
+
+Note: `copilot-swe-agent[bot]` (2 commits) is new since the last snapshot — an automated
+bot identity, not a third human contributor. Excluded from the two-person share below.
 
 === identity merge ===
-`8BitNinja` and `IfBilal` share the email muhammadbilaltahir06@gmail.com — same person,
-two display names used across the project's history (GitHub username changed at some
-point, or a local git config with a different `user.name` was used briefly).
+`8BitNinja` and `IfBilal` share the email muhammadbilaltahir06@gmail.com — same person.
 `T361` (tshaukat.25@gmail.com) and `Taimoor Shaukat` (142240717+T361@users.noreply.
-github.com, GitHub's own noreply address for the T361 account) are also the same person.
+github.com) are also the same person.
 
-Merged, across ALL branches/refs (`--all`):
-  Taimoor Shaukat / T361:  52 + 23 = 75 commits
-  IfBilal / 8BitNinja:     34 +  8 = 42 commits
-  Total: 117.  Min contributor share: 42/117 = 35.9% — clears the 35% floor.
+Merged, across ALL branches/refs (`--all`), bot excluded:
+  IfBilal / 8BitNinja:     68 + 25 =  93 commits
+  Taimoor Shaukat / T361:  52 + 43 =  95 commits
+  Total: 188.  Min contributor share: 93/188 = 49.5% — clears the 35% floor.
 
-HOWEVER: restricting to `git log --no-merges HEAD` (i.e. only this branch's own
-non-merge, first-party commit history, not everything reachable via `--all` across
-every PR branch and squash-merge target) gives a materially different, smaller picture:
-  git shortlog -sn --no-merges HEAD:
-    29  T361
-    12  Taimoor Shaukat
-     8  8BitNinja
-     4  IfBilal
-  Merged: Taimoor Shaukat/T361 = 41, IfBilal/8BitNinja = 12. Total = 53.
-  Min share = 12/53 = 22.6% — FAILS the 35% floor.
+HOWEVER, restricting to `git shortlog -sn --no-merges main` (only non-merge commits
+actually reachable from the real submitted branch, not every ref `--all` can see —
+this is also the single command §5.8 of the brief tells the marker to run themselves):
+    34	T361
+    30	Taimoor Shaukat
+    14	8BitNinja
+     7	IfBilal
+  Merged: Taimoor Shaukat/T361 = 64, IfBilal/8BitNinja = 21. Total = 85.
+  Min share = 21/85 = 24.7% — FAILS the 35% floor.
 
-This discrepancy exists because `--all` counts commits made on now-superseded/rebased
-branches and both sides of squash-merged PRs (GitHub squash-merge can attribute the
-squashed commit differently from the branch's original individual commits), while
-`--no-merges HEAD` counts only what's actually reachable, non-merge, from this specific
-branch tip. check_submission.py's own RUBRIC-COMMITS check (`scripts/check_submission.py`
-line ~321) uses `git shortlog -sn --no-merges HEAD` WITHOUT merging the two aliased
-identities, and reports "min contributor share 7.5%" — even lower than the 22.6% this
-audit computes after merging aliases, because it treats T361/Taimoor Shaukat/IfBilal/
-8BitNinja as four separate contributors rather than two.
+And `--no-merges HEAD` (dev, same idea, one branch earlier):
+    34	T361
+    33	Taimoor Shaukat
+    18	8BitNinja
+    10	IfBilal
+  Merged: Taimoor Shaukat/T361 = 67, IfBilal/8BitNinja = 28. Total = 95.
+  Min share = 28/95 = 29.5% — also fails.
 
-Conclusion: A4 is NOT safely provable either way from a quick check — the true
-per-person split depends on which commit set you count (all-refs vs HEAD-reachable
-non-merges) and squash-merge attribution quirks. Left UNPROVEN (☐). Whoever finalizes
-this row should decide which counting method the marker will actually run
-(`git shortlog -sn --no-merges main` against the real `main` branch, post-submission, is
-the most likely marker method) and verify the real number against THAT, not against
-`--all`.
+`scripts/check_submission.py`'s own live RUBRIC-COMMITS check (no identity merging,
+treats all four names separately) currently reports **10.5%** — lower still.
+
+Why the `--all` number (49.5%) is misleadingly high and should not be read as
+"floor met": a large share of IfBilal's growth since the last snapshot (34 → 93 merged)
+is Claude Code session commits made under IfBilal's own git identity across many PRs —
+evidence files, CI/CD fixes, documentation closure, promotion PRs — not organic
+hand-written contribution in the sense A4 is actually measuring. `--all` also double-
+counts both sides of squash-merged PR branches, inflating totals on whichever identity
+happened to open more PRs. The more conservative, more marker-realistic counts
+(`--no-merges main`/`HEAD`, and check_submission.py's own unmerged count) are consistent
+with each other — roughly 10-30% depending on method — and all fail the 35% floor.
+
+Conclusion, unchanged from the prior snapshot: A4 is genuinely NOT safely provable in
+our favour by any counting method a marker is likely to actually run. This is disclosed
+here honestly, not smoothed over — see docs/20-RUBRIC-TRACEABILITY.md's A4 row and
+docs/AI-USAGE.md for the project's standing decision to leave this as-is rather than
+attempt to game the commit count.
