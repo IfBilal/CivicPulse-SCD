@@ -465,6 +465,14 @@
             "title": "Generated At",
             "type": "string"
           },
+          "open_over_48h": {
+            "title": "Open Over 48H",
+            "type": "integer"
+          },
+          "resolved_last_24h": {
+            "title": "Resolved Last 24H",
+            "type": "integer"
+          },
           "total": {
             "title": "Total",
             "type": "integer"
@@ -476,7 +484,9 @@
           "by_priority",
           "by_status",
           "generated_at",
-          "cache_age_seconds"
+          "cache_age_seconds",
+          "open_over_48h",
+          "resolved_last_24h"
         ],
         "title": "StatsOut",
         "type": "object"

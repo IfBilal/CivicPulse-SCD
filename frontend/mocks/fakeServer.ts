@@ -128,6 +128,7 @@ export class FakeServer {
     this.misses += 1;
     const count = <K extends string>(keys: K[], pick: (c: Complaint) => K) =>
       Object.fromEntries(keys.map((k) => [k, this.rows.filter((r) => pick(r) === k).length])) as Record<K, number>;
+    const HOUR_MS = 3_600_000;
     const data: Stats = {
       total: this.rows.length,
       by_category: count<Category>(["water", "electricity", "sanitation", "roads", "streetlights", "other"], (c) => c.category),
@@ -135,6 +136,10 @@ export class FakeServer {
       by_status: count<Status>(["open", "in_progress", "resolved", "rejected"], (c) => c.status),
       generated_at: new Date(now).toISOString(),
       cache_age_seconds: 0,
+      open_over_48h: this.rows.filter(
+        (r) => (r.status === "open" || r.status === "in_progress") && now - new Date(r.created_at).getTime() > 48 * HOUR_MS,
+      ).length,
+      resolved_last_24h: this.rows.filter((r) => r.status === "resolved" && now - new Date(r.updated_at).getTime() <= 24 * HOUR_MS).length,
     };
     this.statsCache = { at: now, data };
     return { data, cache: "MISS" };

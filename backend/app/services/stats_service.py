@@ -115,7 +115,14 @@ class StatsService:
         return int(self._now_fn() - payload.generated_at.timestamp())
 
     async def _compute(self) -> StatsOut:
-        total, by_category, by_priority, by_status = await self._repo.stats_counts()
+        (
+            total,
+            by_category,
+            by_priority,
+            by_status,
+            open_over_48h,
+            resolved_last_24h,
+        ) = await self._repo.stats_counts()
         return StatsOut(
             total=total,
             by_category=by_category,
@@ -123,6 +130,8 @@ class StatsService:
             by_status=by_status,
             generated_at=datetime.datetime.fromtimestamp(self._now_fn(), tz=datetime.UTC),
             cache_age_seconds=0,
+            open_over_48h=open_over_48h,
+            resolved_last_24h=resolved_last_24h,
         )
 
     async def _safe_get(self) -> str | bytes | None:
