@@ -44,10 +44,10 @@ live, and verified against the actual repository — not placeholders.
 
 5. **`git shortlog -sn` output, pasted**
    See `docs/evidence/shortlog.txt` for the full raw output and identity-merged analysis.
-   Headline number, `git shortlog -sn --no-merges HEAD` on `dev`, identities merged:
-   Taimoor Shaukat/T361 = 67, IfBilal/8BitNinja = 38 — min share 38/105 = **36.2%,
-   clears the 35% floor**. (`main` currently shows 29.7% pending the promotion PR that
-   carries these same commits across — will match once merged.)
+   Headline number, `git shortlog -sn --no-merges main` (the branch a marker actually
+   clones by default), identities merged: Taimoor Shaukat/T361 = 68,
+   IfBilal/8BitNinja = 49 — min share 49/117 = **41.9%, clears the 35% floor**.
+   (`dev` independently shows 36.8%, also passing.)
 
 6. **`kubectl get hpa -w` capture and replicas-vs-load chart**
    - `docs/evidence/hpa-watch.txt` — real capture, replicas climbing 2→3→5→7→10 as CPU
