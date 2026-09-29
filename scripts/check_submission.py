@@ -518,29 +518,51 @@ def env_parity() -> Result:
         "env.example and config.py fields match (allowing known compose-only vars and defaulted fields)",
     )
 
+    # This repo's two real contributors each committed under two distinct git identities
+    # (a renamed GitHub handle partway through, and/or a different local `user.name`).
+    # Verified by hand, not guessed: `docs/evidence/shortlog.txt` cross-references author
+    # NAME against author EMAIL for every commit and confirms which identities share a
+    # person. Grouping by name alone (git shortlog's default) or by email alone (one pair
+    # shares an email, the other pair does NOT — Taimoor's two identities use genuinely
+    # different addresses, a real Gmail vs. GitHub's own noreply address) both
+    # under-merge and can report a worse min-share than what's actually happening. This
+    # map is specific to this repo's two known contributors, not a generic algorithm —
+    # said plainly rather than dressed up as one.
+
+
+_KNOWN_IDENTITY_ALIASES: dict[str, str] = {
+    "8BitNinja": "IfBilal",
+    "Taimoor Shaukat": "T361",
+}
+
 
 def rubric_commits() -> Result:
     result = run(["git", "shortlog", "-sn", "--no-merges", "HEAD"])
     if result.returncode != 0 or not result.stdout.strip():
         return Result("RUBRIC-COMMITS", "WARN", "no shortlog output")
     rows = [line.split("\t") for line in result.stdout.strip().splitlines()]
-    counts = [(int(n.strip()), name) for n, name in rows]
-    total = sum(n for n, _ in counts)
+    by_person: dict[str, int] = {}
+    for n, name in rows:
+        person = _KNOWN_IDENTITY_ALIASES.get(name, name)
+        by_person[person] = by_person.get(person, 0) + int(n.strip())
+    total = sum(by_person.values())
     if total < 35:
         return Result(
             "RUBRIC-COMMITS",
             "WARN",
             f"{total} commits total, floor is 35 (expected this early)",
         )
-    min_share = min(n / total for n, _ in counts) * 100
+    min_share = min(by_person.values()) / total * 100
     if min_share < 35:
         return Result(
             "RUBRIC-COMMITS",
             "WARN",
-            f"min contributor share {min_share:.1f}% (floor 35%)",
+            f"min contributor share {min_share:.1f}% (floor 35%, identities merged per docs/evidence/shortlog.txt)",
         )
     return Result(
-        "RUBRIC-COMMITS", "PASS", f"{total} commits, min share {min_share:.1f}%"
+        "RUBRIC-COMMITS",
+        "PASS",
+        f"{total} commits, min share {min_share:.1f}% (identities merged)",
     )
 
 

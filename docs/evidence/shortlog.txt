@@ -49,8 +49,16 @@ And `--no-merges HEAD` (dev, same idea, one branch earlier):
   Merged: Taimoor Shaukat/T361 = 67, IfBilal/8BitNinja = 28. Total = 95.
   Min share = 28/95 = 29.5% — also fails.
 
-`scripts/check_submission.py`'s own live RUBRIC-COMMITS check (no identity merging,
-treats all four names separately) currently reports **10.5%** — lower still.
+`scripts/check_submission.py`'s RUBRIC-COMMITS check previously did NOT merge identities
+(treated all four names separately) and reported a misleadingly low ~10-11% purely as a
+script bug — the true minimum of four unmerged rows, not four people. Fixed 2026-09-29:
+the script now merges the same two known aliases documented above (disclosed inline in
+its own code, citing this file) before computing the share. Its live output as of this
+fix, run against this exact commit set:
+  min contributor share 33.0% (still correctly WARNs — 33.0% < 35% floor)
+This is now the most accurate automated number available and should be treated as
+authoritative going forward, superseding the raw unmerged figure this file cited before
+the fix.
 
 Why the `--all` number (49.5%) is misleadingly high and should not be read as
 "floor met": a large share of IfBilal's growth since the last snapshot (34 → 93 merged)
@@ -59,8 +67,9 @@ evidence files, CI/CD fixes, documentation closure, promotion PRs — not organi
 hand-written contribution in the sense A4 is actually measuring. `--all` also double-
 counts both sides of squash-merged PR branches, inflating totals on whichever identity
 happened to open more PRs. The more conservative, more marker-realistic counts
-(`--no-merges main`/`HEAD`, and check_submission.py's own unmerged count) are consistent
-with each other — roughly 10-30% depending on method — and all fail the 35% floor.
+(`--no-merges main`/`HEAD`/`origin/main`, and check_submission.py's now-fixed,
+identity-merged count) are consistent with each other — roughly 24-33% depending on
+exact ref — and all still fail the 35% floor.
 
 Conclusion, unchanged from the prior snapshot: A4 is genuinely NOT safely provable in
 our favour by any counting method a marker is likely to actually run. This is disclosed
