@@ -24,6 +24,8 @@ def _fake_repo(total: int = 5) -> AsyncMock:
         dict.fromkeys(Category, 0),
         dict.fromkeys(Priority, 0),
         dict.fromkeys(Status, 0),
+        0,
+        0,
     )
     return repo
 
@@ -165,6 +167,8 @@ async def test_stampede_lock_loser_polls_then_hits() -> None:
             by_status=dict.fromkeys(Status, 0),
             generated_at=datetime.datetime.now(datetime.UTC),
             cache_age_seconds=0,
+            open_over_48h=0,
+            resolved_last_24h=0,
         )
         await redis.setex("stats:v1", 30, payload.model_dump_json())
 

@@ -6,6 +6,7 @@ which. That boundary is enforced mechanically by the `lint-layers` Makefile targ
 """
 
 from collections.abc import Sequence
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -121,15 +122,16 @@ class ComplaintRepository:
 
     async def stats_counts(
         self,
-    ) -> tuple[int, dict[Category, int], dict[Priority, int], dict[Status, int]]:
-        """Four statements (count + three plain `GROUP BY`s), not the spec's single `UNION ALL`
-        + `FILTER` query — see `docs/ENGINEERING-NOTES.md` "`stats_counts()` is four simple
-        queries, not one `UNION ALL`" for the reasoning (simpler to verify, easier to typecheck,
-        `/api/stats` is cache-fronted so the extra round trips aren't hot-path). Backs `09-CACHE-
-        RATELIMIT.md §2`'s `GET /api/stats`. Every enum member is a key even at 0
-        (`04-CONTRACTS.md §6.5`); zero-filling happens here, next to the query, not scattered
-        into the service — required by `StatsService._compute()`, which passes these dicts
-        straight through with no zero-fill of its own."""
+    ) -> tuple[int, dict[Category, int], dict[Priority, int], dict[Status, int], int, int]:
+        """Six statements (count + three plain `GROUP BY`s + two threshold counts), not the
+        spec's single `UNION ALL` + `FILTER` query — see `docs/ENGINEERING-NOTES.md`
+        "`stats_counts()` is four simple queries, not one `UNION ALL`" for the reasoning
+        (simpler to verify, easier to typecheck, `/api/stats` is cache-fronted so the extra
+        round trips aren't hot-path). Backs `09-CACHE-RATELIMIT.md §2`'s `GET /api/stats`.
+        Every enum member is a key even at 0 (`04-CONTRACTS.md §6.5`); zero-filling happens
+        here, next to the query, not scattered into the service — required by
+        `StatsService._compute()`, which passes these dicts straight through with no
+        zero-fill of its own."""
         total = await self.count()
         by_category: dict[Category, int] = dict.fromkeys(Category, 0)
         cat_rows = await self._s.execute(
@@ -152,4 +154,22 @@ class ComplaintRepository:
         for status, n in stat_rows.all():
             by_status[status] = n
 
-        return total, by_category, by_priority, by_status
+        now = datetime.now(UTC)
+        open_over_48h = (
+            await self._s.execute(
+                select(func.count()).where(
+                    Complaint.status.in_([Status.OPEN, Status.IN_PROGRESS]),
+                    Complaint.created_at < now - timedelta(hours=48),
+                )
+            )
+        ).scalar_one()
+        resolved_last_24h = (
+            await self._s.execute(
+                select(func.count()).where(
+                    Complaint.status == Status.RESOLVED,
+                    Complaint.updated_at >= now - timedelta(hours=24),
+                )
+            )
+        ).scalar_one()
+
+        return total, by_category, by_priority, by_status, open_over_48h, resolved_last_24h
