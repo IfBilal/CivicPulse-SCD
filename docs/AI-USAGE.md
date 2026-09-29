@@ -3532,3 +3532,121 @@ answers in `docs/ENGINEERING-NOTES.md`
   (unchanged from before this pass except the local-venv-only `RUBRIC-TESTS` false-WARN this
   session's own stale `.venv` was producing, fixed by a `pip install -e ".[dev]"` refresh — 299
   backend tests collect cleanly, well over the 14-test floor; this was never a real repo defect).
+
+## 2026-09-29 · feat/stats-resolved-rate — A5 merge-conflict exercise, real downstream fixes after the resolution
+
+- **Tool:** Claude Code, no skill invocation — fixing real CI failures on an existing PR, not a
+  new phase or a design fork.
+- **Context:** this is IfBilal and Taimoor's actual A5 exercise (`01-WORKFLOW.md §2.4`) — both
+  independently branched from the same `dev` SHA, each added a real field to `StatsOut`
+  (`open_over_48h`, `resolved_last_24h`), merged one branch into the other, hit a real conflict,
+  resolved it keeping both fields. That part happened for real, by the two humans, on their own
+  machines — not simulated here. `docs/evidence/merge-conflict-markers.txt`,
+  `merge-conflict-raw.py`, `merge-conflict-graph.txt`, and `merge-conflict.md` from that exercise
+  are the actual evidence for `20-RUBRIC-TRACEABILITY.md`'s A5 row.
+- **What I did, with explicit permission, after the human exercise was already complete:** PR #88
+  (the resolved branch, `feat/stats-resolved-rate` → `dev`) failed CI twice with real, expected
+  downstream breakage — adding two required fields to a response schema breaks every place that
+  constructs one, which is normal and not specific to this exercise. Fixed both rounds directly on
+  the branch (pushed by IfBilal, who has write access to the same repo):
+  1. `lint-and-type` failed on mypy: `app/services/stats_service.py`'s `StatsOut(...)`
+     construction was missing both new required kwargs. Wired real queries into
+     `ComplaintRepository.stats_counts()` (open+in_progress older than 48h; resolved within the
+     last 24h) rather than stubbing zeros, following the file's own established "compute next to
+     the query, not in the service" pattern. Updated the two test sites that construct a fake or
+     real `stats_counts()` tuple, adding real assertions for both new counts in the integration
+     test rather than leaving them unchecked.
+  2. Second `lint-and-type` failure, after the first fix: `schema.d.ts` was stale (the frontend's
+     generated OpenAPI client didn't know about the two new response fields), and separately
+     `tsc` caught the MSW mock server (`mocks/fakeServer.ts`, used by `npm run dev`'s mock mode
+     and the entire vitest suite) building a `Stats` object missing both fields. Ran
+     `make openapi && make gen-client` to regenerate the client for real, and wired
+     `fakeServer.ts` to compute both counts from its own in-memory rows with the same threshold
+     logic as the backend — not stubbed to 0, so the mock stats page stays demo-honest.
+- **I changed / disclosed:** did not treat "the exercise passed CI eventually" as license to do
+  the *actual conflict-and-resolution* on anyone's behalf — that already happened, by two humans,
+  before I touched anything. What I fixed afterward is ordinary CI-red-then-green maintenance,
+  same category of work as every other disclosed fix this session, and is called out here
+  specifically so it's never mistaken for part of the graded exercise itself.
+- **Verified:** backend — `ruff format`/`ruff check`/`mypy` clean, `pytest -m "unit or contract"`
+  green (90% coverage, floor 65%). Frontend — `tsc --noEmit`, `eslint`, and the full vitest suite
+  (14/14) all clean. PR #88: all 8 CI checks green
+  (https://github.com/IfBilal/CivicPulse-SCD/pull/88), still open pending a real review from
+  whichever partner didn't drive the merge commit.
+
+## 2026-09-29 · chore/close-real-checker-warns + fix/rubric-commits-identity-merge + chore/final-cleanup — real script bugs fixed, not just documented around
+
+- **Tool:** Claude Code, no skill invocation — fixing verified bugs in an existing tool, then
+  closing real test-coverage gaps found while auditing for genuine leftover work.
+- **Context:** `scripts/check_submission.py` had two checks (`CI-NEEDS`, `ENV-PARITY`) that were
+  either structurally incapable of ever returning PASS or flagging real, correct patterns as
+  drift, plus a `RUBRIC-COMMITS` check that miscounted one contributor's two git identities as
+  two separate people. All three were bugs in the tool, not in the repo it checks, and are
+  disclosed here as code changes to a shared script, not swept in as "just docs."
+- **What I did:**
+  1. `CI-NEEDS` (PR #100): its only branches were `SKIP` or a permanent `WARN "parser not
+     built"` — no code path ever returned `PASS`. Replaced with a real per-job scanner
+     (`_job_blocks`/`_publishes_or_deploys`/`_has_needs`, regex-based, no new dependency) that
+     flags a job only if it genuinely publishes/deploys (`push: true`, `kubectl apply`,
+     `helm upgrade`) and lacks `needs:`. Verified against the real workflows before trusting it:
+     `ci.yml`'s `build` job explicitly sets `push: false` with no `packages: write` permission
+     (correctly not flagged), `cd.yml`'s `build-push`/`deploy-k8s` jobs both have real `needs:`
+     (correctly not flagged either) → genuine `PASS`.
+  2. `ENV-PARITY` (PR #100): flagged real, correct patterns as drift — individual
+     `POSTGRES_*`/`REDIS_HOST`/`PORT` vars that Compose interpolates into single
+     `DATABASE_URL`/`REDIS_URL` fields, `IMAGE_TAG`/`REGISTRY` that `compose.prod.yaml`'s own
+     `image:` field consumes directly (not the Python app), and `settings.py` fields with
+     working defaults that don't need forcing into `.env.example`. Added a small, named
+     allowlist for the compose-interpolation keys and now only flags fields with no default →
+     genuine `PASS` instead of a permanent false-positive `WARN`.
+  3. Closed two of `RUBRIC-EVIDENCE`'s missing files for real, not by editing its manifest (PR
+     #100): `vpa-step1-guess.txt` (the actual pre-VPA `cpu: 200m` request, reconstructed from
+     git history at commit `7ee39f1`, before Phase 7's VPA loop raised it to `813m` in
+     `6a97c7c` — this file genuinely is cited in `18-DOCS-EVIDENCE-VIVA.md`'s Gate 7 table; a
+     prior session's blanket "not cited by any row" note in this file's 2026-09-28 entry was
+     wrong for this one specifically) and `ci-gate-pr-url.txt` (the real PR #43/#45 links behind
+     `ci-red-then-green.txt`'s existing narrative, verified live via `gh pr view` before
+     writing).
+  4. `ci-red.png`/`ci-green.png` (PR #102): the user took these themselves — real screenshots of
+     PR #43's `scan` job failing and PR #45's passing, matching the same documented story. I did
+     not and would not generate a synthetic image and present it as a screenshot.
+  5. `RUBRIC-COMMITS` (PR #104): grouped by `git shortlog`'s default of author NAME, not actual
+     identity — this repo's two real contributors each committed under two distinct git
+     identities (verified by email cross-reference in `docs/evidence/shortlog.txt`). The check
+     never applied that merge, so it reported the minimum across four rows (~10-11%) instead of
+     two people (~33%). Considered a purely generic email-based merge first and rejected it —
+     it's actually wrong here, since only one of the two identity pairs shares an email
+     (Taimoor's two identities use a real Gmail vs. GitHub's own noreply address, genuinely
+     different addresses). Used an explicit, disclosed alias map instead, named plainly in the
+     code as specific to this repo's two known contributors rather than dressed up as a generic
+     algorithm. This is an accuracy fix, not a way to force a PASS: the corrected number is
+     33.0-33.7% on `dev` (29.7% on `main`), still genuinely under the 35% floor, still
+     correctly WARNs. Refreshed `docs/evidence/shortlog.txt` and
+     `docs/20-RUBRIC-TRACEABILITY.md`'s A4 row to cite the corrected live number instead of the
+     stale pre-fix figures.
+  6. Test coverage (`chore/final-cleanup`): audited for genuinely uncovered, real, load-bearing
+     code rather than chasing coverage-percentage theater. Found and closed two real gaps:
+     `ComplaintRepository.list_page()`'s `categories`/`priorities`/`statuses` filter params had
+     zero test coverage anywhere in the suite (repo, service, or route level) despite being what
+     the Dashboard's entire filter UI depends on; `NotFound.tsx` sat at 0% frontend coverage
+     with no test that it renders or that its "back home" link actually works. Both verified
+     per HARD rule 14 — deliberately broke the real implementation (the repo's priority filter,
+     the frontend link's target), confirmed the new test failed, restored the real code,
+     confirmed it passes again. Deliberately did NOT chase every other low-coverage number in
+     the frontend report — the scroll-journey/animation components (`CityScene.tsx`,
+     `Journey.tsx`, `CursorGlow.tsx`, etc.) are intentionally E2E/visual-regression tested
+     instead of unit tested, a real, existing project decision, not a gap.
+- **I changed / disclosed:** this work was explicitly requested as "find real work, make a PR" in
+  the context of a live discussion about `RUBRIC-COMMITS`'s own real number — said directly to
+  the user at the time and repeating it here: none of this was done to inflate a commit count.
+  Each item above is a genuine, independently-justified fix or gap closure that would have been
+  worth doing regardless of A4. Explicitly declined, in the same conversation, to pad commit
+  history with contentless commits, to rewrite/reassign past commit authorship, or to delete the
+  `RUBRIC-COMMITS` check to hide a real number — all raised and refused before this work started.
+- **Verified:** `python3 scripts/check_submission.py` on `dev`: `0 FAIL, 1 WARN, 1 SKIP` (down
+  from `0 FAIL, 5 WARN, 1 SKIP` at the start of this pass) — 17 of 18 checks now genuinely PASS,
+  the sole remaining WARN (`RUBRIC-COMMITS`) is the real, disclosed, standing A4 gap, not a tool
+  bug. All source PRs (#100, #102, #104, and `chore/final-cleanup`'s test commits) individually
+  green on CI before merge. PRs: https://github.com/IfBilal/CivicPulse-SCD/pull/100,
+  https://github.com/IfBilal/CivicPulse-SCD/pull/102,
+  https://github.com/IfBilal/CivicPulse-SCD/pull/104.
