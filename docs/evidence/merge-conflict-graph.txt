@@ -1,0 +1,236 @@
+* 06708d5 feat: add resolved_last_24h to /api/stats
+| * 1e46415 feat: add open_over_48h to /api/stats
+|/  
+* 8df0723 docs: close I4/I5/Cosign bonus rows — cd.yml's first real green run (#86)
+* bd00c52 fix(fe): city scroll-journey camera-init race, one-way quality degrade, and ScrollTrigger start measurement (#85)
+*   d9f0b12 merge: resolve dev into main promotion (PR #84) — AI-USAGE.md + NetworkPolicy dedup
+|\  
+* | 93506b0 fix(cd): resolve smoke-test 502 — missing NetworkPolicy + nginx resolver bug (#83)
+| | * c1d5d7d chore: promote dev to main — scroll-journey fix + CD evidence closure (#87)
+| | * c424edb chore: promote dev to main — CD smoke-test NetworkPolicy + DNS fix (#84)
+| |/  
+| * 1c12c34 chore: promote CD smoke-test fixes to main (#81)
+| * 08a8a9b chore: promote dev to main — fix CD VPA deployment (#76)
+| | * bbe4536 fix(cd): resolve smoke-test 502 — missing NetworkPolicy + nginx resolver bug
+| |/  
+|/|   
+* | 9ef80e5 fix(cd): report smoke test upstream failures (#79)
+* | c81ade3 fix(cd): bound ingress smoke test requests (#78)
+* | 4266571 merge: sync main into dev for CD promotion
+|\| 
+| * 9b9266c chore: promote dev to main — ingress-nginx/kind version fix for cd.yml (#74)
+| * f89f396 release: promote Cosign deploy fix to main (#72)
+* | decb82b fix: install VPA CRD before CD deployment (#75)
+| | * 680dbfe WIP on chore/promote-dev-to-main-5: 9d4c515 fix(ci): pin ingress-nginx and kind node versions to close a real drift (#73)
+| |/| 
+|/| | 
+| | * 9aaac00 index on chore/promote-dev-to-main-5: 9d4c515 fix(ci): pin ingress-nginx and kind node versions to close a real drift (#73)
+| |/  
+|/|   
+* | 9d4c515 fix(ci): pin ingress-nginx and kind node versions to close a real drift (#73)
+| | * 7b944c7 fix(ci): pin ingress-nginx and kind node versions to close a real drift
+| |/  
+|/|   
+* | 7213dbf Merge branch 'main' into dev
+|\| 
+| * f5f893d fix: remove pip tooling from runtime image
+| * 5b6fd75 fix: patch backend image and repair GHCR publishing
+* | a785cb3 fix: install cosign on deploy runner
+* |   a5ec098 Merge pull request #69 from IfBilal/fix/security-alert-noise-cd-build
+|\ \  
+| |/  
+|/|   
+| * 5c9976d fix: remove pip tooling from runtime image
+| * a3328cb fix: patch backend image and repair GHCR publishing
+|/  
+*   bb03762 Merge pull request #68 from IfBilal/chore/reconcile-main-dev-history
+|\  
+| *   cf30198 merge: reconcile main history into dev
+| |\  
+| |/  
+|/|   
+* | a02bd6a chore: promote dev to main — includes cd.yml permissions fix (#67)
+| * 5023cc9 docs: add ahead/behind explanation to the handover (#66)
+| | * c8b0494 Merge remote-tracking branch 'origin/main' into chore/promote-dev-to-main-4
+| |/| 
+| |/  
+|/|   
+* | 054055c chore: promote dev to main (Phase 7/8, bonus items, security verification) (#62)
+| | * dcabb93 docs: add ahead/behind explanation to the handover
+| |/  
+| * 48d62d8 fix(ci): grant security-events:write on cd.yml's reusable ci.yml call (#65)
+| | * ef49e72 fix(ci): grant security-events:write on cd.yml's reusable ci.yml call
+| |/  
+| | *   8b60b62 Merge remote-tracking branch 'origin/dev' into chore/promote-dev-to-main-3
+| | |\  
+| | |/  
+| |/|   
+| * | 93caea3 docs: extensive handover to IfBilal — everything left, verified fact by fact (#64)
+| | * 441add2 Merge remote-tracking branch 'origin/main' into chore/promote-dev-to-main-3
+| |/| 
+| |/  
+|/|   
+* | 37cd8d1 chore: promote dev to main (post lock-in-phase-0-6) (#55)
+* | 5afea43 chore: promote dev to main (Phases 0-6) (#48)
+* | f8417c2 Phases 3-6 complete: backend core, AI triage, cache/ratelimit, CI, k8s manifests (#42)
+| * 67cdffa feat(gitops): capture real Argo CD reconciliation — closes the last open bonus gap (#63)
+| * ad39e4e docs: post-merge audit confirming PR #60's real state on dev (#61)
+| | * 17f43ed docs: extensive handover to IfBilal — everything left, verified fact by fact
+| |/  
+| * 2d028cb Bonus items complete: GitOps, Prometheus/Grafana, OpenTelemetry, release.yml + security verification (#60)
+| * c7a13c1 fix(docs): close two real gaps found in a full Gate-7 checklist re-audit (#59)
+| * 6a97c7c Phase 7: HPA load capture, VPA loop, zero-downtime rollout proof (#58)
+| *   cdf4fd2 Merge pull request #57 from IfBilal/fix/cd-workflow-call
+| |\  
+| | * deff204 fix(ci): declare workflow_call on ci.yml so cd.yml's reusable-workflow call works
+| |/  
+| * 3ec07aa docs: handover to IfBilal — phases 0-6 status, A3/A4/A5 gaps, cd.yml bug, Phase 7 how-to (#56)
+| *   3d452ec Merge pull request #54 from IfBilal/docs/lock-in-phase-0-6
+| |\  
+| | * d54353d docs+evidence: lock in phases 0-6 end-to-end, no gaps, Phase 7 untouched
+| |/  
+| *   ed490dc Merge pull request #53 from IfBilal/docs/live-infra-evidence-real
+| |\  
+| | *   d3967ff Merge remote-tracking branch 'origin/dev' into docs/live-infra-evidence-real
+| | |\  
+| | |/  
+| |/|   
+| * |   43d77bd Merge pull request #52 from IfBilal/docs/runbook-and-viva-notes
+| |\ \  
+| | * \   0516cd1 Merge remote-tracking branch 'origin/dev' into docs/runbook-and-viva-notes
+| | |\ \  
+| | * | | 767edf7 docs: write RUNBOOK.md and answer the 8 ENGINEERING-NOTES viva questions
+| * | | |   ed0457f Merge pull request #50 from IfBilal/docs/readme-rebuild
+| |\ \ \ \  
+| | |_|/ /  
+| |/| | |   
+| | * | |   d9b1b1a Merge remote-tracking branch 'origin/dev' into docs/readme-rebuild
+| | |\ \ \  
+| | |/ / /  
+| |/| | |   
+| | * | | cb01393 docs: log README rebuild in AI-USAGE.md
+| | * | | fac287d docs: rebuild root README to satisfy J1 traceability row
+| | |/ /  
+| | | * f0aa574 docs+evidence: real Docker/k3d live-infra evidence, 12 rubric rows closed
+| | |/  
+| |/|   
+| * | 128353d docs: end-to-end handover for live Docker/k8s evidence still blocked in sandbox (#51)
+| * | 5d6d564 docs: close 30 statically-provable rubric-traceability gaps with live evidence (#49)
+| |/  
+| *   1fb6d71 Merge pull request #46 from IfBilal/fix/close-disclosed-gaps
+| |\  
+| | *   2d6368a Merge remote-tracking branch 'origin/dev' into fix/close-disclosed-gaps
+| | |\  
+| | |/  
+| |/|   
+| * |   94bbb70 Merge pull request #47 from IfBilal/fix/root-readme
+| |\ \  
+| | * | c73e37e docs: handover note for Phases 0-6 close-out
+| | * | b45d486 docs+ci: root README, real cd.yml, 3 missing ADRs, fix submission-check bugs
+| |/ /  
+| | * 9f0ac84 fix(k8s): add HPA/VPA, close audit findings from cold Phase 0-6 review
+| | * 000b00c fix(be): close both disclosed gaps - real Ollama benchmark, real cache counters
+| | *   736cc26 Merge remote-tracking branch 'origin/dev' into fix/close-disclosed-gaps
+| | |\  
+| | |/  
+| |/|   
+| * | a384b17 fix(ci): grant scan job security-events: write for upload-sarif (#45)
+| | * af0efb9 fix(ci): grant scan job security-events: write for upload-sarif
+| |/  
+| * ce4a1e3 fix(fe): apk upgrade in nginx runtime stage, closes 19 OS CVEs (#44)
+| *   ed77ac1 Merge branch 'main' into dev
+| |\  
+| |/  
+|/|   
+* | e95c521 chore(ci): sync dev into main — VCS-DIRECT-MAIN squash-merge fix (#21)
+| *   483057b Merge pull request #43 from IfBilal/fix/fastapi-starlette-cve
+| |\  
+| | * 2d183c6 docs: confirm all 3 CVEs closed, disclose separate base-image finding
+| | * 51b2328 fix(be): close all 3 CVEs - fix Redis DI break, bump to fastapi 0.135
+| | * fb03f4f docs: correct CVE-fix claim to match real Trivy output
+| | * 0679e75 fix(be): regenerate OpenAPI client after pydantic 2.11 bump
+| | * 50e2bd9 fix(be): bump fastapi/starlette/pydantic to clear 3 HIGH CVEs
+| |/  
+| *   eda7075 Merge pull request #38 from IfBilal/feat/k8s-manifests
+| |\  
+| | *   42293a7 Merge remote-tracking branch 'origin/dev' into feat/k8s-manifests
+| | |\  
+| | * \   ddc8e15 Merge remote-tracking branch 'origin/dev' into feat/k8s-manifests
+| | |\ \  
+| | * | | 7ee39f1 feat(k8s): Phase 6 — Kubernetes manifests (Gate 6)
+| * | | |   b333b16 Merge pull request #41 from IfBilal/fix/stats-invalidation-ordering
+| |\ \ \ \  
+| | * \ \ \   5ca583b Merge remote-tracking branch 'origin/dev' into fix/stats-invalidation-ordering
+| | |\ \ \ \  
+| | |/ / / /  
+| |/| | | |   
+| * | | | |   1f6b0a9 Merge pull request #40 from IfBilal/fix/logging-caplog-and-orjson-cve
+| |\ \ \ \ \  
+| | |_|_|_|/  
+| |/| | | |   
+| | * | | | af78da3 docs: disclose a starlette CVE fix attempt that broke on real integration testing
+| | * | | | e8890c1 fix(be): caplog-stripping logging bug + orjson CVE (both disclosed, DEV-A's code)
+| |/ / / /  
+| | * | | faea535 docs: trim security-incident entry, confirm rotation done
+| | * | | 2e2dad4 docs: correct rotation-status update, still unresolved
+| | * | | 6135777 docs: trim resolved gitleaks entry, confirm key rotation
+| | * | | a61a208 fix(be): alembic env.py's fileConfig() disabled app.triage's logger
+| | * | | 3c3eae6 debug(be): temporary diagnostic for the CI-only caplog WARNING failure
+| | * | | f3db928 fix(be): tests were sleeping 5s for real on every TestClient teardown
+| | * | | 6d87d24 fix(be): configure_logging() no longer strips handlers it doesn't own
+| | * | | 4da7190 fix(be): stats cache invalidation never ran, or ran before commit
+| |/ / /  
+| * | / a7f10ad feat(ci): Phase 5 DEV-B — full ci.yml pipeline (Gate 5) (#36)
+| | |/  
+| |/|   
+| * |   1615eda Merge pull request #34 from IfBilal/feat/cache-ratelimit
+| |\ \  
+| | |/  
+| |/|   
+| | * 9117629 feat(be): Phase 5 cache + distributed rate limiter
+| |/  
+| *   4a50782 Merge pull request #33 from IfBilal/feat/ai-triage
+| |\  
+| | * 494ec4d style(test): ruff format the new ring-sharing test
+| | * 5c17553 fix(ci): same data-layer coverage-scoping bug as feat/backend-api, recurred here
+| | * 5078522 feat(be): Phase 4 AI triage layer — 4 providers, fallback ladder, cache, guardrails
+| |/  
+| *   298630d Merge pull request #31 from IfBilal/feat/backend-api
+| |\  
+| | *   5978cb2 Merge pull request #32 from IfBilal/chore/contract-version-field
+| | |\  
+| | | * d1f0d72 chore(contract): openapi.json info.version reflects settings.version, not a hardcoded 1.0.0
+| | |/  
+| | * f985d1c fix(ci): data-layer job's 16-test slice can't clear the project-wide 65% floor
+| | * f2301ca fix(be): integration tests can't mutate frozen Settings, swap the module attribute instead
+| | * b662994 feat(be): Phase 3 backend API — app factory, middleware, DI, all 10 routes
+| |/  
+| * 540d4dd feat(compose): Phase 3 DEV-B — compose.yaml + compose.prod.yaml (Gate 3) (#30)
+| * 4ccc304 fix(fe): refresh city journey scroll measurements (#28)
+| * fd5cafa feat(fe): Phase 2 DEV-B — frontend + both Dockerfiles (#26)
+| * 37e4f31 feat(data): Phase 2 data layer — models, Alembic, repository, seed (#27)
+| * e44938e docs(handover): Phase 2 kickoff — DEV-A data layer, DEV-B FE scaffold split (#24)
+| * 816ee6f feat(contract): Phase 1 contract freeze — Gate 1 (#23)
+| * d57bc2c docs(handover): Gate 0 closed, Phase 1 contract freeze handoff to DEV-B
+| *   c05124b merge: bring main's squash-commit shape into dev for PR #21
+| |\  
+| |/  
+|/|   
+* | c0dd66d chore(ci): sync dev into main — Gate 0 fixes not yet on main (#19)
+| * 9a8c7a0 fix(ci): VCS-DIRECT-MAIN false-FAILs on squash-merged PRs (#20)
+| *   0a6311e merge: resolve main into dev, keep dev's Gate 0 fixes
+| |\  
+| |/  
+|/|   
+* | a5a5bdc chore(ci): close Gate 0 — Phase 0 bootstrap complete (#16)
+| * 863a888 docs(notes): document make check test-be red until Phase 2 code lands (#18)
+| * fcb3459 fix(be): backend/pyproject.toml missing version/build-system blocked Gate 0's make check (#17)
+| * 8ab44ec chore(ci): add scripts/check_submission.py, the 18-check §5.3 mirror (#14)
+| * 1b5ea4c chore(be): backend pyproject bootstrap + full Makefile (#11)
+| * b58e34e docs(handover): Phase 0 bootstrap handoff, DEV-B to DEV-A (#9)
+| * 9651b52 fix(ci): invalid YAML in .pre-commit-config.yaml + minimal Makefile stub (#8)
+|/  
+* af93ada chore(ci): Phase 0 bootstrap — DEV-B repo scaffolding + branch protection (#5)
+* 6c29475 all agents claude and skill .md made
+* 7bcb1e8 all specs and mds
+* 0ed2a93 assignment doc
