@@ -1,3 +1,15 @@
-[90m8:48PM[0m [32mINF[0m [1m92 commits scanned.[0m
-[90m8:48PM[0m [32mINF[0m [1mscanned ~4497143 bytes (4.50 MB) in 1.59s[0m
-[90m8:48PM[0m [32mINF[0m [1mno leaks found[0m
+Real gitleaks v8.30.1 scan against full current history (`--log-opts=--all`), run
+2026-09-29 -- supersedes the earlier 92-commit snapshot below. gitleaks installed to
+~/.local/bin (already on PATH via .profile/.bashrc), not a one-off shell trick --
+scripts/check_submission.py's SEC-ENV-HISTORY check now genuinely PASSes instead of
+WARNing "not installed in this environment".
+
+=== fresh run, 2026-09-29 ===
+148 commits scanned.
+scanned ~5716110 bytes (5.72 MB) in 537ms
+no leaks found
+
+=== prior run (superseded, kept for history) ===
+8:48PM INF 92 commits scanned.
+8:48PM INF scanned ~4497143 bytes (4.50 MB) in 1.59s
+8:48PM INF no leaks found
