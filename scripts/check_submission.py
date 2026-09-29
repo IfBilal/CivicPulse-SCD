@@ -31,22 +31,52 @@ def run(cmd: list[str], cwd: Path = ROOT) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=30)
     except FileNotFoundError:
-        return subprocess.CompletedProcess(cmd, returncode=127, stdout="", stderr=f"{cmd[0]}: not found")
+        return subprocess.CompletedProcess(
+            cmd, returncode=127, stdout="", stderr=f"{cmd[0]}: not found"
+        )
     except subprocess.TimeoutExpired:
-        return subprocess.CompletedProcess(cmd, returncode=124, stdout="", stderr=f"{cmd[0]}: timed out")
+        return subprocess.CompletedProcess(
+            cmd, returncode=124, stdout="", stderr=f"{cmd[0]}: timed out"
+        )
 
 
 def sec_env_history() -> Result:
     leaked = run(
-        ["git", "log", "--all", "--diff-filter=A", "--name-only", "--", ".env", "*.pem", "*.key"]
+        [
+            "git",
+            "log",
+            "--all",
+            "--diff-filter=A",
+            "--name-only",
+            "--",
+            ".env",
+            "*.pem",
+            "*.key",
+        ]
     ).stdout.strip()
     if leaked:
-        return Result("SEC-ENV-HISTORY", "FAIL", f"secret-shaped file added in history: {leaked}")
-    gitleaks = run(["gitleaks", "detect", "--no-banner", "--redact", "--log-opts=--all", "-c", ".gitleaks.toml"])
+        return Result(
+            "SEC-ENV-HISTORY", "FAIL", f"secret-shaped file added in history: {leaked}"
+        )
+    gitleaks = run(
+        [
+            "gitleaks",
+            "detect",
+            "--no-banner",
+            "--redact",
+            "--log-opts=--all",
+            "-c",
+            ".gitleaks.toml",
+        ]
+    )
     if gitleaks.returncode == 127:
-        return Result("SEC-ENV-HISTORY", "WARN", "gitleaks not installed in this environment")
+        return Result(
+            "SEC-ENV-HISTORY", "WARN", "gitleaks not installed in this environment"
+        )
     if gitleaks.returncode not in (0, 1):
-        return Result("SEC-ENV-HISTORY", "WARN", "gitleaks not runnable in this environment")
+        return Result(
+            "SEC-ENV-HISTORY", "WARN", "gitleaks not runnable in this environment"
+        )
     if gitleaks.returncode == 1:
         return Result("SEC-ENV-HISTORY", "FAIL", "gitleaks found a secret in history")
     return Result("SEC-ENV-HISTORY", "PASS", "no secret in history")
@@ -76,9 +106,21 @@ def sec_k8s_secret() -> Result:
                 if not m:
                     continue
                 key, val = m.group(1), m.group(2).strip()
-                if key in ("apiVersion", "kind", "metadata", "type", "data", "stringData", "name"):
+                if key in (
+                    "apiVersion",
+                    "kind",
+                    "metadata",
+                    "type",
+                    "data",
+                    "stringData",
+                    "name",
+                ):
                     continue
-                unquoted = val[1:-1] if len(val) >= 2 and val[0] == val[-1] and val[0] in "\"'" else val
+                unquoted = (
+                    val[1:-1]
+                    if len(val) >= 2 and val[0] == val[-1] and val[0] in "\"'"
+                    else val
+                )
                 if key == "DATABASE_URL":
                     userinfo_m = re.search(r"://([^@/]+)@", unquoted)
                     to_check = userinfo_m.group(1) if userinfo_m else unquoted
@@ -87,13 +129,21 @@ def sec_k8s_secret() -> Result:
                 if len(to_check) >= 16 and not placeholder_re.match(to_check):
                     bad.append(f"{path.relative_to(ROOT)}: {key}")
     if bad:
-        return Result("SEC-K8S-SECRET", "FAIL", f"non-placeholder value(s): {', '.join(bad)}")
+        return Result(
+            "SEC-K8S-SECRET", "FAIL", f"non-placeholder value(s): {', '.join(bad)}"
+        )
     return Result("SEC-K8S-SECRET", "PASS", "all Secret manifests use placeholders")
 
 
 def img_unpinned() -> Result:
-    targets = list(ROOT.glob("**/Dockerfile")) + list(ROOT.glob("compose*.yaml")) + list((ROOT / "k8s").rglob("*.y*ml") if (ROOT / "k8s").exists() else [])
-    targets = [t for t in targets if "node_modules" not in str(t) and "/.git/" not in str(t)]
+    targets = (
+        list(ROOT.glob("**/Dockerfile"))
+        + list(ROOT.glob("compose*.yaml"))
+        + list((ROOT / "k8s").rglob("*.y*ml") if (ROOT / "k8s").exists() else [])
+    )
+    targets = [
+        t for t in targets if "node_modules" not in str(t) and "/.git/" not in str(t)
+    ]
     if not targets:
         return Result("IMG-UNPINNED", "SKIP", "no Dockerfile/compose/k8s manifests yet")
     bad: list[str] = []
@@ -120,15 +170,26 @@ def net_localhost() -> Result:
     # explaining something isn't config; a dev-only ingress/overlay `host:`/`value: localhost`
     # (e.g. k8s/overlays/dev/ingress-host.yaml) is a deliberate local-access hostname, matching
     # `09-CACHE-RATELIMIT.md`/`14-LOAD-AUTOSCALING.md`'s own `civicpulse.localhost` examples.
-    targets = [t for t in ("backend/app", "compose.yaml", "compose.prod.yaml", "k8s") if (ROOT / t).exists()]
+    targets = [
+        t
+        for t in ("backend/app", "compose.yaml", "compose.prod.yaml", "k8s")
+        if (ROOT / t).exists()
+    ]
     if not targets:
         return Result("NET-LOCALHOST", "SKIP", "no target paths exist yet")
     result = run(
         [
-            "grep", "-rnI",
-            "--exclude-dir=node_modules", "--exclude-dir=.git", "--exclude-dir=dist",
-            "--exclude-dir=tests", "--exclude-dir=docs",
-            "-e", "localhost", "-e", "127\\.0\\.0\\.1",
+            "grep",
+            "-rnI",
+            "--exclude-dir=node_modules",
+            "--exclude-dir=.git",
+            "--exclude-dir=dist",
+            "--exclude-dir=tests",
+            "--exclude-dir=docs",
+            "-e",
+            "localhost",
+            "-e",
+            "127\\.0\\.0\\.1",
             *targets,
         ]
     )
@@ -144,7 +205,11 @@ def net_localhost() -> Result:
     if hits:
         return Result("NET-LOCALHOST", "FAIL", hits[0])
     checked = ", ".join(targets)
-    missing = [t for t in ("backend/app", "compose.yaml", "compose.prod.yaml", "k8s") if t not in targets]
+    missing = [
+        t
+        for t in ("backend/app", "compose.yaml", "compose.prod.yaml", "k8s")
+        if t not in targets
+    ]
     note = f" ({', '.join(missing)} not created yet)" if missing else ""
     return Result("NET-LOCALHOST", "PASS", f"no localhost in {checked}{note}")
 
@@ -152,7 +217,9 @@ def net_localhost() -> Result:
 def net_segment() -> Result:
     compose = ROOT / "compose.yaml"
     if not compose.exists():
-        return Result("NET-SEGMENT", "SKIP", "compose.yaml does not exist yet (Phase 5b)")
+        return Result(
+            "NET-SEGMENT", "SKIP", "compose.yaml does not exist yet (Phase 5b)"
+        )
     text = compose.read_text()
     # The `internal:` network key and its own `internal: true` property aren't necessarily
     # adjacent lines (a real compose.yaml has `driver: bridge` between them, e.g.) — search the
@@ -176,7 +243,11 @@ def net_segment() -> Result:
 def port_exposed_prod() -> Result:
     prod = ROOT / "compose.prod.yaml"
     if not prod.exists():
-        return Result("PORT-EXPOSED-PROD", "SKIP", "compose.prod.yaml does not exist yet (Phase 5b)")
+        return Result(
+            "PORT-EXPOSED-PROD",
+            "SKIP",
+            "compose.prod.yaml does not exist yet (Phase 5b)",
+        )
     text = prod.read_text()
     bad = []
     for svc in ("database", "cache"):
@@ -184,31 +255,92 @@ def port_exposed_prod() -> Result:
         if m:
             bad.append(svc)
     if bad:
-        return Result("PORT-EXPOSED-PROD", "FAIL", f"ports: exposed for {', '.join(bad)} in compose.prod.yaml")
+        return Result(
+            "PORT-EXPOSED-PROD",
+            "FAIL",
+            f"ports: exposed for {', '.join(bad)} in compose.prod.yaml",
+        )
     return Result("PORT-EXPOSED-PROD", "PASS", "no db/cache ports published in prod")
 
 
+def _job_blocks(text: str) -> list[tuple[str, str]]:
+    """Splits a workflow file's `jobs:` section into (job_name, job_body) pairs by
+    indentation — a top-level job key is exactly 2 spaces in, everything more indented
+    belongs to that job. Good enough for real GitHub Actions workflow files without
+    pulling in a YAML parser dependency this stdlib-only script deliberately doesn't have."""
+    jobs_start = text.find("\njobs:")
+    if jobs_start == -1:
+        return []
+    body = text[jobs_start + len("\njobs:") :]
+    job_starts = [
+        (m.start(), m.group(1)) for m in re.finditer(r"\n  ([a-zA-Z0-9_-]+):\n", body)
+    ]
+    blocks = []
+    for i, (pos, name) in enumerate(job_starts):
+        end = job_starts[i + 1][0] if i + 1 < len(job_starts) else len(body)
+        blocks.append((name, body[pos:end]))
+    return blocks
+
+
+def _publishes_or_deploys(job_body: str) -> bool:
+    if re.search(r"push:\s*true", job_body):
+        return True
+    if "kubectl apply" in job_body or "helm upgrade" in job_body:
+        return True
+    return False
+
+
+def _has_needs(job_body: str) -> bool:
+    return bool(re.search(r"\n\s*needs:\s*\S", job_body))
+
+
 def ci_needs() -> Result:
+    unguarded: list[str] = []
+    for workflow_name in ("ci.yml", "cd.yml"):
+        wf = ROOT / ".github" / "workflows" / workflow_name
+        if not wf.exists():
+            continue
+        for job_name, job_body in _job_blocks(wf.read_text()):
+            if _publishes_or_deploys(job_body) and not _has_needs(job_body):
+                unguarded.append(f"{workflow_name}:{job_name}")
     ci = ROOT / ".github" / "workflows" / "ci.yml"
     if not ci.exists():
         return Result("CI-NEEDS", "SKIP", "ci.yml does not exist yet")
-    text = ci.read_text()
-    if "push: true" not in text and "kubectl apply" not in text and "helm upgrade" not in text and "docker/build-push-action" not in text:
-        return Result("CI-NEEDS", "SKIP", "ci.yml is the Phase 0 placeholder, no publish/deploy steps yet")
-    return Result("CI-NEEDS", "WARN", "publish/deploy step found — verify needs: manually, parser not built")
+    if (
+        not _job_blocks(ci.read_text())
+        and not (ROOT / ".github" / "workflows" / "cd.yml").exists()
+    ):
+        return Result(
+            "CI-NEEDS",
+            "SKIP",
+            "ci.yml is the Phase 0 placeholder, no publish/deploy steps yet",
+        )
+    if unguarded:
+        return Result(
+            "CI-NEEDS",
+            "FAIL",
+            f"publish/deploy job(s) with no needs: gate: {', '.join(unguarded)}",
+        )
+    return Result("CI-NEEDS", "PASS", "every publish/deploy job is needs:-gated")
 
 
 def cd_latest_deploy() -> Result:
     overlays = ROOT / "k8s" / "overlays"
     if not overlays.exists():
-        return Result("CD-LATEST-DEPLOY", "SKIP", "k8s/overlays does not exist yet (Phase 6b)")
+        return Result(
+            "CD-LATEST-DEPLOY", "SKIP", "k8s/overlays does not exist yet (Phase 6b)"
+        )
     bad = []
     for kustomization in overlays.rglob("kustomization.yaml"):
         result = run(["kubectl", "kustomize", str(kustomization.parent)])
         if result.returncode == 127:
-            return Result("CD-LATEST-DEPLOY", "WARN", "kubectl not installed in this environment")
+            return Result(
+                "CD-LATEST-DEPLOY", "WARN", "kubectl not installed in this environment"
+            )
         if result.returncode != 0:
-            return Result("CD-LATEST-DEPLOY", "WARN", "kubectl failed to render overlays")
+            return Result(
+                "CD-LATEST-DEPLOY", "WARN", "kubectl failed to render overlays"
+            )
         if ":latest" in result.stdout:
             bad.append(str(kustomization.parent.relative_to(ROOT)))
     if bad:
@@ -225,14 +357,24 @@ def k8s_db_deployment() -> Result:
     pg = ROOT / "k8s" / "base" / "postgres-statefulset.yaml"
     if not pg.exists():
         return Result(
-            "K8S-DB-DEPLOYMENT", "SKIP", "k8s/base/postgres-statefulset.yaml does not exist yet"
+            "K8S-DB-DEPLOYMENT",
+            "SKIP",
+            "k8s/base/postgres-statefulset.yaml does not exist yet",
         )
     text = pg.read_text()
     if "kind: StatefulSet" not in text:
         return Result("K8S-DB-DEPLOYMENT", "FAIL", "postgres.yaml is not a StatefulSet")
     if "volumeClaimTemplates" not in text:
-        return Result("K8S-DB-DEPLOYMENT", "FAIL", "postgres StatefulSet has no volumeClaimTemplates")
-    return Result("K8S-DB-DEPLOYMENT", "PASS", "postgres is a StatefulSet with volumeClaimTemplates")
+        return Result(
+            "K8S-DB-DEPLOYMENT",
+            "FAIL",
+            "postgres StatefulSet has no volumeClaimTemplates",
+        )
+    return Result(
+        "K8S-DB-DEPLOYMENT",
+        "PASS",
+        "postgres is a StatefulSet with volumeClaimTemplates",
+    )
 
 
 def vcs_direct_main() -> Result:
@@ -258,8 +400,16 @@ def vcs_direct_main() -> Result:
             continue  # initial scaffold commits, predate branch protection
         offenders.append(f"{commit_hash} {subject}")
     if offenders:
-        return Result("VCS-DIRECT-MAIN", "FAIL", f"{len(offenders)} non-merge commit(s) on main after scaffold")
-    return Result("VCS-DIRECT-MAIN", "PASS", "main has only the initial scaffold commits, rest are PR merges")
+        return Result(
+            "VCS-DIRECT-MAIN",
+            "FAIL",
+            f"{len(offenders)} non-merge commit(s) on main after scaffold",
+        )
+    return Result(
+        "VCS-DIRECT-MAIN",
+        "PASS",
+        "main has only the initial scaffold commits, rest are PR merges",
+    )
 
 
 def doc_quickstart() -> Result:
@@ -268,15 +418,23 @@ def doc_quickstart() -> Result:
         # A missing README is the exact §5.3 −5 scenario this check exists to catch — SKIP
         # would silently under-report it as "nothing to check yet" instead of a real failure
         # (found via a cold audit, 2026-09-26; see docs/AI-USAGE.md).
-        return Result("DOC-QUICKSTART", "FAIL", "root README.md does not exist (§5.3 −5)")
+        return Result(
+            "DOC-QUICKSTART", "FAIL", "root README.md does not exist (§5.3 −5)"
+        )
     text = readme.read_text()
     m = re.search(r"## Quickstart(.*?)(\n## |\Z)", text, re.DOTALL)
     if not m:
-        return Result("DOC-QUICKSTART", "FAIL", "README.md has no ## Quickstart section")
+        return Result(
+            "DOC-QUICKSTART", "FAIL", "README.md has no ## Quickstart section"
+        )
     blocks = re.findall(r"```bash\n(.*?)```", m.group(1), re.DOTALL)
     if not blocks:
-        return Result("DOC-QUICKSTART", "FAIL", "no fenced bash blocks under ## Quickstart")
-    makefile_targets = set(re.findall(r"^([a-zA-Z_-]+):", (ROOT / "Makefile").read_text(), re.MULTILINE))
+        return Result(
+            "DOC-QUICKSTART", "FAIL", "no fenced bash blocks under ## Quickstart"
+        )
+    makefile_targets = set(
+        re.findall(r"^([a-zA-Z_-]+):", (ROOT / "Makefile").read_text(), re.MULTILINE)
+    )
     missing = []
     for block in blocks:
         for line in block.strip().splitlines():
@@ -284,12 +442,37 @@ def doc_quickstart() -> Result:
             if cmd.startswith("make "):
                 continue
             if cmd == "make":
-                target = line.strip().split()[1] if len(line.strip().split()) > 1 else ""
+                target = (
+                    line.strip().split()[1] if len(line.strip().split()) > 1 else ""
+                )
                 if target and target not in makefile_targets:
                     missing.append(f"make {target}")
     if missing:
-        return Result("DOC-QUICKSTART", "FAIL", f"targets not in Makefile: {', '.join(missing)}")
-    return Result("DOC-QUICKSTART", "PASS", "quickstart commands resolve against Makefile")
+        return Result(
+            "DOC-QUICKSTART", "FAIL", f"targets not in Makefile: {', '.join(missing)}"
+        )
+    return Result(
+        "DOC-QUICKSTART", "PASS", "quickstart commands resolve against Makefile"
+    )
+
+
+# Keys that legitimately live only in `.env.example`, never in `Settings`: consumed
+# directly by another container (the official `postgres` image reads `POSTGRES_USER`/
+# `PASSWORD`/`DB`/`HOST`/`PORT` itself) or by Compose's own `${VAR}` interpolation into a
+# single value `Settings` *does* read (those five assemble `DATABASE_URL`), or by
+# `compose.prod.yaml`'s own `image:` field (`IMAGE_TAG`, `REGISTRY`) rather than by the
+# Python app at all. Confirmed by reading .env.example/compose.yaml directly — not a guess.
+_ENV_ONLY_ALLOWLIST = {
+    "POSTGRES_USER",
+    "POSTGRES_PASSWORD",
+    "POSTGRES_DB",
+    "POSTGRES_HOST",
+    "POSTGRES_PORT",
+    "REDIS_HOST",
+    "REDIS_PORT",
+    "IMAGE_TAG",
+    "REGISTRY",
+}
 
 
 def env_parity() -> Result:
@@ -302,19 +485,38 @@ def env_parity() -> Result:
     if not env_example.exists():
         return Result("ENV-PARITY", "FAIL", ".env.example missing")
     if not config_py.exists():
-        return Result("ENV-PARITY", "SKIP", "backend/app/settings.py does not exist yet")
-    env_keys = set(re.findall(r"^([A-Z_][A-Z0-9_]*)=", env_example.read_text(), re.MULTILINE))
-    config_keys = set(re.findall(r"^\s*([a-z_][a-z0-9_]*)\s*:", config_py.read_text(), re.MULTILINE))
-    config_keys_upper = {k.upper() for k in config_keys}
-    missing_in_config = env_keys - config_keys_upper
-    missing_in_env = config_keys_upper - env_keys
+        return Result(
+            "ENV-PARITY", "SKIP", "backend/app/settings.py does not exist yet"
+        )
+    config_text = config_py.read_text()
+    env_keys = set(
+        re.findall(r"^([A-Z_][A-Z0-9_]*)=", env_example.read_text(), re.MULTILINE)
+    )
+    # A field declared with `name: type = default` has a working fallback and doesn't need
+    # forcing into the example file — only flag fields with no default (`name: type`, no `=`).
+    config_keys_with_default = set(
+        re.findall(r"^\s*([a-z_][a-z0-9_]*)\s*:[^=\n]*=", config_text, re.MULTILINE)
+    )
+    config_keys_all = set(
+        re.findall(r"^\s*([a-z_][a-z0-9_]*)\s*:", config_text, re.MULTILINE)
+    )
+    config_keys_required = config_keys_all - config_keys_with_default
+    config_keys_upper = {k.upper() for k in config_keys_all}
+    config_keys_required_upper = {k.upper() for k in config_keys_required}
+    missing_in_config = env_keys - config_keys_upper - _ENV_ONLY_ALLOWLIST
+    missing_in_env = config_keys_required_upper - env_keys
     if missing_in_config or missing_in_env:
         return Result(
-            "ENV-PARITY", "WARN",
+            "ENV-PARITY",
+            "WARN",
             f"possible drift — in .env.example only: {sorted(missing_in_config)[:5]}, "
-            f"in config.py only: {sorted(missing_in_env)[:5]}",
+            f"required in config.py but missing from .env.example: {sorted(missing_in_env)[:5]}",
         )
-    return Result("ENV-PARITY", "PASS", "env.example and config.py fields match")
+    return Result(
+        "ENV-PARITY",
+        "PASS",
+        "env.example and config.py fields match (allowing known compose-only vars and defaulted fields)",
+    )
 
 
 def rubric_commits() -> Result:
@@ -325,11 +527,21 @@ def rubric_commits() -> Result:
     counts = [(int(n.strip()), name) for n, name in rows]
     total = sum(n for n, _ in counts)
     if total < 35:
-        return Result("RUBRIC-COMMITS", "WARN", f"{total} commits total, floor is 35 (expected this early)")
+        return Result(
+            "RUBRIC-COMMITS",
+            "WARN",
+            f"{total} commits total, floor is 35 (expected this early)",
+        )
     min_share = min(n / total for n, _ in counts) * 100
     if min_share < 35:
-        return Result("RUBRIC-COMMITS", "WARN", f"min contributor share {min_share:.1f}% (floor 35%)")
-    return Result("RUBRIC-COMMITS", "PASS", f"{total} commits, min share {min_share:.1f}%")
+        return Result(
+            "RUBRIC-COMMITS",
+            "WARN",
+            f"min contributor share {min_share:.1f}% (floor 35%)",
+        )
+    return Result(
+        "RUBRIC-COMMITS", "PASS", f"{total} commits, min share {min_share:.1f}%"
+    )
 
 
 def rubric_prs() -> Result:
@@ -338,7 +550,11 @@ def rubric_prs() -> Result:
         return Result("RUBRIC-PRS", "WARN", "gh not available or not authenticated")
     prs = json.loads(result.stdout)
     if len(prs) < 5:
-        return Result("RUBRIC-PRS", "WARN", f"{len(prs)} merged PRs, floor is 5 (expected this early)")
+        return Result(
+            "RUBRIC-PRS",
+            "WARN",
+            f"{len(prs)} merged PRs, floor is 5 (expected this early)",
+        )
     return Result("RUBRIC-PRS", "PASS", f"{len(prs)} merged PRs")
 
 
@@ -367,17 +583,29 @@ def rubric_tests() -> Result:
         # audit, 2026-09-26; see docs/AI-USAGE.md). Sum the per-file counts instead. `--no-cov`
         # also added: the project's own `--cov-fail-under=65` addopts otherwise makes this
         # narrow collect-only invocation exit non-zero on an unrelated coverage floor.
-        be_count = sum(int(n) for n in re.findall(r":\s*(\d+)\s*$", result.stdout, re.MULTILINE))
+        be_count = sum(
+            int(n) for n in re.findall(r":\s*(\d+)\s*$", result.stdout, re.MULTILINE)
+        )
     if be_count < 14:
-        return Result("RUBRIC-TESTS", "WARN" if backend_tests.exists() else "SKIP", f"{be_count} backend tests collected, floor is 14")
+        return Result(
+            "RUBRIC-TESTS",
+            "WARN" if backend_tests.exists() else "SKIP",
+            f"{be_count} backend tests collected, floor is 14",
+        )
     return Result("RUBRIC-TESTS", "PASS", f"{be_count} backend tests collected")
 
 
 def rubric_seed() -> Result:
     seed = ROOT / "backend" / "app" / "cli" / "seed.py"
     if not seed.exists():
-        return Result("RUBRIC-SEED", "SKIP", "app/cli/seed.py does not exist yet (Phase 2)")
-    return Result("RUBRIC-SEED", "SKIP", "requires a live DB — run via make seed, not this static check")
+        return Result(
+            "RUBRIC-SEED", "SKIP", "app/cli/seed.py does not exist yet (Phase 2)"
+        )
+    return Result(
+        "RUBRIC-SEED",
+        "SKIP",
+        "requires a live DB — run via make seed, not this static check",
+    )
 
 
 def rubric_adr() -> Result:
@@ -404,28 +632,70 @@ def rubric_evidence() -> Result:
     if not evidence_dir.exists():
         return Result("RUBRIC-EVIDENCE", "SKIP", "docs/evidence/ does not exist yet")
     manifest = [
-        "branch-protection.png", "shortlog.txt", "merge-conflict-markers.txt",
-        "merge-conflict-raw.py", "merge-conflict-graph.txt", "merge-conflict.md",
-        "dockerignore-context-sizes.txt", "network-isolation.txt", "netpol-enforcement.txt",
-        "persistence-compose.txt", "persistence-k8s.txt", "cache-behaviour.txt",
-        "ratelimit-distributed.txt", "sigterm-drain.txt", "ci-red.png", "ci-green.png",
-        "ci-gate-pr-url.txt", "hpa-watch.txt", "hpa-samples.txt", "hpa-replicas-vs-load.png",
-        "k6-summary.json", "vpa-describe-run1.txt", "vpa-describe-run2.txt",
-        "vpa-step1-guess.txt", "zero-downtime-rollout.txt", "provider-limits-groq.png",
-        "alembic-history.txt", "explain-q-dash-filter.txt", "test-stability.txt",
+        "branch-protection.png",
+        "shortlog.txt",
+        "merge-conflict-markers.txt",
+        "merge-conflict-raw.py",
+        "merge-conflict-graph.txt",
+        "merge-conflict.md",
+        "dockerignore-context-sizes.txt",
+        "network-isolation.txt",
+        "netpol-enforcement.txt",
+        "persistence-compose.txt",
+        "persistence-k8s.txt",
+        "cache-behaviour.txt",
+        "ratelimit-distributed.txt",
+        "sigterm-drain.txt",
+        "ci-red.png",
+        "ci-green.png",
+        "ci-gate-pr-url.txt",
+        "hpa-watch.txt",
+        "hpa-samples.txt",
+        "hpa-replicas-vs-load.png",
+        "k6-summary.json",
+        "vpa-describe-run1.txt",
+        "vpa-describe-run2.txt",
+        "vpa-step1-guess.txt",
+        "zero-downtime-rollout.txt",
+        "provider-limits-groq.png",
+        "alembic-history.txt",
+        "explain-q-dash-filter.txt",
+        "test-stability.txt",
         "runtime-config.txt",
     ]
-    missing = [f for f in manifest if not (evidence_dir / f).exists() or (evidence_dir / f).stat().st_size == 0]
+    missing = [
+        f
+        for f in manifest
+        if not (evidence_dir / f).exists() or (evidence_dir / f).stat().st_size == 0
+    ]
     if missing:
-        return Result("RUBRIC-EVIDENCE", "WARN", f"{len(missing)}/{len(manifest)} evidence file(s) missing (expected this early)")
+        return Result(
+            "RUBRIC-EVIDENCE",
+            "WARN",
+            f"{len(missing)}/{len(manifest)} evidence file(s) missing (expected this early)",
+        )
     return Result("RUBRIC-EVIDENCE", "PASS", "all evidence files present and non-empty")
 
 
 CHECKS = [
-    sec_env_history, sec_k8s_secret, img_unpinned, net_localhost, net_segment,
-    port_exposed_prod, ci_needs, cd_latest_deploy, k8s_db_deployment,
-    vcs_direct_main, doc_quickstart, env_parity, rubric_commits, rubric_prs,
-    rubric_tests, rubric_seed, rubric_adr, rubric_evidence,
+    sec_env_history,
+    sec_k8s_secret,
+    img_unpinned,
+    net_localhost,
+    net_segment,
+    port_exposed_prod,
+    ci_needs,
+    cd_latest_deploy,
+    k8s_db_deployment,
+    vcs_direct_main,
+    doc_quickstart,
+    env_parity,
+    rubric_commits,
+    rubric_prs,
+    rubric_tests,
+    rubric_seed,
+    rubric_adr,
+    rubric_evidence,
 ]
 
 ICON = {"PASS": "PASS", "FAIL": "FAIL", "WARN": "WARN", "SKIP": "SKIP"}
@@ -439,7 +709,9 @@ def main() -> int:
     fails = [r for r in results if r.status == "FAIL"]
     warns = [r for r in results if r.status == "WARN"]
     skips = [r for r in results if r.status == "SKIP"]
-    print(f"{len(fails)} FAIL, {len(warns)} WARN, {len(skips)} SKIP. Exit {1 if fails else 0}.")
+    print(
+        f"{len(fails)} FAIL, {len(warns)} WARN, {len(skips)} SKIP. Exit {1 if fails else 0}."
+    )
     return 1 if fails else 0
 
 
