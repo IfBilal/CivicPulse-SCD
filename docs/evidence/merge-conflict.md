@@ -1,0 +1,1 @@
+Two independent additions to StatsOut — open_over_48h (backlog signal) and resolved_last_24h (throughput signal) — landed in the same region of the schema and produced a real merge conflict on merge. Resolved by keeping both fields: they report different metrics with no overlap, so there was no reason to prefer one over the other

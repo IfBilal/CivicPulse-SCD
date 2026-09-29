@@ -203,7 +203,14 @@ async def test_stats_counts_zero_fills_every_enum_member(db_session: AsyncSessio
     )
     await db_session.commit()
 
-    total, by_category, by_priority, by_status = await repo.stats_counts()
+    (
+        total,
+        by_category,
+        by_priority,
+        by_status,
+        open_over_48h,
+        resolved_last_24h,
+    ) = await repo.stats_counts()
 
     assert total == 1
     assert set(by_category.keys()) == set(Category)
@@ -215,6 +222,8 @@ async def test_stats_counts_zero_fills_every_enum_member(db_session: AsyncSessio
     assert set(by_status.keys()) == set(Status)
     assert by_status[Status.OPEN] == 1
     assert by_status[Status.RESOLVED] == 0
+    assert open_over_48h == 0  # just created, nowhere near the 48h threshold
+    assert resolved_last_24h == 0  # nothing resolved yet
 
 
 async def test_indexes_exist(db_session: AsyncSession) -> None:
