@@ -1,0 +1,18 @@
+"""`GET /api/stats` — `04-CONTRACTS.md §6.5`. Every enum member appears as a key, even at 0."""
+
+from datetime import datetime
+
+from pydantic import BaseModel
+
+from app.domain.enums import Category, Priority, Status
+
+
+class StatsOut(BaseModel):
+    total: int
+    by_category: dict[Category, int]
+    by_priority: dict[Priority, int]
+    by_status: dict[Status, int]
+    generated_at: datetime
+    cache_age_seconds: int | None  # 0 on a MISS
+    open_over_48h: int  # complaints still open past 48h — surfaces backlog risk
+    resolved_last_24h: int  # complaints resolved in the last day — throughput signal
