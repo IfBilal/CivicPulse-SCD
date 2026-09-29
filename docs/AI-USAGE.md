@@ -3532,3 +3532,44 @@ answers in `docs/ENGINEERING-NOTES.md`
   (unchanged from before this pass except the local-venv-only `RUBRIC-TESTS` false-WARN this
   session's own stale `.venv` was producing, fixed by a `pip install -e ".[dev]"` refresh — 299
   backend tests collect cleanly, well over the 14-test floor; this was never a real repo defect).
+
+## 2026-09-29 · feat/stats-resolved-rate — A5 merge-conflict exercise, real downstream fixes after the resolution
+
+- **Tool:** Claude Code, no skill invocation — fixing real CI failures on an existing PR, not a
+  new phase or a design fork.
+- **Context:** this is IfBilal and Taimoor's actual A5 exercise (`01-WORKFLOW.md §2.4`) — both
+  independently branched from the same `dev` SHA, each added a real field to `StatsOut`
+  (`open_over_48h`, `resolved_last_24h`), merged one branch into the other, hit a real conflict,
+  resolved it keeping both fields. That part happened for real, by the two humans, on their own
+  machines — not simulated here. `docs/evidence/merge-conflict-markers.txt`,
+  `merge-conflict-raw.py`, `merge-conflict-graph.txt`, and `merge-conflict.md` from that exercise
+  are the actual evidence for `20-RUBRIC-TRACEABILITY.md`'s A5 row.
+- **What I did, with explicit permission, after the human exercise was already complete:** PR #88
+  (the resolved branch, `feat/stats-resolved-rate` → `dev`) failed CI twice with real, expected
+  downstream breakage — adding two required fields to a response schema breaks every place that
+  constructs one, which is normal and not specific to this exercise. Fixed both rounds directly on
+  the branch (pushed by IfBilal, who has write access to the same repo):
+  1. `lint-and-type` failed on mypy: `app/services/stats_service.py`'s `StatsOut(...)`
+     construction was missing both new required kwargs. Wired real queries into
+     `ComplaintRepository.stats_counts()` (open+in_progress older than 48h; resolved within the
+     last 24h) rather than stubbing zeros, following the file's own established "compute next to
+     the query, not in the service" pattern. Updated the two test sites that construct a fake or
+     real `stats_counts()` tuple, adding real assertions for both new counts in the integration
+     test rather than leaving them unchecked.
+  2. Second `lint-and-type` failure, after the first fix: `schema.d.ts` was stale (the frontend's
+     generated OpenAPI client didn't know about the two new response fields), and separately
+     `tsc` caught the MSW mock server (`mocks/fakeServer.ts`, used by `npm run dev`'s mock mode
+     and the entire vitest suite) building a `Stats` object missing both fields. Ran
+     `make openapi && make gen-client` to regenerate the client for real, and wired
+     `fakeServer.ts` to compute both counts from its own in-memory rows with the same threshold
+     logic as the backend — not stubbed to 0, so the mock stats page stays demo-honest.
+- **I changed / disclosed:** did not treat "the exercise passed CI eventually" as license to do
+  the *actual conflict-and-resolution* on anyone's behalf — that already happened, by two humans,
+  before I touched anything. What I fixed afterward is ordinary CI-red-then-green maintenance,
+  same category of work as every other disclosed fix this session, and is called out here
+  specifically so it's never mistaken for part of the graded exercise itself.
+- **Verified:** backend — `ruff format`/`ruff check`/`mypy` clean, `pytest -m "unit or contract"`
+  green (90% coverage, floor 65%). Frontend — `tsc --noEmit`, `eslint`, and the full vitest suite
+  (14/14) all clean. PR #88: all 8 CI checks green
+  (https://github.com/IfBilal/CivicPulse-SCD/pull/88), still open pending a real review from
+  whichever partner didn't drive the merge commit.
