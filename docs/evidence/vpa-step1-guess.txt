@@ -1,0 +1,24 @@
+H6 evidence — step 1 of the guess -> load -> describe -> update -> reload -> describe
+loop (`18-DOCS-EVIDENCE-VIVA.md` Gate 7): the resource request originally GUESSED, before
+the VPA recommender ever ran against real load.
+
+Source: k8s/base/backend-deployment.yaml as it existed at commit 7ee39f1 ("feat(k8s):
+Phase 6 -- Kubernetes manifests (Gate 6)"), before Phase 7's VPA loop began.
+Reproduce: `git show 7ee39f1:k8s/base/backend-deployment.yaml | grep -A2 resources:`
+
+          resources:
+            requests: { cpu: 200m, memory: 256Mi }   # mandatory -- HPA reads <unknown> without this
+            limits: { cpu: "1", memory: 512Mi }
+
+This is the "step 1 guess" the loop's later steps are measured against:
+  step 1 (this file):        requests.cpu = 200m           -- pre-VPA guess
+  step 2 (real load applied): k6 run against the live cluster (Phase 7, 2026-09-27)
+  step 3 (vpa-describe-run1.txt): VPA's real recommendation under that load -> Target cpu=813m
+  step 4 (commit 6a97c7c):    requests.cpu updated 200m -> 813m, citing run 1's Target directly
+                               in the manifest's own comment
+  step 5 (second real load):  k6 run again against the updated deployment
+  step 6 (vpa-describe-run2.txt): VPA's recommendation re-measured -> Target cpu=763m, a ~6%
+                               move from 813m, confirming convergence rather than drift
+
+The 200m -> 813m change (4x) shows the original guess was a genuine guess, not a number
+already reverse-engineered from the VPA output -- the loop's whole point.
