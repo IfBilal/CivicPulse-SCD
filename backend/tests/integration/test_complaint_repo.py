@@ -158,6 +158,91 @@ async def test_pagination_boundaries(db_session: AsyncSession) -> None:
     assert len(items) == 1  # PAGE_SIZE_MAX from domain/limits.py; upstream rejects >100
 
 
+async def test_list_page_filters_by_category_priority_and_status(
+    db_session: AsyncSession,
+) -> None:
+    """Real gap: `list_page`'s three filter params (`categories`/`priorities`/`statuses`)
+    had zero test coverage anywhere in the suite — repo, service, or route level. Each
+    filter is asserted independently so a broken `WHERE ... IN (...)` on any one of them
+    fails this test, not just the others' happy path."""
+    repo = ComplaintRepository(db_session)
+    await repo.bulk_seed(
+        [
+            _row(
+                id=uuid.uuid4(), category=Category.WATER, priority=Priority.HIGH, status=Status.OPEN
+            ),
+            _row(
+                id=uuid.uuid4(),
+                category=Category.ROADS,
+                priority=Priority.LOW,
+                status=Status.RESOLVED,
+            ),
+            _row(
+                id=uuid.uuid4(),
+                category=Category.SANITATION,
+                priority=Priority.NORMAL,
+                status=Status.IN_PROGRESS,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    items, total = await repo.list_page(categories=[Category.WATER], page=1, page_size=10)
+    assert total == 1
+    assert items[0].category == Category.WATER
+
+    items, total = await repo.list_page(priorities=[Priority.LOW], page=1, page_size=10)
+    assert total == 1
+    assert items[0].priority == Priority.LOW
+
+    items, total = await repo.list_page(statuses=[Status.IN_PROGRESS], page=1, page_size=10)
+    assert total == 1
+    assert items[0].status == Status.IN_PROGRESS
+
+    # No filters: all three rows come back — confirms the filters above are actually
+    # narrowing the result, not coincidentally matching everything.
+    items, total = await repo.list_page(page=1, page_size=10)
+    assert total == 3
+
+
+async def test_get_returns_row_or_none(db_session: AsyncSession) -> None:
+    """`get()` is a real, load-bearing call site (ComplaintService reads/patches through
+    it) that had no direct test of its own -- only exercised indirectly via other tests
+    that happened to call it. Covers both the found and not-found paths explicitly."""
+    repo = ComplaintRepository(db_session)
+    row = await repo.create(
+        text="Streetlight outage on the corner has left the whole block dark at night.",
+        location="Test Street 12",
+        reporter_contact=None,
+        category=Category.STREETLIGHTS,
+        priority=Priority.NORMAL,
+        ai_summary=None,
+        triaged_by=TriagedBy.RULES,
+        triage_latency_ms=4,
+        triage_confidence=None,
+    )
+    await db_session.commit()
+
+    found = await repo.get(row.id)
+    assert found is not None
+    assert found.id == row.id
+
+    missing = await repo.get(uuid.uuid4())
+    assert missing is None
+
+
+async def test_bulk_seed_empty_list_is_a_no_op(db_session: AsyncSession) -> None:
+    """The `if not rows: return` guard had no test forcing it -- without it, an empty
+    `VALUES ()` list would be malformed SQL. Confirms it's a genuine no-op, not just
+    that it fails to crash."""
+    repo = ComplaintRepository(db_session)
+    await repo.bulk_seed([])
+    await db_session.commit()
+
+    total = await repo.count()
+    assert total == 0
+
+
 async def test_transition_conditional_update_is_atomic(db_session: AsyncSession) -> None:
     repo = ComplaintRepository(db_session)
     row = await repo.create(
